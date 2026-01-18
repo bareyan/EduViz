@@ -1,0 +1,5 @@
+outputs/
+job_data/
+uploads/
+__pycache__/
+*.pyc

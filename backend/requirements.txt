@@ -1,0 +1,28 @@
+# MathViz Backend Requirements
+
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# PDF Processing
+PyMuPDF>=1.23.0
+
+# Image Processing
+Pillow>=10.1.0
+
+# Text-to-Speech (Free, high quality)
+edge-tts>=6.1.0
+
+# AI/ML (Optional - for enhanced analysis)
+google-generativeai>=0.8.0
+
+# Video Processing
+# Note: FFmpeg must be installed on the system
+
+# Utilities
+python-dotenv>=1.0.0
+aiofiles>=23.2.1
+
+# Manim (for animations)
+manim>=0.18.0
