@@ -66,6 +66,17 @@ export interface Voice {
   gender: string
 }
 
+export interface Language {
+  code: string
+  name: string
+}
+
+export interface VoicesResponse {
+  voices: Voice[]
+  languages: Language[]
+  current_language: string
+}
+
 // API Functions
 export async function uploadFile(file: File): Promise<UploadResponse> {
   const formData = new FormData()
@@ -91,6 +102,8 @@ export async function generateVideos(params: {
   style?: string
   max_video_length?: number
   voice?: string
+  video_mode?: 'comprehensive' | 'overview'
+  language?: string
 }): Promise<JobResponse> {
   const response = await api.post('/generate', params)
   return response.data
@@ -101,9 +114,9 @@ export async function getJobStatus(jobId: string): Promise<JobResponse> {
   return response.data
 }
 
-export async function getVoices(): Promise<Voice[]> {
-  const response = await api.get('/voices')
-  return response.data.voices
+export async function getVoices(language: string = 'en'): Promise<VoicesResponse> {
+  const response = await api.get(`/voices?language=${language}`)
+  return response.data
 }
 
 export async function deleteFile(fileId: string): Promise<void> {

@@ -1,0 +1,10 @@
+{
+  "id": "0e3fc7e2-2fcd-4043-87c9-b966301a5000",
+  "status": "failed",
+  "progress": 92.0,
+  "message": "Job interrupted during generation (12/14 sections). Please regenerate.",
+  "result": null,
+  "error": null,
+  "created_at": "2026-01-19T01:18:47.126319",
+  "updated_at": "2026-01-19T01:31:44.684006"
+}

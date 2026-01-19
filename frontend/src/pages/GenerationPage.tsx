@@ -1,34 +1,43 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Loader2, Settings, Mic, Palette, ChevronRight, ArrowLeft } from 'lucide-react'
+import { Loader2, Settings, Palette, ChevronRight, ArrowLeft, Clock, Zap, Globe } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { generateVideos, getVoices, Voice, AnalysisResult } from '../api'
+import { generateVideos, getVoices, Voice, Language, AnalysisResult } from '../api'
 
 export default function GenerationPage() {
   const { analysisId } = useParams<{ analysisId: string }>()
   const navigate = useNavigate()
   
+  const [languages, setLanguages] = useState<Language[]>([])
+  const [selectedLanguage, setSelectedLanguage] = useState('en')
   const [voices, setVoices] = useState<Voice[]>([])
   const [selectedVoice, setSelectedVoice] = useState('en-US-GuyNeural')
   const [style, setStyle] = useState('3b1b')
   const [maxLength, setMaxLength] = useState(20)
+  const [videoMode, setVideoMode] = useState<'comprehensive' | 'overview'>('comprehensive')
   const [isGenerating, setIsGenerating] = useState(false)
 
   // Retrieve stored data
   const selectedTopics: number[] = JSON.parse(sessionStorage.getItem('selectedTopics') || '[]')
   const analysis: AnalysisResult | null = JSON.parse(sessionStorage.getItem('analysis') || 'null')
 
+  // Load voices when language changes
   useEffect(() => {
     const loadVoices = async () => {
       try {
-        const voiceList = await getVoices()
-        setVoices(voiceList)
+        const data = await getVoices(selectedLanguage)
+        setVoices(data.voices)
+        setLanguages(data.languages)
+        // Set default voice for the language
+        if (data.voices.length > 0) {
+          setSelectedVoice(data.voices[0].id)
+        }
       } catch (error) {
         console.error('Failed to load voices:', error)
       }
     }
     loadVoices()
-  }, [])
+  }, [selectedLanguage])
 
   const handleGenerate = async () => {
     if (!analysis) {
@@ -46,6 +55,8 @@ export default function GenerationPage() {
         style,
         max_video_length: maxLength,
         voice: selectedVoice,
+        video_mode: videoMode,
+        language: selectedLanguage,
       })
 
       toast.success('Video generation started!')
@@ -101,7 +112,10 @@ export default function GenerationPage() {
           </div>
           <div>
             <p className="text-sm text-gray-500">Estimated Duration</p>
-            <p className="text-xl font-bold">~{totalDuration} min</p>
+            <p className="text-xl font-bold">
+              ~{videoMode === 'overview' ? Math.round(totalDuration / 3) : totalDuration} min
+              {videoMode === 'overview' && <span className="text-sm text-gray-500"> (overview)</span>}
+            </p>
           </div>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
@@ -118,14 +132,89 @@ export default function GenerationPage() {
 
       {/* Settings */}
       <div className="space-y-6">
-        {/* Voice Selection */}
+        {/* Video Mode Selection - NEW */}
+        <div className="p-6 bg-gray-900/50 rounded-xl border border-gray-800">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-math-blue/20 rounded-lg">
+              <Clock className="w-5 h-5 text-math-blue" />
+            </div>
+            <h2 className="text-lg font-semibold">Video Mode</h2>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={() => setVideoMode('comprehensive')}
+              className={`
+                p-4 rounded-lg text-left transition-all
+                ${videoMode === 'comprehensive' 
+                  ? 'bg-math-blue/20 border-math-blue border-2' 
+                  : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-5 h-5" />
+                <p className="font-semibold">Comprehensive</p>
+              </div>
+              <p className="text-sm text-gray-400">
+                Full detailed coverage with all proofs, examples, and explanations. 
+                Longer videos (~15-45 min).
+              </p>
+            </button>
+            <button
+              onClick={() => setVideoMode('overview')}
+              className={`
+                p-4 rounded-lg text-left transition-all
+                ${videoMode === 'overview' 
+                  ? 'bg-math-orange/20 border-math-orange border-2' 
+                  : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Zap className="w-5 h-5" />
+                <p className="font-semibold">Quick Overview</p>
+              </div>
+              <p className="text-sm text-gray-400">
+                Fast summary covering key concepts and main ideas.
+                Shorter videos (~3-7 min).
+              </p>
+            </button>
+          </div>
+        </div>
+
+        {/* Language & Voice Selection */}
         <div className="p-6 bg-gray-900/50 rounded-xl border border-gray-800">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 bg-math-purple/20 rounded-lg">
-              <Mic className="w-5 h-5 text-math-purple" />
+              <Globe className="w-5 h-5 text-math-purple" />
             </div>
-            <h2 className="text-lg font-semibold">Voice Narration</h2>
+            <h2 className="text-lg font-semibold">Language & Voice</h2>
           </div>
+          
+          {/* Language Selection */}
+          <div className="mb-4">
+            <label className="text-sm text-gray-400 mb-2 block">Language</label>
+            <div className="flex gap-3">
+              {languages.map(lang => (
+                <button
+                  key={lang.code}
+                  onClick={() => setSelectedLanguage(lang.code)}
+                  className={`
+                    px-4 py-2 rounded-lg font-medium transition-all
+                    ${selectedLanguage === lang.code 
+                      ? 'bg-math-purple text-white' 
+                      : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                    }
+                  `}
+                >
+                  {lang.name}
+                </button>
+              ))}
+            </div>
+          </div>
+          
+          {/* Voice Selection */}
+          <label className="text-sm text-gray-400 mb-2 block">Voice</label>
           <div className="grid grid-cols-2 gap-3">
             {voices.map(voice => (
               <button
@@ -154,24 +243,28 @@ export default function GenerationPage() {
             </div>
             <h2 className="text-lg font-semibold">Animation Style</h2>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             {[
-              { id: '3b1b', name: '3Blue1Brown', desc: 'Classic dark theme with blue accents' },
-              { id: 'clean', name: 'Clean White', desc: 'Light theme for presentations' },
+              { id: '3b1b', name: '3Blue1Brown', desc: 'Classic dark theme with blue accents', color: 'bg-blue-900' },
+              { id: 'clean', name: 'Clean White', desc: 'Light theme for presentations', color: 'bg-gray-100' },
+              { id: 'dracula', name: 'Dracula', desc: 'Dark purple theme, popular in coding', color: 'bg-purple-900' },
+              { id: 'solarized', name: 'Solarized', desc: 'Warm professional look', color: 'bg-teal-900' },
+              { id: 'nord', name: 'Nord', desc: 'Cool arctic aesthetic', color: 'bg-slate-700' },
             ].map(s => (
               <button
                 key={s.id}
                 onClick={() => setStyle(s.id)}
                 className={`
-                  p-3 rounded-lg text-left transition-all
+                  p-3 rounded-lg text-left transition-all relative overflow-hidden
                   ${style === s.id 
-                    ? 'bg-math-green/20 border-math-green border' 
+                    ? 'bg-math-green/20 border-math-green border-2' 
                     : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
                   }
                 `}
               >
+                <div className={`absolute top-2 right-2 w-4 h-4 rounded-full ${s.color} border border-gray-600`}></div>
                 <p className="font-medium">{s.name}</p>
-                <p className="text-sm text-gray-500">{s.desc}</p>
+                <p className="text-sm text-gray-500 pr-6">{s.desc}</p>
               </button>
             ))}
           </div>

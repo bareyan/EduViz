@@ -1,5 +1,5 @@
 import { Outlet, Link } from 'react-router-dom'
-import { Sigma, Github, Grid } from 'lucide-react'
+import { Play, Github, Grid } from 'lucide-react'
 
 export default function Layout() {
   return (
@@ -10,10 +10,10 @@ export default function Layout() {
           <div className="flex items-center justify-between h-16">
             <Link to="/" className="flex items-center gap-3 group">
               <div className="relative">
-                <Sigma className="w-8 h-8 text-math-blue" />
+                <Play className="w-8 h-8 text-math-blue" />
                 <div className="absolute inset-0 bg-math-blue/30 blur-lg group-hover:bg-math-purple/30 transition-colors" />
               </div>
-              <span className="text-xl font-bold gradient-text">MathViz</span>
+              <span className="text-xl font-bold gradient-text">EduViz</span>
             </Link>
             
             <nav className="flex items-center gap-6">
@@ -52,7 +52,7 @@ export default function Layout() {
       <footer className="border-t border-gray-800 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <p className="text-center text-gray-500 text-sm">
-            MathViz - Transform your math materials into 3Blue1Brown-style videos
+            EduViz - Transform educational materials into animated explainer videos
           </p>
         </div>
       </footer>

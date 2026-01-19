@@ -15,19 +15,43 @@ except ImportError:
 class TTSEngine:
     """Text-to-Speech engine using Microsoft Edge TTS"""
     
-    # Available voices for math/educational content
+    # Available voices organized by language
+    VOICES_BY_LANGUAGE = {
+        "en": {
+            "name": "English",
+            "voices": {
+                "en-US-GuyNeural": {"name": "Guy (US)", "gender": "male"},
+                "en-US-JennyNeural": {"name": "Jenny (US)", "gender": "female"},
+                "en-GB-RyanNeural": {"name": "Ryan (UK)", "gender": "male"},
+                "en-GB-SoniaNeural": {"name": "Sonia (UK)", "gender": "female"},
+                "en-AU-WilliamNeural": {"name": "William (AU)", "gender": "male"},
+                "en-AU-NatashaNeural": {"name": "Natasha (AU)", "gender": "female"},
+                "en-IN-PrabhatNeural": {"name": "Prabhat (India)", "gender": "male"},
+                "en-IN-NeerjaNeural": {"name": "Neerja (India)", "gender": "female"},
+            }
+        },
+        "fr": {
+            "name": "French",
+            "voices": {
+                "fr-FR-HenriNeural": {"name": "Henri (France)", "gender": "male"},
+                "fr-FR-DeniseNeural": {"name": "Denise (France)", "gender": "female"},
+                "fr-CA-AntoineNeural": {"name": "Antoine (Canada)", "gender": "male"},
+                "fr-CA-SylvieNeural": {"name": "Sylvie (Canada)", "gender": "female"},
+                "fr-BE-GerardNeural": {"name": "Gérard (Belgium)", "gender": "male"},
+                "fr-CH-FabriceNeural": {"name": "Fabrice (Swiss)", "gender": "male"},
+            }
+        }
+    }
+    
+    # Flat dictionary for backwards compatibility
     VOICES = {
-        "en-US-GuyNeural": "Guy (US Male)",
-        "en-US-JennyNeural": "Jenny (US Female)",
-        "en-GB-RyanNeural": "Ryan (UK Male)",
-        "en-GB-SoniaNeural": "Sonia (UK Female)",
-        "en-AU-WilliamNeural": "William (AU Male)",
-        "en-AU-NatashaNeural": "Natasha (AU Female)",
-        "en-IN-PrabhatNeural": "Prabhat (India Male)",
-        "en-IN-NeerjaNeural": "Neerja (India Female)",
+        voice_id: info["name"]
+        for lang_data in VOICES_BY_LANGUAGE.values()
+        for voice_id, info in lang_data["voices"].items()
     }
     
     DEFAULT_VOICE = "en-US-GuyNeural"
+    DEFAULT_LANGUAGE = "en"
     
     def __init__(self):
         if not edge_tts:
@@ -178,6 +202,28 @@ class TTSEngine:
     def get_available_voices(cls) -> dict:
         """Get list of available voices"""
         return cls.VOICES
+    
+    @classmethod
+    def get_voices_by_language(cls) -> dict:
+        """Get voices organized by language"""
+        return cls.VOICES_BY_LANGUAGE
+    
+    @classmethod
+    def get_available_languages(cls) -> list:
+        """Get list of available languages"""
+        return [
+            {"code": code, "name": data["name"]}
+            for code, data in cls.VOICES_BY_LANGUAGE.items()
+        ]
+    
+    @classmethod
+    def get_voices_for_language(cls, language: str) -> list:
+        """Get voices for a specific language"""
+        lang_data = cls.VOICES_BY_LANGUAGE.get(language, cls.VOICES_BY_LANGUAGE["en"])
+        return [
+            {"id": voice_id, "name": info["name"], "gender": info["gender"]}
+            for voice_id, info in lang_data["voices"].items()
+        ]
     
     async def generate_speech(
         self,

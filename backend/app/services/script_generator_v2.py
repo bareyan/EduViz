@@ -40,15 +40,32 @@ class ScriptGenerator:
         self,
         file_path: str,
         topic: Dict[str, Any],
-        max_duration_minutes: int = 20
+        max_duration_minutes: int = 20,
+        video_mode: str = "comprehensive",  # "comprehensive" or "overview"
+        language: str = "en"  # Language code for content generation
     ) -> Dict[str, Any]:
-        """Generate a detailed video script for a topic"""
+        """Generate a detailed video script for a topic
+        
+        Args:
+            file_path: Path to the source file
+            topic: Topic data with title, description, etc.
+            max_duration_minutes: Maximum duration hint (ignored for comprehensive mode)
+            video_mode: "comprehensive" for full detailed videos, "overview" for quick summaries
+            language: Language code for content generation (en, fr, etc.)
+        
+        Returns:
+            Script dictionary with sections
+        """
         
         # Extract content from file
         content = await self._extract_content(file_path)
         
         # Generate the script using Gemini
-        script = await self._gemini_generate_script(content, topic, max_duration_minutes)
+        script = await self._gemini_generate_script(content, topic, max_duration_minutes, video_mode, language)
+        
+        # Add video_mode and language to script metadata
+        script["video_mode"] = video_mode
+        script["language"] = language
         
         return script
     
@@ -73,142 +90,265 @@ class ScriptGenerator:
         self,
         content: str,
         topic: Dict[str, Any],
-        max_duration: int
+        max_duration: int,
+        video_mode: str = "comprehensive",
+        language: str = "en"
     ) -> Dict[str, Any]:
-        """Use Gemini to generate a complete video script"""
+        """Use Gemini to generate a complete video script using TWO-PHASE approach:
+        Phase 1: Generate overall plan/outline from document
+        Phase 2: Generate detailed sections from the plan
+        """
+        
+        # Language name mapping for prompts
+        language_names = {
+            "en": "English",
+            "fr": "French",
+            "es": "Spanish",
+            "de": "German",
+            "it": "Italian",
+            "pt": "Portuguese",
+            "zh": "Chinese",
+            "ja": "Japanese",
+            "ko": "Korean",
+            "ar": "Arabic",
+            "ru": "Russian",
+        }
+        language_name = language_names.get(language, "English")
+        language_instruction = f"\n\nIMPORTANT: Generate ALL narration text in {language_name}. The source material may be in any language, but the output narration MUST be in {language_name}." if language != "en" else ""
         
         # Estimate content length to determine appropriate video length
-        # No max limit - video can be as long as needed for comprehensive coverage
         content_length = len(content)
         estimated_duration = topic.get('estimated_duration', 20)
         
-        # Scale duration based on content: roughly 1 min per 500 chars of dense math content
-        # But at least 15 minutes for comprehensive coverage
-        suggested_duration = max(15, estimated_duration, content_length // 500)
+        if video_mode == "overview":
+            suggested_duration = min(7, max(3, estimated_duration // 3))
+            section_count = "3-6 sections"
+            section_duration = "30-60 seconds each"
+        else:
+            suggested_duration = max(20, estimated_duration, content_length // 400)
+            section_count = "10-30+ sections"
+            section_duration = "60-180 seconds each"
         
-        prompt = f"""You are a script writer for mathematical lecture videos with Manim-style animations (like 3Blue1Brown).
+        # ═══════════════════════════════════════════════════════════════════════
+        # PHASE 1: Generate overall plan/outline from document
+        # ═══════════════════════════════════════════════════════════════════════
+        print(f"[ScriptGenerator] PHASE 1: Generating overall plan in {language_name}...")
+        
+        phase1_prompt = f"""You are an expert educator analyzing content to create a video lecture plan.
 
-COMPREHENSIVE VIDEO STYLE:
-- Include EVERY definition, theorem, and proof from the source material
-- Show complete step-by-step derivations with detailed visual explanations
-- Multiple examples with fully worked solutions
-- The video should REPLACE reading the source material entirely
-- ALWAYS provide INTUITION - explain the "why" behind every concept
-- The video can be AS LONG AS NEEDED - do not rush or skip content
+Analyze this source material and create a HIGH-LEVEL OUTLINE for an educational video.
+DO NOT write the full script yet - just the structure and key points for each section.{language_instruction}
 
-CRITICAL CONTENT PHILOSOPHY:
-1. INTUITION FIRST: Before any formal definition, explain the intuition and motivation
-2. DETAILED EXPLANATIONS: Every step should be explained, never skip reasoning
-3. VISUAL CLARITY: For derivations, show each step visually with last 2 steps visible
-4. ACADEMIC RIGOR + ACCESSIBILITY: Be precise but also make it understandable
-5. BUILD UNDERSTANDING: Each concept should flow naturally to the next
-6. PAUSE FOR COMPREHENSION: Give viewers time to process complex ideas
-7. NO TIME LIMIT: Take as much time as needed for thorough coverage
-
-NARRATION STYLE:
-- Explain the intuition behind every formula and theorem
-- Use phrases like "The key insight here is...", "Notice that this means...", "Intuitively, this captures..."
-- Connect abstract concepts to concrete understanding
-- Include "..." for natural pauses (1-2 seconds)
-- Include "[PAUSE]" for longer pauses after complex ideas (3-4 seconds)
-
-TTS-FRIENDLY NARRATION (CRITICAL):
-For EACH section, you MUST provide TWO narration fields:
-1. "narration": The display version with mathematical notation (e.g., "Consider φ_n = λ²x")
-2. "tts_narration": The spoken version for text-to-speech (e.g., "Consider phi sub n equals lambda squared x")
-
-CONVERSION RULES for tts_narration:
-- Greek letters: α→"alpha", β→"beta", γ→"gamma", δ→"delta", ε→"epsilon", ζ→"zeta", η→"eta", θ→"theta", λ→"lambda", μ→"mu", ν→"nu", ξ→"xi", π→"pi", ρ→"rho", σ→"sigma", τ→"tau", φ→"phi", χ→"chi", ψ→"psi", ω→"omega", Γ→"capital gamma", Δ→"capital delta", Σ→"capital sigma", Ω→"capital omega"
-- Subscripts: x_n→"x sub n", φ_0→"phi sub zero"
-- Superscripts: x²→"x squared", x³→"x cubed", x^n→"x to the n"
-- Fractions: ∂f/∂x→"partial f over partial x", a/b→"a over b"
-- Operators: ∑→"the sum of", ∏→"the product of", ∫→"the integral of", ∂→"partial", ∇→"nabla" or "del", ∞→"infinity"
-- Symbols: ≤→"less than or equal to", ≥→"greater than or equal to", ≠→"not equal to", ∈→"in" or "belongs to", ⊂→"is a subset of", →→"approaches" or "maps to"
-- Norms/absolute: |x|→"the absolute value of x", ||v||→"the norm of v"
-- Sets: ℝ→"the real numbers", ℂ→"the complex numbers", ℕ→"the natural numbers"
-
-TOPIC: {topic.get('title', 'Mathematical Concepts')}
+TOPIC: {topic.get('title', 'Educational Content')}
 DESCRIPTION: {topic.get('description', '')}
-KEY POINTS TO COVER: {topic.get('subtopics', topic.get('key_points', []))}
-SUGGESTED DURATION: {suggested_duration} minutes (but can be longer if needed for complete coverage)
+SUBJECT AREA: {topic.get('subject_area', 'general')}
+VIDEO MODE: {video_mode.upper()}
+TARGET DURATION: {suggested_duration} minutes
+TARGET SECTIONS: {section_count}, {section_duration}
+OUTPUT LANGUAGE: {language_name}
 
-SOURCE MATERIAL (include ALL of this in the video):
-{content[:30000]}
+SOURCE MATERIAL:
+{content[:40000]}
 
-Generate a detailed script with as many sections as needed to cover everything thoroughly.
-For short content: 8-12 sections. For longer content: 15-30+ sections.
+Create an outline that:
+1. Follows the NATURAL FLOW of the source material
+2. Identifies KEY CONCEPTS that need explanation
+3. Notes which parts need ANIMATION vs STATIC visuals
+4. Estimates duration for each section
+5. All titles and key_points MUST be in {language_name}
 
-Respond with ONLY valid JSON (no markdown code blocks):
+VISUAL TYPE GUIDANCE:
+- "animated": Complex concepts that benefit from step-by-step animation (equations transforming, algorithms running, diagrams building)
+- "static": Explanatory text, definitions, simple concepts where a still image with narration works better
+- "mixed": Some animation with static portions
+
+Respond with ONLY valid JSON:
 {{
-    "title": "Complete: [Topic Name]",
-    "total_duration_seconds": <calculate based on all section durations>,
-    "sections": [
+    "title": "[Video title]",
+    "subject_area": "[math|cs|physics|economics|biology|engineering|general]",
+    "total_duration_minutes": {suggested_duration},
+    "overview": "[2-3 sentence summary of what the video will cover]",
+    "sections_outline": [
         {{
-            "id": "intro",
-            "title": "Introduction and Motivation",
-            "duration_seconds": 90,
-            "narration": "Welcome to this comprehensive exploration of [topic]. ... Before we dive into the formalism, let's build some intuition. ... [Explain why this topic matters and what problem it solves]. ... By the end of this video, you'll have a complete understanding of [main concepts].",
-            "tts_narration": "Welcome to this comprehensive exploration of [topic]. Before we dive into the formalism, let's build some intuition. [Explain why this topic matters and what problem it solves]. By the end of this video, you'll have a complete understanding of [main concepts].",
-            "visual_description": "Title card fades in. Then show motivating example or visualization that captures the essence of the topic.",
-            "key_equations": [],
-            "animation_type": "text"
-        }},
-        {{
-            "id": "definition_1", 
-            "title": "Formal Definition with λ and φ_n",
-            "duration_seconds": 120,
-            "narration": "Now we can state the formal definition. ... Let φ_n be the eigenfunction corresponding to eigenvalue λ_n. ... The condition ∫|φ|² dx = 1 ensures normalization. [PAUSE] ... Notice how λ→∞ as n→∞.",
-            "tts_narration": "Now we can state the formal definition. Let phi sub n be the eigenfunction corresponding to eigenvalue lambda sub n. The condition, the integral of the absolute value of phi squared d x equals 1, ensures normalization. Notice how lambda approaches infinity as n approaches infinity.",
-            "visual_description": "Show definition in a framed box. Highlight each part as it's explained. Show visual representation alongside.",
-            "key_equations": ["\\\\phi_n", "\\\\lambda_n", "\\\\int|\\\\phi|^2 dx = 1"],
-            "animation_type": "equation"
-        }},
-        {{
-            "id": "theorem_1",
-            "title": "Main Theorem and Its Meaning",
-            "duration_seconds": 150,
-            "narration": "This brings us to the central result. ... Before stating it, let's understand what it's telling us intuitively. ... [Explain intuition]. [PAUSE] ... Now, formally: [state theorem]. ... The beauty of this result is [explain significance]. ... Let's work through the proof step by step.",
-            "visual_description": "Build up to theorem with intuitive explanation first, then show formal statement. Highlight the key insight.",
-            "key_equations": ["Theorem statement"],
-            "animation_type": "theorem"
-        }},
-        {{
-            "id": "proof_1",
-            "title": "Proof with Explanation",
-            "duration_seconds": 180,
-            "narration": "The proof follows a beautiful argument. ... We start by [setup and motivation]. ... The key step is to notice that [insight]. [PAUSE] ... This allows us to write [step]. ... And from here, we can conclude [next step]. ... Each step follows naturally once you see the pattern. [PAUSE] ... And that completes the proof.",
-            "visual_description": "Show proof step by step. Keep last 2 steps visible. Highlight connections between steps. Use arrows to show logical flow.",
-            "key_equations": ["Step 1", "Step 2", "Step 3", "Conclusion"],
-            "animation_type": "proof"
-        }},
-        {{
-            "id": "example_1",
-            "title": "Worked Example",
-            "duration_seconds": 180,
-            "narration": "Let's see this in action with a concrete example. ... Consider [problem setup]. ... The first thing to notice is [observation]. ... Applying what we learned, we get [step 1]. [PAUSE] ... Continuing, [step 2 with explanation]. ... And finally, [conclusion with interpretation of what the answer means].",
-            "visual_description": "Problem at top. Work through solution step by step. Show intermediate steps clearly. Highlight the application of each concept.",
-            "key_equations": ["Problem", "Step 1", "Step 2", "Answer"],
-            "animation_type": "worked_example"
+            "id": "[unique_id]",
+            "title": "[Section title]",
+            "key_points": ["point1", "point2", "point3"],
+            "visual_type": "[animated|static|mixed]",
+            "duration_seconds": [estimated duration],
+            "purpose": "[What this section accomplishes]"
         }}
     ]
-}}
+}}"""
 
-CRITICAL REQUIREMENTS:
-1. Create as many sections as needed for thorough coverage (8-30+ sections)
-2. EVERY section must have detailed narration with intuition and explanation
-3. Every equation and theorem from the source must appear with explanation
-4. Take as much time as needed - no artificial time limits
-5. Individual sections should be 60-180 seconds each
-6. The video must be COMPLETE and SELF-CONTAINED - full understanding without the source"""
-
-        # Debug logging
-        print(f"[ScriptGenerator] Content length: {len(content)} chars")
-        print(f"[ScriptGenerator] Content preview: {content[:500]}..." if content else "[ScriptGenerator] WARNING: No content extracted!")
-        print(f"[ScriptGenerator] Topic: {topic}")
-        print(f"[ScriptGenerator] Suggested duration: {suggested_duration} minutes")
+        try:
+            phase1_response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.MODEL,
+                    contents=phase1_prompt
+                ),
+                timeout=300  # 5 minute timeout for phase 1 outline
+            )
+            outline = self._parse_json_response(phase1_response.text)
+            print(f"[ScriptGenerator] Phase 1 complete: {len(outline.get('sections_outline', []))} sections outlined")
+        except Exception as e:
+            print(f"[ScriptGenerator] Phase 1 failed: {e}, falling back to single-phase")
+            return await self._gemini_generate_script_single_phase(content, topic, max_duration, video_mode, language)
         
-        if not content or len(content) < 50:
-            print("[ScriptGenerator] WARNING: Content is empty or too short!")
+        # ═══════════════════════════════════════════════════════════════════════
+        # PHASE 2: Generate detailed sections from the plan
+        # ═══════════════════════════════════════════════════════════════════════
+        print(f"[ScriptGenerator] PHASE 2: Generating detailed sections in {language_name}...")
+        
+        sections_outline_str = json.dumps(outline.get('sections_outline', []), indent=2)
+        
+        phase2_prompt = f"""You are a script writer for educational videos. You have an OUTLINE and need to write the FULL SCRIPT.{language_instruction}
+
+VIDEO OUTLINE:
+{sections_outline_str}
+
+ORIGINAL SOURCE MATERIAL (for reference):
+{content[:25000]}
+
+OUTPUT LANGUAGE: {language_name}
+ALL NARRATION MUST BE IN {language_name.upper()}.
+
+For each section in the outline, write:
+1. Full narration text in {language_name} (what the narrator says)
+2. TTS-friendly version in {language_name} (no symbols, spelled out)
+3. Visual description (what appears on screen)
+4. Animation type
+
+VISUAL TYPES - IMPORTANT:
+- For "static" sections: Describe TEXT/IMAGES that appear on screen while narrator explains
+- For "animated" sections: Describe step-by-step ANIMATIONS that build up
+- For "mixed" sections: Combine both approaches
+
+STATIC SCENE EXAMPLES:
+- "Display title 'Key Definition' with bullet points appearing one by one"
+- "Show a diagram of [X] that stays on screen while narrator explains"
+- "Display the formula [Y] centered on screen"
+
+ANIMATED SCENE EXAMPLES:
+- "Animate the equation transforming step by step"
+- "Build the graph point by point, drawing the curve"
+- "Show the algorithm executing with highlighted steps"
+
+TTS-FRIENDLY NARRATION:
+- narration: Display version with symbols (x², O(n), α)
+- tts_narration: Spoken version ("x squared", "O of n", "alpha")
+
+Respond with ONLY valid JSON:
+{{
+    "title": "{outline.get('title', topic.get('title', 'Video'))}",
+    "subject_area": "{outline.get('subject_area', 'general')}",
+    "total_duration_seconds": [sum of all section durations],
+    "sections": [
+        {{
+            "id": "[from outline]",
+            "title": "[from outline]",
+            "duration_seconds": [from outline],
+            "narration": "[Full narration with proper notation, ... for pauses, [PAUSE] for long pauses]",
+            "tts_narration": "[TTS-friendly version]",
+            "visual_description": "[Detailed visual description]",
+            "key_concepts": ["concept1", "concept2"],
+            "animation_type": "[static|animated|mixed]",
+            "visual_elements": ["element1", "element2"]
+        }}
+    ]
+}}"""
+
+        try:
+            phase2_response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.MODEL,
+                    contents=phase2_prompt
+                ),
+                timeout=600  # 10 minute timeout for phase 2 detailed sections
+            )
+            script = self._parse_json_response(phase2_response.text)
+            print(f"[ScriptGenerator] Phase 2 complete: {len(script.get('sections', []))} detailed sections")
+        except Exception as e:
+            print(f"[ScriptGenerator] Phase 2 failed: {e}")
+            # Convert outline to basic script
+            script = self._outline_to_script(outline, topic)
+        
+        # Validate and fix the script structure
+        script = self._validate_script(script, topic)
+        
+        return script
+    
+    async def _gemini_generate_script_single_phase(
+        self,
+        content: str,
+        topic: Dict[str, Any],
+        max_duration: int,
+        video_mode: str = "comprehensive",
+        language: str = "en"
+    ) -> Dict[str, Any]:
+        """Fallback single-phase script generation"""
+        
+        # Language name mapping for prompts
+        language_names = {
+            "en": "English",
+            "fr": "French",
+            "es": "Spanish",
+            "de": "German",
+            "it": "Italian",
+            "pt": "Portuguese",
+            "zh": "Chinese",
+            "ja": "Japanese",
+            "ko": "Korean",
+            "ar": "Arabic",
+            "ru": "Russian",
+        }
+        language_name = language_names.get(language, "English")
+        language_instruction = f"\n\nIMPORTANT: Generate ALL narration text in {language_name}." if language != "en" else ""
+        
+        content_length = len(content)
+        estimated_duration = topic.get('estimated_duration', 20)
+        
+        if video_mode == "overview":
+            suggested_duration = min(7, max(3, estimated_duration // 3))
+            mode_instructions = "Create a SHORT summary (3-7 minutes), 3-6 sections, 30-60 seconds each."
+        else:
+            suggested_duration = max(20, estimated_duration, content_length // 400)
+            mode_instructions = "Create a COMPREHENSIVE video (20+ minutes), 10-30+ sections, 60-180 seconds each."
+        
+        prompt = f"""Create a detailed video script for educational content.{language_instruction}
+
+{mode_instructions}
+
+TOPIC: {topic.get('title', 'Educational Content')}
+OUTPUT LANGUAGE: {language_name}
+SOURCE MATERIAL: {content[:30000]}
+
+ALL NARRATION MUST BE IN {language_name.upper()}.
+
+ANIMATION TYPES:
+- "static": Text/images on screen with narration (use for definitions, simple explanations)
+- "animated": Step-by-step animations (use for complex concepts, derivations)
+- "mixed": Combination of both
+
+Respond with JSON:
+{{
+    "title": "[title in {language_name}]",
+    "subject_area": "[subject]",
+    "total_duration_seconds": [total],
+    "sections": [
+        {{
+            "id": "[id]",
+            "title": "[title in {language_name}]",
+            "duration_seconds": [duration],
+            "narration": "[narration in {language_name} with pauses]",
+            "tts_narration": "[spoken version in {language_name}]",
+            "visual_description": "[what to show]",
+            "key_concepts": ["concepts"],
+            "animation_type": "[static|animated|mixed]"
+        }}
+    ]
+}}"""
 
         response = await asyncio.to_thread(
             self.client.models.generate_content,
@@ -216,15 +356,34 @@ CRITICAL REQUIREMENTS:
             contents=prompt
         )
         
-        print(f"[ScriptGenerator] Gemini response length: {len(response.text)} chars")
-        print(f"[ScriptGenerator] Response preview: {response.text[:500]}...")
-        
         script = self._parse_json_response(response.text)
-        
-        # Validate and fix the script structure
         script = self._validate_script(script, topic)
-        
         return script
+    
+    def _outline_to_script(self, outline: Dict[str, Any], topic: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert a phase-1 outline to a basic script if phase-2 fails"""
+        sections = []
+        for section_outline in outline.get('sections_outline', []):
+            key_points = section_outline.get('key_points', [])
+            narration = f"{section_outline.get('title', 'Section')}. " + ". ".join(key_points)
+            
+            sections.append({
+                "id": section_outline.get('id', f"section_{len(sections)}"),
+                "title": section_outline.get('title', 'Section'),
+                "duration_seconds": section_outline.get('duration_seconds', 60),
+                "narration": narration,
+                "tts_narration": narration,
+                "visual_description": section_outline.get('purpose', 'Display content'),
+                "key_concepts": key_points[:3],
+                "animation_type": section_outline.get('visual_type', 'mixed')
+            })
+        
+        return {
+            "title": outline.get('title', topic.get('title', 'Video')),
+            "subject_area": outline.get('subject_area', 'general'),
+            "total_duration_seconds": sum(s['duration_seconds'] for s in sections),
+            "sections": sections
+        }
     
     def _fix_json_escapes(self, text: str) -> str:
         """Fix common JSON escape sequence issues from LLM responses"""
@@ -306,7 +465,7 @@ CRITICAL REQUIREMENTS:
         """Validate and fix script structure"""
         
         if "title" not in script:
-            script["title"] = topic.get("title", "Math Exploration")
+            script["title"] = topic.get("title", "Educational Content")
         
         if "sections" not in script or not script["sections"]:
             script["sections"] = self._default_script()["sections"]
@@ -325,9 +484,12 @@ CRITICAL REQUIREMENTS:
             if "tts_narration" not in section:
                 section["tts_narration"] = section["narration"]
             if "visual_description" not in section:
-                section["visual_description"] = "Show relevant mathematical visuals"
-            if "key_equations" not in section:
-                section["key_equations"] = []
+                section["visual_description"] = "Show relevant visuals"
+            # Support both key_equations (old) and key_concepts (new)
+            if "key_equations" not in section and "key_concepts" not in section:
+                section["key_concepts"] = []
+            elif "key_equations" in section and "key_concepts" not in section:
+                section["key_concepts"] = section["key_equations"]
             if "animation_type" not in section:
                 section["animation_type"] = "text"
         

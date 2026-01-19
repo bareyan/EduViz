@@ -92,12 +92,13 @@ export default function ResultsPage() {
 
   // In Progress View
   if (job.status !== 'completed' && job.status !== 'failed') {
+    // Updated stages to reflect actual workflow:
+    // Script generation, then parallel audio+animation, then composing
     const stages = [
       { key: 'pending', label: 'Starting' },
       { key: 'analyzing', label: 'Analyzing' },
       { key: 'generating_script', label: 'Script' },
-      { key: 'creating_animations', label: 'Animations' },
-      { key: 'synthesizing_audio', label: 'Audio' },
+      { key: 'creating_animations', label: 'Creating Sections' },  // Audio + Animation happen together
       { key: 'composing_video', label: 'Composing' }
     ]
     
@@ -369,9 +370,9 @@ function getStatusInfo(status?: string) {
     case 'generating_script':
       return { title: 'Writing Script', icon: '✍️', color: 'text-math-purple' }
     case 'creating_animations':
-      return { title: 'Creating Animations', icon: '🎬', color: 'text-math-green' }
+      return { title: 'Creating Sections', icon: '🎬', color: 'text-math-green' }  // Audio + Animation together
     case 'synthesizing_audio':
-      return { title: 'Generating Voice', icon: '🎙️', color: 'text-math-orange' }
+      return { title: 'Creating Sections', icon: '�', color: 'text-math-green' }  // Treat same as animations
     case 'composing_video':
       return { title: 'Composing Video', icon: '🎥', color: 'text-math-blue' }
     case 'completed':
@@ -384,8 +385,10 @@ function getStatusInfo(status?: string) {
 }
 
 function getStageIndex(status?: string): number {
-  const stages = ['pending', 'analyzing', 'generating_script', 'creating_animations', 'synthesizing_audio', 'composing_video']
-  return stages.indexOf(status || '')
+  // Map synthesizing_audio to creating_animations since they happen together
+  const mappedStatus = status === 'synthesizing_audio' ? 'creating_animations' : status
+  const stages = ['pending', 'analyzing', 'generating_script', 'creating_animations', 'composing_video']
+  return stages.indexOf(mappedStatus || '')
 }
 
 function formatDuration(seconds: number): string {

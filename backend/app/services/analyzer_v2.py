@@ -135,9 +135,10 @@ class MaterialAnalyzer:
         # Determine if document is massive (warrants multiple videos)
         is_massive = total_pages >= self.MASSIVE_DOC_PAGES
         
-        prompt = f"""You are an expert mathematics lecturer preparing comprehensive educational video content with Manim-style animations.
+        prompt = f"""You are an expert educator preparing comprehensive educational video content with animated visuals.
 
-Analyze this mathematical content and determine the best video structure.
+Analyze this content and determine the best video structure.
+IMPORTANT: Detect the SUBJECT AREA (math, computer science, physics, economics, biology, engineering, general) from the content.
 
 DOCUMENT INFO:
 - Total pages: {total_pages}
@@ -148,40 +149,50 @@ CONTENT:
 
 {"LARGE DOCUMENT INSTRUCTIONS:" if is_massive else "STANDARD DOCUMENT INSTRUCTIONS:"}
 {'''Since this is a large document with multiple distinct chapters/sections:
-- Create separate video topics ONLY if there are clearly distinct chapters (e.g., "Chapter 1: Limits", "Chapter 2: Derivatives")
+- Create separate video topics ONLY if there are clearly distinct chapters
 - Each video should cover ONE complete chapter thoroughly
 - Maximum 3-4 videos even for large documents
 - Each video should be 15-25 minutes (comprehensive)''' if is_massive else '''Create ONE comprehensive video that covers ALL the material:
 - The video should be thorough enough to REPLACE reading the document
-- Include all definitions, theorems, proofs, and examples
+- Include all key concepts, proofs/algorithms, and examples
 - Target duration: 15-25 minutes for complete coverage
-- Every equation and derivation should be shown step-by-step'''}
+- Show step-by-step explanations visually'''}
 
 VIDEO PHILOSOPHY:
-1. The video should show calculations VISUALLY - not just narrate them
-2. Sometimes let the math "speak for itself" without constant narration
-3. For derivations: show step-by-step work, keeping last 2 steps visible
-4. Include "silent" calculation sections where viewer follows along
-5. Balance: 60% narrated content, 40% visual-only math work
+1. The video should show concepts VISUALLY - not just narrate them
+2. Sometimes let the content "speak for itself" without constant narration
+3. For derivations/algorithms: show step-by-step work
+4. Include visual demonstration sections
+5. Balance: 60% narrated content, 40% visual demonstrations
+
+CONTENT ADAPTATION (analyze and identify):
+- MATHEMATICS: Focus on equations, proofs, theorems, derivations
+- COMPUTER SCIENCE: Focus on algorithms, data structures, code, complexity
+- PHYSICS: Focus on phenomena, equations, experiments, applications
+- ECONOMICS: Focus on models, graphs, market dynamics, policies
+- BIOLOGY/CHEMISTRY: Focus on processes, structures, reactions
+- ENGINEERING: Focus on systems, designs, trade-offs
+- GENERAL: Focus on concepts, examples, analogies
 
 Respond with ONLY valid JSON (no markdown, no code blocks):
 {{
-    "summary": "Comprehensive academic summary of the material",
-    "main_subject": "The primary mathematical topic",
+    "summary": "Comprehensive summary of the material",
+    "main_subject": "The primary topic",
+    "subject_area": "math|cs|physics|economics|biology|engineering|general",
     "key_concepts": ["all", "major", "concepts", "covered"],
     "detected_math_elements": {total_pages * 3},
     "document_structure": "single_topic|multi_chapter",
     "suggested_topics": [
         {{
             "index": 0,
-            "title": "Complete: [Topic Name]",
-            "description": "Comprehensive video covering all material. This replaces reading the document entirely. Includes all definitions, theorems with proofs, worked examples, and derivations.",
+            "title": "[Descriptive Topic Name]",
+            "description": "Comprehensive video covering all material. Includes all key concepts, explanations, and examples.",
             "estimated_duration": 20,
             "complexity": "comprehensive",
-            "subtopics": ["all", "major", "sections", "with", "proofs", "and", "examples"],
+            "subject_area": "math|cs|physics|economics|biology|engineering|general",
+            "subtopics": ["all", "major", "sections"],
             "prerequisites": ["required background"],
-            "visual_ideas": ["step-by-step derivations", "geometric visualizations", "worked examples with calculations shown"],
-            "silent_calculation_sections": ["list of calculations to show without narration"]
+            "visual_ideas": ["step-by-step explanations", "visualizations", "worked examples"]
         }}
     ],
     "estimated_total_videos": 1
@@ -212,34 +223,35 @@ The goal is THOROUGH coverage - the video should contain ALL information from th
         }
         mime_type = mime_types.get(ext, "image/png")
         
-        prompt = """You are an expert mathematics lecturer preparing COMPREHENSIVE educational video content.
+        prompt = """You are an expert educator preparing COMPREHENSIVE educational video content.
 
-Analyze this mathematical content from the image. Extract all text, equations, diagrams, theorems, and mathematical concepts visible.
+Analyze this content from the image. Extract all text, equations, diagrams, concepts, code, or information visible.
+IMPORTANT: Detect the SUBJECT AREA (math, computer science, physics, economics, biology, engineering, general).
 
 Create ONE comprehensive video that covers ALL the content in this image:
 - The video should REPLACE reading/studying this image entirely
-- Include all definitions, theorems, proofs, and examples visible
-- Show calculations step-by-step, keeping last 2 steps visible
-- Mix narrated sections with silent calculation sections
+- Include all concepts, explanations, and examples visible
+- Show step-by-step explanations visually
 
 Respond with ONLY valid JSON (no markdown, no code blocks):
 {
-    "summary": "Comprehensive summary of ALL mathematical content in this image",
-    "main_subject": "The primary mathematical topic",
+    "summary": "Comprehensive summary of ALL content in this image",
+    "main_subject": "The primary topic",
+    "subject_area": "math|cs|physics|economics|biology|engineering|general",
     "key_concepts": ["all", "concepts", "visible", "in", "image"],
     "detected_math_elements": 5,
-    "extracted_equations": ["equation 1 in LaTeX", "equation 2"],
+    "extracted_content": ["key content items"],
     "suggested_topics": [
         {
             "index": 0,
-            "title": "Complete: [Topic Name]",
-            "description": "Comprehensive video covering EVERYTHING in this image. All definitions, theorems, proofs, worked examples, and derivations.",
+            "title": "[Descriptive Topic Name]",
+            "description": "Comprehensive video covering EVERYTHING in this image.",
             "estimated_duration": 20,
             "complexity": "comprehensive",
-            "subtopics": ["every", "concept", "visible", "with", "proofs"],
+            "subject_area": "math|cs|physics|economics|biology|engineering|general",
+            "subtopics": ["every", "concept", "visible"],
             "prerequisites": ["required background"],
-            "visual_ideas": ["step-by-step derivations", "calculations shown visually"],
-            "silent_calculation_sections": ["derivations to show without narration"]
+            "visual_ideas": ["step-by-step explanations", "visualizations"]
         }
     ],
     "estimated_total_videos": 1

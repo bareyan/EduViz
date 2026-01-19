@@ -1,0 +1,135 @@
+{
+  "id": "c246a222-38b5-4c90-b16c-019b9741edf5",
+  "status": "completed",
+  "progress": 100,
+  "message": "Generated 1 video(s) successfully!",
+  "result": [
+    {
+      "video_id": "c246a222-38b5-4c90-b16c-019b9741edf5",
+      "title": "Mastering Characteristic Functions: From Theory to Uniqueness",
+      "duration": 811.5120000000001,
+      "chapters": [
+        {
+          "title": "Introduction: Complex-Valued Integration",
+          "start_time": 0,
+          "duration": 43.944
+        },
+        {
+          "title": "Defining the Characteristic Function of a Measure",
+          "start_time": 43.944,
+          "duration": 44.016
+        },
+        {
+          "title": "The Random Variable Perspective",
+          "start_time": 87.96000000000001,
+          "duration": 38.903999999999996
+        },
+        {
+          "title": "The Fourier Transform Connection",
+          "start_time": 126.864,
+          "duration": 31.536
+        },
+        {
+          "title": "Elementary Properties: Bounds and Zero-Point",
+          "start_time": 158.4,
+          "duration": 44.903999999999996
+        },
+        {
+          "title": "Symmetry and Complex Conjugation",
+          "start_time": 203.304,
+          "duration": 35.88
+        },
+        {
+          "title": "Rigorous Proof: Global Continuity",
+          "start_time": 239.184,
+          "duration": 37.632
+        },
+        {
+          "title": "Effect of Affine Transformations",
+          "start_time": 276.816,
+          "duration": 36.312
+        },
+        {
+          "title": "Discrete Laws: Bernoulli Distribution",
+          "start_time": 313.128,
+          "duration": 35.04
+        },
+        {
+          "title": "Infinite Series: Poisson Distribution",
+          "start_time": 348.168,
+          "duration": 31.104
+        },
+        {
+          "title": "Continuous Laws: Exponential Distribution",
+          "start_time": 379.272,
+          "duration": 33.528
+        },
+        {
+          "title": "The Gaussian Case: Standard Normal Setup",
+          "start_time": 412.8,
+          "duration": 33.912
+        },
+        {
+          "title": "Gaussian Deep Dive: Complex Contour Integration",
+          "start_time": 446.712,
+          "duration": 36.456
+        },
+        {
+          "title": "Gaussian Alternative: Leibnitz Integral Rule",
+          "start_time": 483.168,
+          "duration": 35.88
+        },
+        {
+          "title": "General Normal Distribution: N(m, sigma^2)",
+          "start_time": 519.048,
+          "duration": 32.688
+        },
+        {
+          "title": "Eigenfunctions and Self-Similarity",
+          "start_time": 551.736,
+          "duration": 29.592
+        },
+        {
+          "title": "Recap Table: Comparison of Common Laws",
+          "start_time": 581.328,
+          "duration": 30.792
+        },
+        {
+          "title": "The Injectivity Theorem: Statement and Significance",
+          "start_time": 612.12,
+          "duration": 30.6
+        },
+        {
+          "title": "Proof Part 1: Regularization via Convolution",
+          "start_time": 642.72,
+          "duration": 33.84
+        },
+        {
+          "title": "Proof Part 2: Density and Uniqueness",
+          "start_time": 676.5600000000001,
+          "duration": 30.264
+        },
+        {
+          "title": "Proof Part 3: Convergence in Probability",
+          "start_time": 706.8240000000001,
+          "duration": 31.92
+        },
+        {
+          "title": "Proof Part 4: Convergence in Law to CDFs",
+          "start_time": 738.744,
+          "duration": 39.599999999999994
+        },
+        {
+          "title": "Conclusion and Future Outlook",
+          "start_time": 778.344,
+          "duration": 33.168
+        }
+      ],
+      "download_url": "/outputs/c246a222-38b5-4c90-b16c-019b9741edf5/final_video.mp4",
+      "thumbnail_url": null
+    }
+  ],
+  "error": null,
+  "created_at": "2026-01-19T02:38:51.333830",
+  "updated_at": "2026-01-19T02:45:12.413464"
+}

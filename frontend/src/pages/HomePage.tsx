@@ -60,14 +60,14 @@ export default function HomePage() {
       <section className="text-center py-12">
         <div className="relative inline-block">
           <h1 className="text-5xl md:text-6xl font-bold mb-6">
-            Transform Math into
+            Transform Knowledge into
             <span className="block gradient-text">Visual Magic</span>
           </h1>
           <Sparkles className="absolute -top-4 -right-8 w-8 h-8 text-yellow-400 animate-pulse" />
         </div>
         <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-8">
-          Upload your math materials — PDFs, LaTeX, images, or text files — and watch them transform into 
-          beautiful 3Blue1Brown-style animated videos with AI narration.
+          Upload your educational materials — PDFs, images, or text files — and watch them transform into 
+          beautiful animated explainer videos with AI narration. Works for math, CS, physics, economics & more.
         </p>
 
         {/* Upload Zone */}
@@ -128,13 +128,13 @@ export default function HomePage() {
         <FeatureCard
           icon={<BookOpen className="w-8 h-8" />}
           title="Smart Analysis"
-          description="AI-powered content analysis detects equations, theorems, and key concepts from your materials."
+          description="AI-powered content analysis detects concepts, diagrams, code, and key ideas from your materials."
           color="blue"
         />
         <FeatureCard
           icon={<Wand2 className="w-8 h-8" />}
-          title="Manim Animations"
-          description="Beautiful 3Blue1Brown-style animations generated automatically for each concept."
+          title="Animated Explanations"
+          description="Beautiful Manim animations generated automatically for each concept - like 3Blue1Brown."
           color="purple"
         />
         <FeatureCard
@@ -149,7 +149,7 @@ export default function HomePage() {
       <section className="py-12">
         <h2 className="text-3xl font-bold text-center mb-12">How It Works</h2>
         <div className="grid md:grid-cols-4 gap-6">
-          <Step number={1} title="Upload" description="Drop your PDF or images with math content" />
+          <Step number={1} title="Upload" description="Drop your PDF or images with educational content" />
           <Step number={2} title="Analyze" description="AI analyzes and suggests video topics" />
           <Step number={3} title="Customize" description="Choose topics, style, and voice preferences" />
           <Step number={4} title="Generate" description="Get beautiful animated videos with narration" />

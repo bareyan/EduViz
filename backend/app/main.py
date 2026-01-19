@@ -66,6 +66,8 @@ class GenerationRequest(BaseModel):
     style: str = "3blue1brown"
     max_video_length: int = 20  # Max minutes per video
     voice: str = "en-US-GuyNeural"  # Edge TTS voice
+    video_mode: str = "comprehensive"  # "comprehensive" or "overview"
+    language: str = "en"  # Language code for narration and content (en, fr, etc.)
 
 
 class TopicSuggestion(BaseModel):
@@ -409,7 +411,7 @@ async def generate_videos(request: GenerationRequest, background_tasks: Backgrou
                     job_id, 
                     JobStatus.CREATING_ANIMATIONS, 
                     base_progress, 
-                    f"Generating video {topic_idx + 1}/{total_topics}: {topic.get('title', 'Unknown')}"
+                    f"Generating {request.video_mode} video {topic_idx + 1}/{total_topics}: {topic.get('title', 'Unknown')}"
                 )
                 
                 result = await video_generator.generate_video(
@@ -423,7 +425,10 @@ async def generate_videos(request: GenerationRequest, background_tasks: Backgrou
                         base_progress + (p.get("progress", 0) / total_topics), 
                         p.get("message", "Processing...")
                     ),
-                    job_id=job_id  # Pass the job_id so output folder matches
+                    job_id=job_id,  # Pass the job_id so output folder matches
+                    video_mode=request.video_mode,  # Pass the video mode
+                    style=request.style,  # Pass the visual style
+                    language=request.language  # Pass the language for content generation
                 )
                 
                 if result.get("status") == "completed":
@@ -503,17 +508,14 @@ async def get_video(video_id: str):
 
 
 @app.get("/voices")
-async def get_available_voices():
-    """Get list of available TTS voices"""
+async def get_available_voices(language: str = "en"):
+    """Get list of available TTS voices, optionally filtered by language"""
+    from app.services.tts_engine import TTSEngine
+    
     return {
-        "voices": [
-            {"id": "en-US-GuyNeural", "name": "Guy (US)", "gender": "male"},
-            {"id": "en-US-JennyNeural", "name": "Jenny (US)", "gender": "female"},
-            {"id": "en-GB-RyanNeural", "name": "Ryan (UK)", "gender": "male"},
-            {"id": "en-GB-SoniaNeural", "name": "Sonia (UK)", "gender": "female"},
-            {"id": "en-AU-WilliamNeural", "name": "William (AU)", "gender": "male"},
-            {"id": "en-IN-PrabhatNeural", "name": "Prabhat (India)", "gender": "male"},
-        ]
+        "voices": TTSEngine.get_voices_for_language(language),
+        "languages": TTSEngine.get_available_languages(),
+        "current_language": language
     }
 
 
@@ -892,16 +894,46 @@ async def recompile_job(job_id: str, background_tasks: BackgroundTasks):
                 combined = os.path.join(job_dir, f"combined_{i:03d}.mp4")
 
                 if audio_file:
-                    # Merge video with audio (re-mux) to ensure each segment has embedded audio
-                    cmd = [
-                        "ffmpeg", "-y",
-                        "-i", video_file,
-                        "-i", audio_file,
-                        "-c:v", "copy",
-                        "-c:a", "aac",
-                        "-shortest",
-                        combined
-                    ]
+                    # Get durations to decide on merge strategy
+                    def get_duration(file_path):
+                        try:
+                            probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration", 
+                                        "-of", "default=noprint_wrappers=1:nokey=1", file_path]
+                            result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30)
+                            return float(result.stdout.strip())
+                        except:
+                            return 0.0
+                    
+                    video_duration = get_duration(video_file)
+                    audio_duration = get_duration(audio_file)
+                    print(f"  Video duration: {video_duration:.1f}s, Audio duration: {audio_duration:.1f}s")
+                    
+                    if video_duration >= audio_duration:
+                        # Video is long enough, use -shortest
+                        cmd = [
+                            "ffmpeg", "-y",
+                            "-i", video_file,
+                            "-i", audio_file,
+                            "-c:v", "libx264",
+                            "-c:a", "aac",
+                            "-shortest",
+                            combined
+                        ]
+                    else:
+                        # Video is shorter than audio - extend with tpad (freeze last frame)
+                        print(f"  Extending video by {audio_duration - video_duration:.1f}s to match audio")
+                        cmd = [
+                            "ffmpeg", "-y",
+                            "-i", video_file,
+                            "-i", audio_file,
+                            "-filter_complex", "[0:v]tpad=stop=-1:stop_mode=clone,setpts=PTS-STARTPTS[v]",
+                            "-map", "[v]",
+                            "-map", "1:a:0",
+                            "-c:v", "libx264",
+                            "-c:a", "aac",
+                            "-t", str(audio_duration),
+                            combined
+                        ]
                 else:
                     # No audio: copy video into combined file (re-mux to standard container)
                     cmd = [

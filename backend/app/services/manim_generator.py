@@ -49,7 +49,8 @@ class Section{section_id}(Scene):
         section: Dict[str, Any],
         output_dir: str,
         section_index: int,
-        audio_duration: Optional[float] = None
+        audio_duration: Optional[float] = None,
+        style: str = "3b1b"  # "3b1b" (dark) or "clean" (light)
     ) -> Dict[str, Any]:
         """Generate a video for a single section
         
@@ -58,6 +59,7 @@ class Section{section_id}(Scene):
             output_dir: Directory to save output files
             section_index: Index of this section
             audio_duration: Actual audio duration in seconds (if audio was pre-generated)
+            style: Visual style - "3b1b" for dark theme, "clean" for light theme
         
         Returns:
             Dict with video_path and manim_code
@@ -66,6 +68,7 @@ class Section{section_id}(Scene):
         # Use audio duration as the target if available, otherwise fall back to estimated
         target_duration = audio_duration if audio_duration else section.get("duration_seconds", 60)
         section["target_duration"] = target_duration
+        section["style"] = style  # Pass style to code generation
         
         # Generate Manim code using Gemini
         manim_code = await self._generate_manim_code(section, target_duration)
@@ -111,11 +114,154 @@ class Section{section_id}(Scene):
         narration = section.get('narration', '')
         pause_count = narration.count('...') + narration.count('[PAUSE]') * 2
         
-        # Distribute wait time: some for pauses, some for content viewing
-        total_animation_time = audio_duration * 0.4  # ~40% for animations
-        total_wait_time = audio_duration * 0.6  # ~60% for waits/pauses
+        # Distribute wait time: animations should be shorter, waits fill the rest
+        total_animation_time = audio_duration * 0.35
+        total_wait_time = audio_duration * 0.65
         
-        prompt = f"""You are an expert Manim (Community Edition) programmer creating animations for a mathematical lecture video (like 3Blue1Brown).
+        # Calculate a padding wait at the end to ensure we fill the full duration
+        end_wait = max(2.0, audio_duration * 0.1)
+        
+        # Get style settings
+        style = section.get('style', '3b1b')
+        animation_type = section.get('animation_type', 'text')
+        key_concepts = section.get('key_concepts', section.get('key_equations', []))
+        
+        # Style-specific instructions - support multiple themes
+        style_configs = {
+            '3b1b': {
+                'instructions': """
+VISUAL STYLE: 3BLUE1BROWN (DARK THEME)
+- Dark background (default Manim - #1a1a2e)
+- Text color: WHITE (default)
+- Primary accent: BLUE (#3b82f6)
+- Secondary accent: YELLOW (#fbbf24)
+- Highlight: GREEN, RED for emphasis
+- Elegant mathematical animations with smooth transitions
+- Example: Text("Title", font_size=48)"""
+            },
+            'clean': {
+                'instructions': """
+VISUAL STYLE: CLEAN/LIGHT THEME
+- Use WHITE background: self.camera.background_color = WHITE
+- Text color: BLACK or DARK_GRAY
+- Primary: BLUE (#2563eb)
+- Secondary: GREEN (#059669)
+- Accent: RED (#dc2626) for emphasis
+- Clean, minimalist look suitable for presentations
+- Example: Text("Title", color=BLACK, font_size=48)"""
+            },
+            'dracula': {
+                'instructions': """
+VISUAL STYLE: DRACULA (DARK PURPLE THEME)
+- Dark purple background: self.camera.background_color = "#282a36"
+- Text color: "#f8f8f2" (off-white)
+- Primary: "#bd93f9" (purple)
+- Secondary: "#8be9fd" (cyan)
+- Accent: "#ff79c6" (pink), "#50fa7b" (green)
+- Moody, stylish aesthetic - popular in programming
+- Example: Text("Title", color="#f8f8f2", font_size=48)"""
+            },
+            'solarized': {
+                'instructions': """
+VISUAL STYLE: SOLARIZED (WARM PROFESSIONAL)
+- Warm dark background: self.camera.background_color = "#002b36"
+- Text color: "#839496" (light gray-blue)
+- Primary: "#268bd2" (blue)
+- Secondary: "#2aa198" (cyan)
+- Accent: "#b58900" (yellow), "#cb4b16" (orange)
+- Professional, easy on the eyes
+- Example: Text("Title", color="#839496", font_size=48)"""
+            },
+            'nord': {
+                'instructions': """
+VISUAL STYLE: NORD (ARCTIC COOL)
+- Cool dark background: self.camera.background_color = "#2e3440"
+- Text color: "#eceff4" (snow white)
+- Primary: "#88c0d0" (frost blue)
+- Secondary: "#81a1c1" (steel blue)
+- Accent: "#bf616a" (aurora red), "#a3be8c" (aurora green)
+- Cool, calming Nordic aesthetic
+- Example: Text("Title", color="#eceff4", font_size=48)"""
+            }
+        }
+        
+        style_config = style_configs.get(style, style_configs['3b1b'])
+        style_instructions = style_config['instructions']
+        
+        # Animation type specific instructions - now includes static and mixed
+        animation_guidance = {
+            'equation': "Focus on mathematical equations with MathTex. Highlight terms, transform equations step-by-step.",
+            'text': "Use Text objects for explanations. Fade in key points one by one.",
+            'diagram': "Create shapes, arrows, and diagrams to illustrate concepts.",
+            'code': "Show code snippets with Code() or Text() with monospace font. Highlight important lines.",
+            'graph': "Create axes with Axes(), plot functions, show data relationships.",
+            'process': "Show step-by-step processes with arrows connecting stages.",
+            'comparison': "Show side-by-side comparisons with clear visual distinction.",
+            'static': """STATIC SCENE - minimal animation, focus on displaying content:
+- Display text/equations that STAY on screen while narrator explains
+- Use simple FadeIn animations, then long self.wait() calls
+- No complex transformations - let the narration do the explaining
+- Example: Show title, then bullet points one by one, then wait
+- Most time should be self.wait() while content is displayed""",
+            'mixed': """MIXED SCENE - combine static displays with some animation:
+- Start with static elements (title, context)
+- Add some animated elements for key points
+- Balance: 40% animation, 60% static display with waits"""
+        }
+        type_guidance = animation_guidance.get(animation_type, animation_guidance['text'])
+        
+        # Special handling for static scenes
+        is_static = animation_type in ['static', 'mixed']
+        static_instructions = ""
+        if is_static:
+            static_instructions = """
+═══════════════════════════════════════════════════════════════════════════════
+STATIC/MIXED SCENE GUIDANCE
+═══════════════════════════════════════════════════════════════════════════════
+For STATIC scenes, the visual serves as a backdrop while the narrator explains:
+- Use simple FadeIn/Write for initial display
+- Then use long self.wait() calls (4-8 seconds each)
+- Keep elements on screen - don't animate everything
+- The NARRATION carries the content, not the animation
+- Think of it like a slide presentation with voice-over
+
+Example static scene:
+        title = Text("Key Definition", font_size=42)
+        title.to_edge(UP)
+        self.play(FadeIn(title), run_time=1)
+        
+        points = VGroup(
+            Text("• First point", font_size=32),
+            Text("• Second point", font_size=32),
+            Text("• Third point", font_size=32)
+        ).arrange(DOWN, aligned_edge=LEFT, buff=0.4)
+        points.next_to(title, DOWN, buff=0.8)
+        
+        for point in points:
+            self.play(FadeIn(point), run_time=0.5)
+            self.wait(3)  # Let narrator explain each point
+        
+        self.wait(5)  # Final wait while narrator wraps up
+"""
+        
+        # Check if this is a subsection (part of a larger section)
+        is_subsection = section.get('is_subsection', False)
+        subsection_context = ""
+        if is_subsection:
+            sub_idx = section.get('subsection_index', 0)
+            total_subs = section.get('total_subsections', 1)
+            subsection_context = f"""
+═══════════════════════════════════════════════════════════════════════════════
+SUBSECTION CONTEXT: This is part {sub_idx + 1} of {total_subs} in a larger section
+═══════════════════════════════════════════════════════════════════════════════
+- This clip will be merged with other subsections
+- Focus on THIS part of the narration only
+- Keep visual style consistent (same colors, fonts)
+- Don't add intro title if not part 1
+- Make transitions smooth - content will continue
+"""
+        
+        prompt = f"""You are an expert Manim (Community Edition) programmer creating animations for educational videos.
 
 Generate Manim code for this video section. The code goes INSIDE the construct(self) method.
 
@@ -123,37 +269,38 @@ SECTION DETAILS:
 - Title: {section.get('title', 'Untitled')}
 - Narration: {narration}
 - Visual Description: {section.get('visual_description', '')}
-- Key Equations: {section.get('key_equations', [])}
-- Animation Type: {section.get('animation_type', 'text')}
+- Key Concepts: {key_concepts}
+- Animation Type: {animation_type}
+{static_instructions}
+{subsection_context}
+{style_instructions}
+
+ANIMATION TYPE GUIDANCE: {type_guidance}
 
 ═══════════════════════════════════════════════════════════════════════════════
 CRITICAL: AUDIO IS ALREADY GENERATED - DURATION IS EXACTLY {audio_duration:.1f} SECONDS
+THE VIDEO MUST BE AT LEAST {audio_duration:.1f} SECONDS LONG - NEVER SHORTER!
 ═══════════════════════════════════════════════════════════════════════════════
 
-Your animation MUST total EXACTLY {audio_duration:.1f} seconds to sync with the audio.
+TIMING STRATEGY:
+1. Use SHORTER run_time for animations: 1.0-1.5 seconds each
+2. Use LONGER self.wait() calls between animations: 2.0-4.0 seconds each
+3. ALWAYS end with: self.wait({end_wait:.1f})
+4. Total time should sum to AT LEAST {audio_duration:.1f} seconds
 
 TIMING BREAKDOWN:
 - Total animation run_time: ~{total_animation_time:.1f} seconds
-- Total self.wait() time: ~{total_wait_time:.1f} seconds  
-- Number of natural pauses in narration: {pause_count}
-- Each "..." in narration = self.wait(1.5-2)
-- Each "[PAUSE]" = self.wait(3-4)
-
-TIMING STRATEGY:
-1. Add up all your run_time values and wait() values - they should sum to ~{audio_duration:.1f}s
-2. Animations: self.play(..., run_time=1.0-2.0) 
-3. After each visual element appears: self.wait(2-4)
-4. End with self.wait(2) for clean ending
-5. Err on the side of longer waits - better to have video slightly longer than audio
+- Total self.wait() time: ~{total_wait_time:.1f} seconds
+- Natural pauses in narration: {pause_count}
+- Each "..." = self.wait(2-3), Each "[PAUSE]" = self.wait(4-5)
 
 ═══════════════════════════════════════════════════════════════════════════════
 CRITICAL: PYTHON INDENTATION
 ═══════════════════════════════════════════════════════════════════════════════
 - Use exactly 8 spaces for indentation (code goes inside construct method)
 - Every line must start with 8 spaces
-- For nested blocks (if/for/while), add 4 more spaces per level
+- For nested blocks, add 4 more spaces per level
 - NO TABS - only spaces
-- Check every line has correct indentation before outputting
 
 EXAMPLE OF CORRECT INDENTATION:
         # This comment has 8 spaces before it
@@ -215,11 +362,26 @@ SCENE MANAGEMENT:
 Generate ONLY the Python code. No markdown, no ```python blocks, no explanations.
 Start directly with the indented code (8 spaces)."""
 
-        response = await asyncio.to_thread(
-            self.client.models.generate_content,
-            model=self.MODEL,
-            contents=prompt
-        )
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.MODEL,
+                    contents=prompt
+                ),
+                timeout=300  # 5 minute timeout for Gemini API
+            )
+        except asyncio.TimeoutError:
+            print(f"[ManimGenerator] Gemini API timed out for section code generation")
+            # Return minimal fallback code
+            return '''        text = Text("Section", font_size=48)
+        self.play(Write(text))
+        self.wait(2)'''
+        except Exception as e:
+            print(f"[ManimGenerator] Gemini API error: {e}")
+            return '''        text = Text("Section", font_size=48)
+        self.play(Write(text))
+        self.wait(2)'''
         
         code = response.text.strip()
         
@@ -387,7 +549,7 @@ class Scene{class_name}(Scene):
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=120  # 2 minute timeout per section
+                timeout=300  # 5 minute timeout per section
             )
             
             if result.returncode != 0:
@@ -575,7 +737,7 @@ class FallbackSection{section_index}(Scene):
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=180  # 3 minute timeout for fallback
             )
             
             # Find output

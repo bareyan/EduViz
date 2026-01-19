@@ -1,0 +1,40 @@
+{
+  "id": "56847d48-fff5-4273-8b0a-855550aff751",
+  "status": "completed",
+  "progress": 100,
+  "message": "Generated 1 video(s) successfully!",
+  "result": [
+    {
+      "video_id": "56847d48-fff5-4273-8b0a-855550aff751",
+      "title": "The Central Limit Theorem: From Paul L\u00e9vy to Universal Convergence",
+      "duration": 157.79999999999998,
+      "chapters": [
+        {
+          "title": "The Mathematical Signature: Paul L\u00e9vy's Theorem",
+          "start_time": 0,
+          "duration": 39.24
+        },
+        {
+          "title": "Extracting Shape: Moments and Derivatives",
+          "start_time": 39.24,
+          "duration": 36.263999999999996
+        },
+        {
+          "title": "The Fourier Shortcut: Sums and Products",
+          "start_time": 75.50399999999999,
+          "duration": 30.744
+        },
+        {
+          "title": "The Climax: Proving the Universal Bell Curve",
+          "start_time": 106.24799999999999,
+          "duration": 51.552
+        }
+      ],
+      "download_url": "/outputs/56847d48-fff5-4273-8b0a-855550aff751/final_video.mp4",
+      "thumbnail_url": null
+    }
+  ],
+  "error": null,
+  "created_at": "2026-01-19T01:32:12.910447",
+  "updated_at": "2026-01-19T01:36:09.004408"
+}
