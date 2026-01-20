@@ -18,13 +18,27 @@ except ImportError:
     genai = None
     types = None
 
+# Visual Quality Control
+try:
+    from .visual_qc import VisualQualityController
+    VISUAL_QC_AVAILABLE = True
+except ImportError:
+    VISUAL_QC_AVAILABLE = False
+    print("[ManimGenerator] Visual QC not available")
+
 
 class ManimGenerator:
     """Generates Manim animations using Gemini AI"""
     
     MODEL = "gemini-3-flash-preview"  # Stable flash model for generation
-    CORRECTION_MODEL = "gemini-3-flash-preview"  # Same model for corrections (fast enough)
+    CORRECTION_MODEL = "gemini-3-flash-preview"  # Fast model for corrections
+    STRONG_MODEL = "gemini-3-pro-preview"  # Stronger model for final fix attempt
     MAX_CORRECTION_ATTEMPTS = 3  # Maximum number of auto-correction attempts
+    
+    # Visual QC settings
+    ENABLE_VISUAL_QC = True  # Enable visual quality control
+    QC_MODEL = "fastest"  # Visual QC model tier (fastest/balanced/capable/best)
+    MAX_QC_ITERATIONS = 2  # Maximum times to retry fixing visual issues
     
     # Base Manim template
     BASE_TEMPLATE = '''"""Auto-generated Manim scene"""
@@ -43,6 +57,16 @@ class Section{section_id}(Scene):
             self.client = genai.Client(api_key=api_key)
         else:
             raise ValueError("GEMINI_API_KEY environment variable is required")
+        
+        # Initialize visual QC controller
+        self.visual_qc = None
+        if VISUAL_QC_AVAILABLE and self.ENABLE_VISUAL_QC:
+            try:
+                self.visual_qc = VisualQualityController(model=self.QC_MODEL)
+                print(f"[ManimGenerator] Visual QC enabled with model: {self.QC_MODEL}")
+            except Exception as e:
+                print(f"[ManimGenerator] Failed to initialize Visual QC: {e}")
+                self.visual_qc = None
     
     async def generate_section_video(
         self,
@@ -101,10 +125,11 @@ class Section{section_id}(Scene):
         with open(code_file, "r") as f:
             final_code = f.read()
         
-        # Return both video path and the final manim code for persistence
+        # Return video path and manim code path (store path, not code content)
         return {
             "video_path": output_video,
-            "manim_code": final_code
+            "manim_code": final_code,  # Keep for backward compatibility
+            "manim_code_path": str(code_file)  # Store path for script.json
         }
     
     async def render_from_code(
@@ -657,14 +682,33 @@ TIMING: {audio_duration:.1f} SECONDS TOTAL
 - End with: self.wait({end_wait:.1f})
 
 ════════════════════════════════════════════════════════════════════════════════
-SYNTAX
+SYNTAX AND INDENTATION (CRITICAL)
 ════════════════════════════════════════════════════════════════════════════════
 
-- 8 spaces indentation
+INDENTATION RULES:
+- Use SPACES only, NEVER tabs
+- Base level (inside construct): 8 spaces
+- Inside for/while loops: 12 spaces
+- Inside if/else: 12 spaces  
+- Nested blocks: add 4 more spaces each level
+
+Example with correct indentation:
+        title = Text("Hello", font_size=48)  # 8 spaces - base level
+        self.play(Write(title))
+        
+        for i in range(3):
+            item = Text(f"Item {{i}}", font_size=32)  # 12 spaces - inside loop
+            item.next_to(title, DOWN, buff=0.5)
+            if i > 0:
+                self.play(FadeOut(prev_item))  # 16 spaces - inside if inside loop
+            self.play(FadeIn(item))
+            prev_item = item
+
+OTHER SYNTAX:
 - MathTex(r"\\frac{{a}}{{b}}") - raw string, double braces
 - Axes config uses double braces: axis_config={{...}}
 
-OUTPUT: Python code only. No markdown. No explanations."""
+OUTPUT: Python code only. No markdown. No explanations. Ensure proper indentation."""
 
         try:
             response = await asyncio.wait_for(
@@ -764,7 +808,7 @@ Text is in a non-English language. Remember:
             return ""  # No special instructions for English
     
     def _clean_code(self, code: str) -> str:
-        """Clean up generated code"""
+        """Clean up generated code while preserving nested indentation"""
         
         # Remove markdown code blocks
         if code.startswith("```"):
@@ -776,30 +820,60 @@ Text is in a non-English language. Remember:
         lines = code.split("\n")
         cleaned_lines = []
         skip_until_construct = False
+        in_construct = False
         
         for line in lines:
+            stripped = line.strip()
             # Skip import lines
-            if line.strip().startswith("from manim") or line.strip().startswith("import"):
+            if stripped.startswith("from manim") or stripped.startswith("import"):
                 continue
             # Skip class definition
-            if line.strip().startswith("class "):
+            if stripped.startswith("class "):
                 skip_until_construct = True
                 continue
             if skip_until_construct:
                 if "def construct" in line:
                     skip_until_construct = False
+                    in_construct = True
                 continue
             cleaned_lines.append(line)
         
         code = "\n".join(cleaned_lines)
         
-        # Ensure proper indentation (8 spaces for inside construct)
+        # Normalize indentation while PRESERVING relative indentation
         lines = code.split("\n")
+        
+        # Find the minimum non-zero indentation to understand the base level
+        min_indent = float('inf')
+        for line in lines:
+            if line.strip():
+                # Replace tabs with 4 spaces for counting
+                normalized_line = line.replace('\t', '    ')
+                indent = len(normalized_line) - len(normalized_line.lstrip())
+                if indent > 0:
+                    min_indent = min(min_indent, indent)
+        
+        if min_indent == float('inf'):
+            min_indent = 0
+        
+        # Re-indent: shift everything so base level is 8 spaces (inside construct)
         indented_lines = []
         for line in lines:
             if line.strip():
-                # Remove existing indentation and add 8 spaces
-                indented_lines.append("        " + line.strip())
+                # Replace tabs with 4 spaces
+                normalized_line = line.replace('\t', '    ')
+                current_indent = len(normalized_line) - len(normalized_line.lstrip())
+                content = normalized_line.lstrip()
+                
+                # Calculate relative indentation (how many levels above base)
+                if min_indent > 0:
+                    relative_indent = current_indent - min_indent
+                else:
+                    relative_indent = current_indent
+                
+                # New indent: 8 spaces (base) + relative indentation
+                new_indent = 8 + max(0, relative_indent)
+                indented_lines.append(" " * new_indent + content)
             else:
                 indented_lines.append("")
         
@@ -889,9 +963,10 @@ class Scene{class_name}(Scene):
         output_dir: str,
         section_index: int,
         section: Dict[str, Any] = None,
-        attempt: int = 0
+        attempt: int = 0,
+        qc_iteration: int = 0
     ) -> Optional[str]:
-        """Render a Manim scene to video with auto-correction on errors"""
+        """Render a Manim scene to video with auto-correction on errors and visual QC"""
         
         output_path = Path(output_dir) / f"section_{section_index}.mp4"
         
@@ -935,7 +1010,8 @@ class Scene{class_name}(Scene):
                     corrected_code = await self._correct_manim_code(
                         content, 
                         result.stderr, 
-                        section
+                        section,
+                        attempt=attempt  # Pass attempt number for model selection
                     )
                     
                     if corrected_code:
@@ -950,7 +1026,8 @@ class Scene{class_name}(Scene):
                             output_dir, 
                             section_index,
                             section,
-                            attempt + 1
+                            attempt + 1,
+                            qc_iteration  # Keep same QC iteration
                         )
                 
                 # Fall back to simple scene if all corrections failed
@@ -958,19 +1035,94 @@ class Scene{class_name}(Scene):
             
             # Find the actual output file
             video_dir = Path(output_dir) / "videos" / code_file.stem / "480p15"
+            rendered_video = None
+            
             if video_dir.exists():
                 videos = list(video_dir.glob("*.mp4"))
                 if videos:
-                    return str(videos[0])
+                    rendered_video = str(videos[0])
             
-            # Try alternate paths
-            for pattern in ["**/*.mp4"]:
-                videos = list(Path(output_dir).glob(pattern))
-                if videos:
-                    return str(videos[0])
+            # Try alternate paths if not found
+            if not rendered_video:
+                for pattern in ["**/*.mp4"]:
+                    videos = list(Path(output_dir).glob(pattern))
+                    if videos:
+                        rendered_video = str(videos[0])
+                        break
             
-            print(f"Could not find rendered video for section {section_index}")
-            return None
+            if not rendered_video:
+                print(f"Could not find rendered video for section {section_index}")
+                return None
+            
+            # ═══════════════════════════════════════════════════════════════
+            # VISUAL QUALITY CONTROL - Check rendered video for visual issues
+            # ═══════════════════════════════════════════════════════════════
+            if self.visual_qc and section and qc_iteration < self.MAX_QC_ITERATIONS:
+                print(f"[ManimGenerator] Running Visual QC (iteration {qc_iteration + 1}/{self.MAX_QC_ITERATIONS})...")
+                
+                try:
+                    # Check if model is available
+                    if not await self.visual_qc.check_model_available():
+                        print("[ManimGenerator] Visual QC model not available, skipping QC")
+                    else:
+                        # Run visual quality check
+                        qc_result = await self.visual_qc.check_video_quality(
+                            rendered_video,
+                            section,
+                            num_frames=5
+                        )
+                        
+                        # Clean up frames after analysis
+                        if qc_result.get("frame_paths"):
+                            self.visual_qc.cleanup_frames(qc_result["frame_paths"])
+                        
+                        # Check if issues were found
+                        if qc_result.get("status") == "issues" and qc_result.get("issues"):
+                            critical_issues = [
+                                issue for issue in qc_result["issues"]
+                                if issue.get("severity") == "critical"
+                            ]
+                            
+                            if critical_issues:
+                                print(f"[ManimGenerator] Found {len(critical_issues)} critical visual issue(s)")
+                                print(f"[ManimGenerator] QC Description: {qc_result.get('description')}")
+                                
+                                # Generate fixed code using Gemini (not local model)
+                                fixed_code = await self._generate_visual_fix(
+                                    content,
+                                    section,
+                                    qc_result
+                                )
+                                
+                                if fixed_code:
+                                    print(f"[ManimGenerator] Applying visual QC fixes...")
+                                    
+                                    # Save the fixed code
+                                    with open(code_file, "w") as f:
+                                        f.write(fixed_code)
+                                    
+                                    # Re-render with fixed code
+                                    return await self._render_scene(
+                                        code_file,
+                                        scene_name,
+                                        output_dir,
+                                        section_index,
+                                        section,
+                                        attempt=0,  # Reset syntax error attempts
+                                        qc_iteration=qc_iteration + 1  # Increment QC iteration
+                                    )
+                                else:
+                                    print("[ManimGenerator] Failed to generate fix, using current video")
+                            else:
+                                print(f"[ManimGenerator] Found {len(qc_result.get('issues', []))} moderate issue(s), acceptable")
+                        else:
+                            print(f"[ManimGenerator] Visual QC passed: {qc_result.get('description')}")
+                
+                except Exception as qc_error:
+                    print(f"[ManimGenerator] Visual QC error (non-fatal): {qc_error}")
+                    # Continue with the rendered video even if QC fails
+            
+            return rendered_video
             
         except subprocess.TimeoutExpired:
             print(f"Manim rendering timed out for section {section_index}")
@@ -983,9 +1135,20 @@ class Scene{class_name}(Scene):
         self,
         original_code: str,
         error_message: str,
-        section: Dict[str, Any]
+        section: Dict[str, Any],
+        attempt: int = 0
     ) -> Optional[str]:
-        """Use Gemini (lighter model) to fix errors in the Manim code"""
+        """Use Gemini to fix errors in the Manim code
+        
+        On the last attempt (attempt == MAX_CORRECTION_ATTEMPTS - 1), uses a stronger model.
+        """
+        
+        # Use stronger model on last attempt
+        is_last_attempt = attempt >= self.MAX_CORRECTION_ATTEMPTS - 1
+        model_to_use = self.STRONG_MODEL if is_last_attempt else self.CORRECTION_MODEL
+        
+        if is_last_attempt:
+            print(f"[ManimGenerator] Using stronger model ({self.STRONG_MODEL}) for final fix attempt")
         
         prompt = f"""You are an expert Manim (Community Edition) programmer. The following Manim code has an error that needs to be fixed.
 
@@ -1045,10 +1208,10 @@ No markdown, no explanations, just the code.
 ENSURE ALL INDENTATION USES SPACES, NOT TABS."""
 
         try:
-            # Use lighter model for quick error fixes
+            # Use stronger model on last attempt, lighter model otherwise
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
-                model=self.CORRECTION_MODEL,
+                model=model_to_use,
                 contents=prompt
             )
             
@@ -1069,6 +1232,120 @@ ENSURE ALL INDENTATION USES SPACES, NOT TABS."""
                 
         except Exception as e:
             print(f"Error during code correction: {e}")
+            return None
+    
+    async def _generate_visual_fix(
+        self,
+        original_code: str,
+        section: Dict[str, Any],
+        qc_result: Dict[str, Any]
+    ) -> Optional[str]:
+        """Generate fixed Manim code based on visual QC issues using Gemini
+        
+        Args:
+            original_code: The original Manim code that has visual issues
+            section: Section metadata
+            qc_result: Visual QC analysis result with detected issues
+        
+        Returns:
+            Fixed Manim code, or None if fix generation failed
+        """
+        issues = qc_result.get("issues", [])
+        if not issues:
+            return None
+        
+        # Build description of issues with timestamps
+        issues_description = "\n".join([
+            f"- [{issue.get('severity', 'unknown').upper()}] {issue.get('type', 'unknown')} at {', '.join(str(t)+'s' for t in issue.get('timestamps', []))}: {issue.get('description', '')}\n  Suggestion: {issue.get('suggestion', 'N/A')}"
+            for issue in issues
+        ])
+        
+        prompt = f"""You are an expert Manim (Community Edition) programmer fixing VISUAL QUALITY issues.
+
+ORIGINAL MANIM CODE:
+```python
+{original_code}
+```
+
+VISUAL QUALITY ISSUES DETECTED (by analyzing video frames):
+{issues_description}
+
+SECTION INFO:
+- Title: {section.get('title', '')}
+- Visual Description: {section.get('visual_description', '')}
+- Target Duration: {section.get('target_duration', 30)} seconds
+
+YOUR TASK:
+Fix the Manim code to address ALL the identified visual issues while maintaining the educational intent.
+
+COMMON FIXES FOR VISUAL ISSUES:
+
+1. **Text Overlap:**
+   - Use `.next_to()` with proper buffer: `text2.next_to(text1, DOWN, buff=0.5)`
+   - Use `.arrange()` for groups: `VGroup(text1, text2).arrange(DOWN, buff=0.5)`
+   - Scale down if needed: `text.scale(0.8)`
+
+2. **Off-screen Elements:**
+   - Use `.to_edge()`: `text.to_edge(UP)`
+   - Use `.shift()`: `equation.shift(UP * 2)`
+   - Center with `.move_to(ORIGIN)` or `.center()`
+
+3. **Unreadable Text:**
+   - Increase font_size: `Text("Title", font_size=48)`
+   - Use high-contrast colors: `Text("Text", color=WHITE)` on dark bg
+   - Avoid tiny text: minimum font_size=24
+
+4. **Crowded Layout:**
+   - Show fewer elements at once
+   - Use FadeOut to remove old content before adding new
+   - Spread elements: `.arrange(RIGHT, buff=1.0)`
+
+5. **Element Collision:**
+   - Check positions with `.get_center()`, `.get_top()`, etc.
+   - Use `.next_to()` relative positioning
+   - Clear the scene: `self.play(FadeOut(VGroup(*self.mobjects)))`
+
+6. **Poor Positioning:**
+   - Align to edges: `.to_edge(LEFT)`, `.to_corner(UL)`
+   - Use standard positions: `UP`, `DOWN`, `LEFT`, `RIGHT`
+   - Balance layout: place related items together
+
+CRITICAL REQUIREMENTS:
+- Keep the same educational content and message
+- Maintain timing (target duration: {section.get('target_duration', 30)}s)
+- Use modern Manim CE syntax (from manim import *)
+- Ensure proper indentation (spaces, not tabs)
+- All objects must be created before being animated
+
+Return ONLY the complete, working Python code with the fixes applied.
+Start with imports, include the full class definition.
+Do NOT include explanations or markdown - just the code."""
+
+        try:
+            # Use the flash model for fast fix generation
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.CORRECTION_MODEL,  # Use gemini-3-flash-preview
+                contents=prompt
+            )
+            
+            fixed_code = response.text.strip()
+            
+            # Remove markdown if present
+            if fixed_code.startswith("```"):
+                lines = fixed_code.split("\n")
+                lines = [l for l in lines if not l.strip().startswith("```")]
+                fixed_code = "\n".join(lines)
+            
+            # Validate the fixed code has basic structure
+            if "from manim import" in fixed_code and "class " in fixed_code and "def construct" in fixed_code:
+                return fixed_code
+            else:
+                print("[ManimGenerator] Fixed code missing required structure")
+                return None
+        
+        except Exception as e:
+            print(f"[ManimGenerator] Error generating visual fix: {e}")
             return None
 
     async def _render_fallback_scene(

@@ -1,0 +1,140 @@
+{
+  "id": "25c5d62f-1ce7-405b-bc7c-dc287ffc36d7",
+  "status": "completed",
+  "progress": 100,
+  "message": "Generated 1 video(s) successfully!",
+  "result": [
+    {
+      "video_id": "25c5d62f-1ce7-405b-bc7c-dc287ffc36d7",
+      "title": "SPatch: Advanced Graph Deletion for HNSW via Random Walks and Spectral Sparsification",
+      "duration": 946.2240000000002,
+      "chapters": [
+        {
+          "title": "Introduction: The Rise of HNSW and RAG",
+          "start_time": 0,
+          "duration": 62.664
+        },
+        {
+          "title": "The HNSW Architecture Review",
+          "start_time": 62.664,
+          "duration": 50.544000000000004
+        },
+        {
+          "title": "The Deletion Dilemma",
+          "start_time": 113.208,
+          "duration": 42.528
+        },
+        {
+          "title": "Current Baseline: The Tombstone Strategy",
+          "start_time": 155.736,
+          "duration": 43.056
+        },
+        {
+          "title": "Existing Deletion Paradigms: From Local to Global",
+          "start_time": 198.79199999999997,
+          "duration": 41.544
+        },
+        {
+          "title": "Theoretical Optimal: Theorem 3.1 (The Clique)",
+          "start_time": 240.33599999999996,
+          "duration": 42.263999999999996
+        },
+        {
+          "title": "The Random Walk Perspective",
+          "start_time": 282.59999999999997,
+          "duration": 46.152
+        },
+        {
+          "title": "Gaussian Kernels and Edge Weighting",
+          "start_time": 328.75199999999995,
+          "duration": 35.664
+        },
+        {
+          "title": "Theorem 4.1: The Star-Mesh Transform",
+          "start_time": 364.41599999999994,
+          "duration": 44.663999999999994
+        },
+        {
+          "title": "Graph Sparsification Strategy",
+          "start_time": 409.0799999999999,
+          "duration": 34.68
+        },
+        {
+          "title": "The Graph Laplacian Framework",
+          "start_time": 443.75999999999993,
+          "duration": 38.544000000000004
+        },
+        {
+          "title": "Theorem 4.3: Sparsification by Row Norms",
+          "start_time": 482.3039999999999,
+          "duration": 35.831999999999994
+        },
+        {
+          "title": "Connecting Sparsification to Navigation: Hitting Time",
+          "start_time": 518.136,
+          "duration": 37.10399999999999
+        },
+        {
+          "title": "Theorem 4.5: Hitting Time Approximation Error",
+          "start_time": 555.24,
+          "duration": 35.879999999999995
+        },
+        {
+          "title": "Scaling Realities: Corollary 4.6",
+          "start_time": 591.12,
+          "duration": 37.512
+        },
+        {
+          "title": "Deterministic Selection: From Theory to Algorithm",
+          "start_time": 628.6320000000001,
+          "duration": 31.992
+        },
+        {
+          "title": "Implementation Nuances: FAISS and NetworkX",
+          "start_time": 660.624,
+          "duration": 34.152
+        },
+        {
+          "title": "The Benchmark: Mass Deletion Experiment",
+          "start_time": 694.7760000000001,
+          "duration": 28.224
+        },
+        {
+          "title": "Metric Analysis 1: Recall vs. Query Speed",
+          "start_time": 723.0000000000001,
+          "duration": 38.064
+        },
+        {
+          "title": "Metric Analysis 2: Deletion Time and Memory Usage",
+          "start_time": 761.0640000000001,
+          "duration": 34.248
+        },
+        {
+          "title": "Empirical Proof of the Twin Model",
+          "start_time": 795.3120000000001,
+          "duration": 34.344
+        },
+        {
+          "title": "Conclusion and Future Horizons",
+          "start_time": 829.6560000000002,
+          "duration": 34.68
+        },
+        {
+          "title": "Deep Dive: Star-Mesh Transform Derivation (Bonus)",
+          "start_time": 864.3360000000001,
+          "duration": 42.768
+        },
+        {
+          "title": "Deep Dive: Hitting Time Bound Proof (Bonus)",
+          "start_time": 907.1040000000002,
+          "duration": 39.120000000000005
+        }
+      ],
+      "download_url": "/outputs/25c5d62f-1ce7-405b-bc7c-dc287ffc36d7/final_video.mp4",
+      "thumbnail_url": null
+    }
+  ],
+  "error": null,
+  "created_at": "2026-01-20T14:11:08.536071",
+  "updated_at": "2026-01-20T14:18:35.059410"
+}

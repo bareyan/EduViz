@@ -1,0 +1,50 @@
+{
+  "id": "d4881bbc-1a9e-4ac4-b91b-9afabb9356aa",
+  "status": "completed",
+  "progress": 100,
+  "message": "Generated 1 video(s) successfully!",
+  "result": [
+    {
+      "video_id": "d4881bbc-1a9e-4ac4-b91b-9afabb9356aa",
+      "title": "Dynamic Updates in HNSW Graphs: Introducing SPatch via Random Walks",
+      "duration": 259.92,
+      "chapters": [
+        {
+          "title": "The HNSW Deletion Crisis",
+          "start_time": 0,
+          "duration": 52.512
+        },
+        {
+          "title": "The Softmax Walk: A New Theoretical Framework",
+          "start_time": 52.512,
+          "duration": 44.856
+        },
+        {
+          "title": "SPatch Mechanics: Star-Mesh and Sparsification",
+          "start_time": 97.368,
+          "duration": 46.727999999999994
+        },
+        {
+          "title": "Why It Works: Hitting Time and Frobenius Norms",
+          "start_time": 144.096,
+          "duration": 40.344
+        },
+        {
+          "title": "Performance Showdown: SPatch vs. The World",
+          "start_time": 184.44,
+          "duration": 43.032000000000004
+        },
+        {
+          "title": "The Future of Dynamic HNSW",
+          "start_time": 227.472,
+          "duration": 32.448
+        }
+      ],
+      "download_url": "/outputs/d4881bbc-1a9e-4ac4-b91b-9afabb9356aa/final_video.mp4",
+      "thumbnail_url": null
+    }
+  ],
+  "error": null,
+  "created_at": "2026-01-20T14:56:32.819697",
+  "updated_at": "2026-01-20T14:59:54.071145"
+}

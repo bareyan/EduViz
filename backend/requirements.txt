@@ -17,6 +17,9 @@ edge-tts>=6.1.0
 # AI/ML (Optional - for enhanced analysis)
 google-generativeai>=0.8.0
 
+# Visual Quality Control (Optional - for video QC with local LLM)
+ollama>=0.1.0
+
 # Video Processing
 # Note: FFmpeg must be installed on the system
 

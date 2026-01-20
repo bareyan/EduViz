@@ -12,6 +12,7 @@ Transform your math materials (PDFs, images) into beautiful, 3Blue1Brown-style a
 - 🎙️ **Voice Narration**: Natural-sounding AI voices (Edge TTS - free and high quality)
 - 📹 **Chapter Support**: Videos divided into logical chapters (max 20 min each)
 - ⚡ **Background Processing**: Generate videos without blocking the UI
+- 🔍 **Visual Quality Control**: Automatic detection and fixing of visual issues using local LLM (NEW!)
 
 ## Tech Stack
 
@@ -20,7 +21,8 @@ Transform your math materials (PDFs, images) into beautiful, 3Blue1Brown-style a
 - **Manim**: Mathematical animation engine (3Blue1Brown's tool)
 - **Edge TTS**: Microsoft's free, high-quality text-to-speech
 - **PyMuPDF**: PDF text extraction
-- **OpenAI** (optional): Enhanced content analysis
+- **Gemini**: AI for content analysis and Manim code generation
+- **Ollama**: Local LLM with vision for visual quality control (optional)
 
 ### Frontend
 - **React 18**: Modern UI framework
@@ -34,6 +36,7 @@ Transform your math materials (PDFs, images) into beautiful, 3Blue1Brown-style a
 - Node.js 18+
 - FFmpeg (for video processing)
 - LaTeX (for Manim equation rendering)
+- Ollama (optional - for visual quality control with local LLM)
 
 ### Installing FFmpeg
 
@@ -60,6 +63,33 @@ brew install --cask mactex
 # Windows
 # Download and install MiKTeX from https://miktex.org/
 ```
+
+### Installing Ollama (Optional - for Visual QC)
+
+Ollama enables automatic visual quality control using local AI models with image understanding.
+
+```bash
+# Linux
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# macOS
+brew install ollama
+
+# Windows
+# Download from https://ollama.ai/download
+```
+
+Then pull a vision model:
+```bash
+# Recommended: balanced speed and quality
+ollama pull llama3.2-vision
+
+# Alternative models
+ollama pull moondream      # Faster, smaller
+ollama pull llava:13b      # More capable
+```
+
+See [VISUAL_QC_README.md](VISUAL_QC_README.md) for detailed Visual QC setup and configuration.
 
 ## Installation
 
@@ -125,11 +155,12 @@ mathviz/
 │   ├── app/
 │   │   ├── main.py              # FastAPI application
 │   │   └── services/
-│   │       ├── analyzer.py       # Material analysis
-│   │       ├── script_generator.py # Video script generation
-│   │       ├── manim_scenes.py   # Manim animation code
+│   │       ├── analyzer_v2.py    # Material analysis
+│   │       ├── script_generator_v2.py # Video script generation
+│   │       ├── manim_generator.py # Manim code generation & rendering
+│   │       ├── visual_qc.py      # Visual quality control (NEW!)
 │   │       ├── tts_engine.py     # Text-to-speech
-│   │       ├── video_generator.py # Video composition
+│   │       ├── video_generator_v2.py # Video orchestration
 │   │       └── job_manager.py    # Background job tracking
 │   ├── requirements.txt
 │   └── .env.example
@@ -141,7 +172,8 @@ mathviz/
 │   │   └── main.tsx
 │   ├── package.json
 │   └── vite.config.ts
-└── README.md
+├── README.md
+└── VISUAL_QC_README.md          # Visual QC documentation (NEW!)
 ```
 
 ## API Endpoints

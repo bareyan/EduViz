@@ -168,8 +168,10 @@ class VideoGenerator:
                         result["video_path"] = subsection_results.get("video_path")
                         result["audio_path"] = subsection_results.get("audio_path")
                         result["duration"] = subsection_results.get("duration", 30)
+                        if subsection_results.get("manim_code_path"):
+                            section["manim_code_path"] = subsection_results["manim_code_path"]
+                            result["manim_code_path"] = subsection_results["manim_code_path"]
                         if subsection_results.get("manim_code"):
-                            section["manim_code"] = subsection_results["manim_code"]
                             result["manim_code"] = subsection_results["manim_code"]
                     else:
                         # NEW: Audio-first segment processing
@@ -185,8 +187,10 @@ class VideoGenerator:
                         result["video_path"] = segment_result.get("video_path")
                         result["audio_path"] = segment_result.get("audio_path")
                         result["duration"] = segment_result.get("duration", 30)
+                        if segment_result.get("manim_code_path"):
+                            section["manim_code_path"] = segment_result["manim_code_path"]
+                            result["manim_code_path"] = segment_result["manim_code_path"]
                         if segment_result.get("manim_code"):
-                            section["manim_code"] = segment_result["manim_code"]
                             result["manim_code"] = segment_result["manim_code"]
                     
                     # Update progress after completing each section
@@ -255,9 +259,12 @@ class VideoGenerator:
                     print(f"Warning: Section {i} has neither video nor audio - SKIPPING")
                     continue
                     
-                # Store manim_code if present in result
-                if result.get("manim_code") and i < len(sections):
-                    sections[i]["manim_code"] = result["manim_code"]
+                # Store manim_code_path if present in result (prefer path over code content)
+                if result.get("manim_code_path") and i < len(sections):
+                    sections[i]["manim_code_path"] = result["manim_code_path"]
+                    # Remove manim_code from section to avoid storing large code in script.json
+                    if "manim_code" in sections[i]:
+                        del sections[i]["manim_code"]
                 
                 # Track chapter timing (only for sections with video)
                 if video_path:
@@ -520,8 +527,13 @@ class VideoGenerator:
             video_path = manim_result.get("video_path") if isinstance(manim_result, dict) else manim_result
             if video_path and os.path.exists(video_path):
                 result["video_path"] = video_path
-            if isinstance(manim_result, dict) and manim_result.get("manim_code"):
-                result["manim_code"] = manim_result["manim_code"]
+            if isinstance(manim_result, dict):
+                # Store path to manim code file, not the code itself
+                if manim_result.get("manim_code_path"):
+                    result["manim_code_path"] = manim_result["manim_code_path"]
+                # Keep manim_code for backward compatibility (in-memory use only)
+                if manim_result.get("manim_code"):
+                    result["manim_code"] = manim_result["manim_code"]
         except Exception as e:
             print(f"Manim error for section {section_index}: {e}")
         
