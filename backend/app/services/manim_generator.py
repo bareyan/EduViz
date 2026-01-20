@@ -22,8 +22,8 @@ except ImportError:
 class ManimGenerator:
     """Generates Manim animations using Gemini AI"""
     
-    MODEL = "gemini-3-flash-preview"  # Main model for generation
-    CORRECTION_MODEL = "gemini-3-flash-preview"  # Lighter model for quick error fixes
+    MODEL = "gemini-3-flash-preview"  # Stable flash model for generation
+    CORRECTION_MODEL = "gemini-3-flash-preview"  # Same model for corrections (fast enough)
     MAX_CORRECTION_ATTEMPTS = 3  # Maximum number of auto-correction attempts
     
     # Base Manim template
@@ -50,7 +50,8 @@ class Section{section_id}(Scene):
         output_dir: str,
         section_index: int,
         audio_duration: Optional[float] = None,
-        style: str = "3b1b"  # "3b1b" (dark) or "clean" (light)
+        style: str = "3b1b",  # "3b1b" (dark) or "clean" (light)
+        language: str = "en"  # Language code for non-Latin script handling
     ) -> Dict[str, Any]:
         """Generate a video for a single section
         
@@ -60,6 +61,7 @@ class Section{section_id}(Scene):
             section_index: Index of this section
             audio_duration: Actual audio duration in seconds (if audio was pre-generated)
             style: Visual style - "3b1b" for dark theme, "clean" for light theme
+            language: Language code for proper text/LaTeX handling
         
         Returns:
             Dict with video_path and manim_code
@@ -68,6 +70,7 @@ class Section{section_id}(Scene):
         # Use audio duration as the target if available, otherwise fall back to estimated
         target_duration = audio_duration if audio_duration else section.get("duration_seconds", 60)
         section["target_duration"] = target_duration
+        section["language"] = language  # Pass language to code generation
         section["style"] = style  # Pass style to code generation
         
         # Generate Manim code using Gemini
@@ -104,6 +107,168 @@ class Section{section_id}(Scene):
             "manim_code": final_code
         }
     
+    async def render_from_code(
+        self,
+        manim_code: str,
+        output_dir: str,
+        section_index: int = 0
+    ) -> Optional[str]:
+        """Render a Manim scene from existing code (e.g., translated code)
+        
+        Args:
+            manim_code: Complete Manim Python code to render
+            output_dir: Directory to save output files
+            section_index: Index for naming the output file
+        
+        Returns:
+            Path to rendered video, or None if rendering failed
+        """
+        import re
+        
+        # Validate the code has basic structure
+        if not manim_code or len(manim_code.strip()) < 50:
+            print(f"[ManimGenerator] Code too short or empty, skipping render")
+            return None
+        
+        # Fix common translation issues
+        manim_code = self._fix_translated_code(manim_code)
+        
+        # Ensure imports are present
+        if "from manim import" not in manim_code and "import manim" not in manim_code:
+            manim_code = "from manim import *\n\n" + manim_code
+        
+        # Extract scene name from code
+        match = re.search(r"class\s+(\w+)\s*\(\s*Scene\s*\)", manim_code)
+        if not match:
+            print(f"[ManimGenerator] No Scene class found in code, skipping render")
+            return None
+        scene_name = match.group(1)
+        
+        # Write the code to a file
+        code_file = Path(output_dir) / f"scene.py"
+        
+        with open(code_file, "w") as f:
+            f.write(manim_code)
+        
+        # Check for Python syntax errors before rendering
+        try:
+            compile(manim_code, str(code_file), 'exec')
+        except SyntaxError as e:
+            print(f"[ManimGenerator] Syntax error in translated code: {e}")
+            return None
+        
+        # Render
+        output_path = Path(output_dir) / f"section_{section_index}.mp4"
+        
+        cmd = [
+            "manim",
+            "-ql",  # Low quality for faster rendering
+            "--format=mp4",
+            f"--output_file=section_{section_index}",
+            f"--media_dir={output_dir}",
+            str(code_file),
+            scene_name
+        ]
+        
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            
+            if result.returncode != 0:
+                # Log more helpful error info
+                stderr = result.stderr
+                if "Error" in stderr or "Exception" in stderr:
+                    # Find the actual error message
+                    lines = stderr.split('\n')
+                    error_lines = [l for l in lines if 'Error' in l or 'Exception' in l or 'error' in l.lower()]
+                    if error_lines:
+                        print(f"[ManimGenerator] Render error: {error_lines[-1][:200]}")
+                    else:
+                        print(f"[ManimGenerator] Render failed with exit code {result.returncode}")
+                else:
+                    print(f"[ManimGenerator] Render failed: {stderr[:300]}")
+                return None
+            
+            # Find the rendered video (Manim puts it in a subdirectory)
+            video_subdir = Path(output_dir) / "videos" / "scene" / "480p15"
+            if video_subdir.exists():
+                for video_file in video_subdir.glob("*.mp4"):
+                    return str(video_file)
+            
+            # Also check direct output
+            if output_path.exists():
+                return str(output_path)
+            
+            # Check other possible locations
+            for subdir in Path(output_dir).rglob("*.mp4"):
+                return str(subdir)
+            
+            print(f"[ManimGenerator] Video file not found in expected locations")
+            return None
+            
+        except subprocess.TimeoutExpired:
+            print(f"[ManimGenerator] Render timed out after 300 seconds")
+            return None
+        except Exception as e:
+            print(f"[ManimGenerator] Render exception: {e}")
+            return None
+    
+    def _fix_translated_code(self, code: str) -> str:
+        """Fix common issues in translated Manim code"""
+        import re
+        
+        lines = code.split('\n')
+        fixed_lines = []
+        
+        for i, line in enumerate(lines):
+            # Fix: First line is a bare comment without quotes (should be docstring or comment)
+            # Pattern: starts with text like "Auto-generated..." without # or """
+            if i == 0 and line.strip() and not line.strip().startswith(('#', '"', "'", 'from', 'import')):
+                # Check if it looks like a docstring that lost its quotes
+                if 'auto-generated' in line.lower() or 'manim scene' in line.lower() or 'section:' in line.lower():
+                    fixed_lines.append(f'"""{line}"""')
+                    continue
+                # Otherwise make it a comment
+                elif not line.strip().startswith('class'):
+                    fixed_lines.append(f'# {line}')
+                    continue
+            
+            # Fix: Unquoted text that should be a comment
+            # (lines that are just plain text, not code)
+            stripped = line.strip()
+            if stripped and i < 5:  # Only check first few lines
+                # If it's not a valid Python start and not empty
+                if not stripped.startswith(('#', '"', "'", 'from', 'import', 'class', 'def', '@', '"""')):
+                    if not any(c in stripped for c in ['=', '(', ')', '[', ']', ':', '+', '-', '*', '/']):
+                        # Looks like plain text, make it a comment
+                        fixed_lines.append(f'# {line}')
+                        continue
+            
+            fixed_lines.append(line)
+        
+        result = '\n'.join(fixed_lines)
+        
+        # Ensure the code starts with proper import if missing
+        if 'from manim import' not in result and 'import manim' not in result:
+            # Find where to insert import (after any docstrings/comments at top)
+            insert_pos = 0
+            for i, line in enumerate(fixed_lines):
+                stripped = line.strip()
+                if stripped and not stripped.startswith(('#', '"""', "'''")):
+                    if not (stripped.startswith('"""') or stripped.endswith('"""')):
+                        insert_pos = i
+                        break
+            
+            fixed_lines.insert(insert_pos, 'from manim import *\n')
+            result = '\n'.join(fixed_lines)
+        
+        return result
+    
     async def _generate_manim_code(self, section: Dict[str, Any], target_duration: float) -> str:
         """Use Gemini to generate Manim code for a section"""
         
@@ -121,10 +286,14 @@ class Section{section_id}(Scene):
         # Calculate a padding wait at the end to ensure we fill the full duration
         end_wait = max(2.0, audio_duration * 0.1)
         
-        # Get style settings
+        # Get style and language settings
         style = section.get('style', '3b1b')
+        language = section.get('language', 'en')
         animation_type = section.get('animation_type', 'text')
         key_concepts = section.get('key_concepts', section.get('key_equations', []))
+        
+        # Language-specific instructions for non-Latin scripts
+        language_instructions = self._get_language_instructions(language)
         
         # Style-specific instructions - support multiple themes
         style_configs = {
@@ -244,10 +413,92 @@ Example static scene:
         self.wait(5)  # Final wait while narrator wraps up
 """
         
-        # Check if this is a subsection (part of a larger section)
+        # Check if this is a UNIFIED SECTION (NEW: single video for entire section with timing cues)
+        is_unified_section = section.get('is_unified_section', False)
+        unified_context = ""
+        if is_unified_section:
+            num_segments = section.get('num_segments', 1)
+            segment_timing = section.get('segment_timing', [])
+            total_duration = section.get('total_duration', audio_duration)
+            
+            # Build detailed timing breakdown
+            timing_lines = []
+            for seg in segment_timing:
+                timing_lines.append(
+                    f"  - [{seg['start_time']:.1f}s - {seg['end_time']:.1f}s] ({seg['duration']:.1f}s): \"{seg['text'][:80]}...\""
+                )
+            timing_breakdown = "\n".join(timing_lines) if timing_lines else "No timing info"
+            
+            unified_context = f"""
+═══════════════════════════════════════════════════════════════════════════════
+UNIFIED SECTION: {num_segments} NARRATION SEGMENTS - ONE CONTINUOUS VIDEO
+═══════════════════════════════════════════════════════════════════════════════
+Create ONE smooth, continuous animation for the ENTIRE section.
+The timestamps below help you sync your animations with the narration.
+
+TOTAL DURATION: {total_duration:.1f} seconds
+
+SEGMENT TIMING (use as sync points, NOT as separate scenes):
+{timing_breakdown}
+
+IMPORTANT - UNIFIED ANIMATION GUIDELINES:
+1. Create ONE continuous flow of animations - no "scene changes" between segments
+2. Use the timing info to sync key visual elements with narration milestones
+3. Elements can persist across segment boundaries - don't clear everything
+4. Transitions should be smooth within the section
+5. Think of segments as "chapters" of one story, not separate videos
+6. If one segment introduces a concept, the next can build on it visually
+
+TIMING SYNC APPROACH:
+- At t=0.0s: Start your opening animations
+- For each segment start time: Have relevant visual ready by that time
+- Use self.wait() to pad timing between key moments
+- Example: If segment 2 starts at 12.5s and discusses a formula,
+  make sure the formula appears around t=12.5s
+"""
+        
+        # Check if this is a segment (OLD: per-segment video approach - legacy support)
+        is_segment = section.get('is_segment', False)
+        segment_context = ""
+        if is_segment:
+            seg_idx = section.get('segment_index', 0)
+            total_segs = section.get('total_segments', 1)
+            seg_duration = section.get('segment_duration', audio_duration)
+            seg_start = section.get('segment_start_time', 0)
+            seg_end = section.get('segment_end_time', seg_duration)
+            section_total = section.get('section_total_duration', seg_duration)
+            
+            # Get context about other segments
+            all_texts = section.get('all_segment_texts', [])
+            all_durations = section.get('all_segment_durations', [])
+            
+            # Build context string showing timing of all segments
+            timing_context = []
+            for i, (txt, dur) in enumerate(zip(all_texts, all_durations)):
+                marker = ">>> " if i == seg_idx else "    "
+                timing_context.append(f"{marker}Seg {i+1}: {dur:.1f}s - \"{txt[:60]}...\"")
+            timing_str = "\n".join(timing_context) if timing_context else "No timing info"
+            
+            segment_context = f"""
+═══════════════════════════════════════════════════════════════════════════════
+SEGMENT TIMING CONTEXT: Segment {seg_idx + 1} of {total_segs}
+═══════════════════════════════════════════════════════════════════════════════
+- This segment: {seg_duration:.1f}s (from {seg_start:.1f}s to {seg_end:.1f}s in section)
+- Section total: {section_total:.1f}s
+- All segments in this section:
+{timing_str}
+
+CONTINUITY GUIDELINES:
+- {"START with title/intro since this is the first segment" if seg_idx == 0 else "NO intro - this continues from previous segment"}
+- {"END with conclusion/cleanup since this is the last segment" if seg_idx == total_segs - 1 else "NO conclusion - next segment continues the content"}
+- Keep visual style consistent across segments
+- Create animations that EXACTLY fill {seg_duration:.1f} seconds
+"""
+        
+        # Check if this is a subsection (OLD: legacy approach)
         is_subsection = section.get('is_subsection', False)
         subsection_context = ""
-        if is_subsection:
+        if is_subsection and not is_segment:
             sub_idx = section.get('subsection_index', 0)
             total_subs = section.get('total_subsections', 1)
             subsection_context = f"""
@@ -261,106 +512,159 @@ SUBSECTION CONTEXT: This is part {sub_idx + 1} of {total_subs} in a larger secti
 - Make transitions smooth - content will continue
 """
         
-        prompt = f"""You are an expert Manim (Community Edition) programmer creating animations for educational videos.
+        # Combine context strings - prioritize unified section over segment
+        context_str = unified_context or segment_context or subsection_context
+        
+        prompt = f"""Generate Manim code for an educational animation. Code goes inside construct(self).
 
-Generate Manim code for this video section. The code goes INSIDE the construct(self) method.
-
-SECTION DETAILS:
-- Title: {section.get('title', 'Untitled')}
-- Narration: {narration}
-- Visual Description: {section.get('visual_description', '')}
-- Key Concepts: {key_concepts}
-- Animation Type: {animation_type}
-{static_instructions}
-{subsection_context}
+SECTION: {section.get('title', 'Untitled')}
+NARRATION: {narration}
+KEY CONCEPTS: {key_concepts}
+DURATION: {audio_duration:.1f} seconds exactly
+{language_instructions}
+{context_str}
 {style_instructions}
 
-ANIMATION TYPE GUIDANCE: {type_guidance}
+════════════════════════════════════════════════════════════════════════════════
+CORE RULE: PREVENT OVERLAPS
+════════════════════════════════════════════════════════════════════════════════
 
-═══════════════════════════════════════════════════════════════════════════════
-CRITICAL: AUDIO IS ALREADY GENERATED - DURATION IS EXACTLY {audio_duration:.1f} SECONDS
-THE VIDEO MUST BE AT LEAST {audio_duration:.1f} SECONDS LONG - NEVER SHORTER!
-═══════════════════════════════════════════════════════════════════════════════
+Screen layout - use these zones:
+    TITLE (top):    .to_edge(UP, buff=0.5)
+    CONTENT (middle): .move_to(ORIGIN) or position with .next_to()
+    FOOTER (bottom): .to_edge(DOWN, buff=0.5)
 
-TIMING STRATEGY:
-1. Use SHORTER run_time for animations: 1.0-1.5 seconds each
-2. Use LONGER self.wait() calls between animations: 2.0-4.0 seconds each
-3. ALWAYS end with: self.wait({end_wait:.1f})
-4. Total time should sum to AT LEAST {audio_duration:.1f} seconds
+To avoid overlaps:
+- Position elements BEFORE animating them
+- Use VGroup(...).arrange() for multiple items
+- FadeOut old content before adding new content in same area
+- Or use ReplacementTransform(old, new) to swap
 
-TIMING BREAKDOWN:
-- Total animation run_time: ~{total_animation_time:.1f} seconds
-- Total self.wait() time: ~{total_wait_time:.1f} seconds
-- Natural pauses in narration: {pause_count}
-- Each "..." = self.wait(2-3), Each "[PAUSE]" = self.wait(4-5)
+════════════════════════════════════════════════════════════════════════════════
+SIZE GUIDELINES
+════════════════════════════════════════════════════════════════════════════════
 
-═══════════════════════════════════════════════════════════════════════════════
-CRITICAL: PYTHON INDENTATION
-═══════════════════════════════════════════════════════════════════════════════
-- Use exactly 8 spaces for indentation (code goes inside construct method)
-- Every line must start with 8 spaces
-- For nested blocks, add 4 more spaces per level
-- NO TABS - only spaces
+Text: font_size=36 (titles), font_size=28 (body), font_size=24 (labels)
+Equations: .scale(0.85)
+Axes/Plots: scale to fit - typically width=6, height=4
+Spacing: buff=0.5 between elements
 
-EXAMPLE OF CORRECT INDENTATION:
-        # This comment has 8 spaces before it
-        title = Text("Hello", font_size=42)
-        self.play(Write(title), run_time=1.5)
+════════════════════════════════════════════════════════════════════════════════
+PATTERNS - Choose based on content type
+════════════════════════════════════════════════════════════════════════════════
+
+TEXT/LIST - Title with bullet points:
+        title = Text("Topic", font_size=36).to_edge(UP, buff=0.5)
+        items = VGroup(
+            Text("• First point", font_size=28),
+            Text("• Second point", font_size=28),
+        ).arrange(DOWN, buff=0.4, aligned_edge=LEFT)
+        items.next_to(title, DOWN, buff=0.8)
+        
+        self.play(Write(title))
+        for item in items:
+            self.play(FadeIn(item), run_time=0.5)
+            self.wait(2)
+
+EQUATIONS - Step by step (replace in place):
+        eq1 = MathTex(r"2x + 4 = 10").scale(0.85).move_to(ORIGIN)
+        self.play(Write(eq1))
         self.wait(2)
         
-        if some_condition:
-            # 12 spaces for nested block
-            self.play(FadeOut(title))
+        eq2 = MathTex(r"x = 3").scale(0.85).move_to(ORIGIN)
+        self.play(ReplacementTransform(eq1, eq2))
+        self.wait(2)
+
+GRAPH/PLOT - Function visualization:
+        axes = Axes(
+            x_range=[-3, 3, 1], y_range=[-2, 8, 2],
+            x_length=6, y_length=4,
+            axis_config={{"include_tip": True}}
+        ).move_to(ORIGIN)
         
-        for i in range(3):
-            # 12 spaces for loop body
-            obj = Circle()
-            self.play(Create(obj), run_time=1)
-            self.wait(1)
+        graph = axes.plot(lambda x: x**2, color=BLUE)
+        label = axes.get_graph_label(graph, label="f(x)=x^2", x_val=2)
+        
+        self.play(Create(axes), run_time=1)
+        self.play(Create(graph), run_time=2)
+        self.play(Write(label))
+        self.wait(3)
 
-═══════════════════════════════════════════════════════════════════════════════
-CRITICAL: LAYOUT AND POSITIONING
-═══════════════════════════════════════════════════════════════════════════════
+COMPARISON - Side by side:
+        left_title = Text("Option A", font_size=28)
+        right_title = Text("Option B", font_size=28)
+        
+        left_content = VGroup(
+            Text("• Feature 1", font_size=24),
+            Text("• Feature 2", font_size=24),
+        ).arrange(DOWN, buff=0.3, aligned_edge=LEFT)
+        
+        right_content = VGroup(
+            Text("• Feature 1", font_size=24),
+            Text("• Feature 2", font_size=24),
+        ).arrange(DOWN, buff=0.3, aligned_edge=LEFT)
+        
+        left_group = VGroup(left_title, left_content).arrange(DOWN, buff=0.5)
+        right_group = VGroup(right_title, right_content).arrange(DOWN, buff=0.5)
+        
+        comparison = VGroup(left_group, right_group).arrange(RIGHT, buff=1.5)
+        comparison.move_to(ORIGIN)
+        
+        self.play(FadeIn(left_group))
+        self.wait(2)
+        self.play(FadeIn(right_group))
+        self.wait(3)
 
-AVOID OVERLAPPING ELEMENTS - this is a common problem:
-1. Use .next_to(obj, DOWN, buff=0.5) instead of stacking at same position
-2. Always include buff (buffer) parameter: buff=0.3 to buff=0.8
-3. Use .to_edge(UP) for titles, .to_edge(DOWN) for labels
-4. Scale down objects if needed: .scale(0.7) or .scale(0.8)
-5. Use .arrange(DOWN, buff=0.5) for VGroups to auto-space elements
-6. For multi-line equations, use .arrange(DOWN, center=True, buff=0.4)
-7. Check positioning before animating: obj.next_to(other, RIGHT, buff=0.5)
+DIAGRAM - Shapes with labels:
+        circle = Circle(radius=1.5, color=BLUE)
+        label = Text("r=1.5", font_size=24).next_to(circle, DOWN, buff=0.3)
+        diagram = VGroup(circle, label).move_to(ORIGIN)
+        
+        self.play(Create(circle), run_time=1.5)
+        self.play(Write(label))
+        self.wait(3)
 
-LAYOUT PATTERNS:
-- Title at top: title.to_edge(UP, buff=0.5)
-- Main content centered: eq.move_to(ORIGIN)
-- Steps list: VGroup(*steps).arrange(DOWN, buff=0.4, aligned_edge=LEFT)
-- Side-by-side: VGroup(left, right).arrange(RIGHT, buff=1.0)
-- Keep old steps visible: old.shift(UP * 1.5) before adding new
+PROCESS/FLOW - Sequential steps with arrows:
+        step1 = Text("Input", font_size=28)
+        step2 = Text("Process", font_size=28)
+        step3 = Text("Output", font_size=28)
+        
+        steps = VGroup(step1, step2, step3).arrange(RIGHT, buff=1.5)
+        arrows = VGroup(
+            Arrow(step1.get_right(), step2.get_left(), buff=0.1),
+            Arrow(step2.get_right(), step3.get_left(), buff=0.1),
+        )
+        flow = VGroup(steps, arrows).move_to(ORIGIN)
+        
+        self.play(Write(step1))
+        self.play(GrowArrow(arrows[0]), Write(step2))
+        self.play(GrowArrow(arrows[1]), Write(step3))
+        self.wait(3)
 
-SCALING FOR COMPLEX EQUATIONS:
-- Long equations: MathTex(...).scale(0.7)
-- Multiple items: reduce font_size=28 instead of 36
-- If too crowded, fade out less important elements first
+HIGHLIGHT/TRANSFORM - Emphasize parts:
+        eq = MathTex(r"E", r"=", r"m", r"c^2").scale(0.9).move_to(ORIGIN)
+        self.play(Write(eq))
+        self.wait(1)
+        self.play(eq[2:].animate.set_color(YELLOW))  # Highlight mc²
+        self.wait(2)
 
-═══════════════════════════════════════════════════════════════════════════════
+════════════════════════════════════════════════════════════════════════════════
+TIMING: {audio_duration:.1f} SECONDS TOTAL
+════════════════════════════════════════════════════════════════════════════════
 
-MANIM SYNTAX REMINDERS:
-1. MathTex for equations: MathTex(r"\\frac{{x}}{{y}}") - use raw strings and double braces
-2. Text for labels: Text("label", font_size=32)
-3. VGroup to group objects: group = VGroup(obj1, obj2)
-4. Animations: Write(), FadeIn(), FadeOut(), Transform(), Create()
-5. Positioning: .to_edge(UP), .next_to(obj, DOWN), .move_to(ORIGIN)
-6. Colors: BLUE, YELLOW, WHITE, GRAY, GREEN, RED
+- Animations: run_time=0.5 to 2 seconds
+- Waits: self.wait(2) to self.wait(5) for narration
+- End with: self.wait({end_wait:.1f})
 
-SCENE MANAGEMENT:
-1. Track ALL objects you create
-2. Always clean up: end with FadeOut of remaining objects
-3. Use VGroup for related elements
-4. Don't lose references after Transform (use ReplacementTransform if needed)
+════════════════════════════════════════════════════════════════════════════════
+SYNTAX
+════════════════════════════════════════════════════════════════════════════════
 
-Generate ONLY the Python code. No markdown, no ```python blocks, no explanations.
-Start directly with the indented code (8 spaces)."""
+- 8 spaces indentation
+- MathTex(r"\\frac{{a}}{{b}}") - raw string, double braces
+- Axes config uses double braces: axis_config={{...}}
+
+OUTPUT: Python code only. No markdown. No explanations."""
 
         try:
             response = await asyncio.wait_for(
@@ -389,6 +693,75 @@ Start directly with the indented code (8 spaces)."""
         code = self._clean_code(code)
         
         return code
+    
+    def _get_language_instructions(self, language: str) -> str:
+        """Get language-specific instructions for Manim code generation"""
+        
+        # Non-Latin scripts need special handling
+        non_latin_scripts = {
+            'hy': 'Armenian',
+            'ar': 'Arabic',
+            'he': 'Hebrew',
+            'zh': 'Chinese',
+            'ja': 'Japanese',
+            'ko': 'Korean',
+            'ru': 'Russian',
+            'el': 'Greek',
+            'th': 'Thai',
+            'hi': 'Hindi',
+            'bn': 'Bengali',
+            'ta': 'Tamil',
+            'te': 'Telugu',
+            'ml': 'Malayalam',
+            'kn': 'Kannada',
+            'gu': 'Gujarati',
+            'pa': 'Punjabi',
+            'mr': 'Marathi',
+        }
+        
+        if language in non_latin_scripts:
+            script_name = non_latin_scripts[language]
+            return f"""
+═══════════════════════════════════════════════════════════════════════════════
+{script_name.upper()} TEXT - USE SMALLER FONTS
+═══════════════════════════════════════════════════════════════════════════════
+
+Content is in {script_name}. Rules:
+1. NEVER mix {script_name} text with LaTeX in same object
+2. Use Text() for {script_name}: Text("text here", font_size=28)
+3. Use MathTex() ONLY for math: MathTex(r"x^2 + y^2")
+4. Position separately with .next_to()
+
+FONT SIZES for {script_name}:
+- Titles: font_size=32 (smaller than usual)
+- Body: font_size=26
+- Labels: font_size=22
+- Always add .scale(0.8) if content is wide
+
+SIMPLE PATTERN:
+        title = Text("Title in {script_name}", font_size=32)
+        title.to_edge(UP, buff=0.5)
+        
+        eq = MathTex(r"x = 2").scale(0.9)
+        eq.move_to(ORIGIN)
+        
+        label = Text("Explanation", font_size=26)
+        label.next_to(eq, DOWN, buff=0.6)
+"""
+        elif language != 'en':
+            # Latin script but non-English (French, German, Spanish, etc.)
+            return f"""
+═══════════════════════════════════════════════════════════════════════════════
+NOTE: NON-ENGLISH LATIN TEXT
+═══════════════════════════════════════════════════════════════════════════════
+Text is in a non-English language. Remember:
+- Text() handles accented characters fine: Text("Théorème", font_size=36)
+- MathTex is ONLY for math notation: MathTex(r"\\frac{{x}}{{y}}")
+- NEVER put non-math text inside MathTex - use Text() for words
+- Keep math and text as separate objects positioned with .next_to()
+"""
+        else:
+            return ""  # No special instructions for English
     
     def _clean_code(self, code: str) -> str:
         """Clean up generated code"""

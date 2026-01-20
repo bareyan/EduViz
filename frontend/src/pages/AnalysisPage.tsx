@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Loader2, BookOpen, Calculator, Clock, ChevronRight, Check, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -11,9 +11,16 @@ export default function AnalysisPage() {
   const [selectedTopics, setSelectedTopics] = useState<number[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  
+  // Prevent double-call in React StrictMode
+  const hasAnalyzed = useRef(false)
 
   useEffect(() => {
     if (!fileId) return
+    
+    // Prevent double-analysis in StrictMode
+    if (hasAnalyzed.current) return
+    hasAnalyzed.current = true
 
     const runAnalysis = async () => {
       try {

@@ -40,6 +40,34 @@ class TTSEngine:
                 "fr-BE-GerardNeural": {"name": "Gérard (Belgium)", "gender": "male"},
                 "fr-CH-FabriceNeural": {"name": "Fabrice (Swiss)", "gender": "male"},
             }
+        },
+        # Armenian - Edge TTS doesn't have native Armenian voices
+        # Using multilingual voice as fallback (can read Armenian script)
+        "hy": {
+            "name": "Armenian",
+            "voices": {
+                # Using multilingual voices that can attempt Armenian text
+                "en-US-AvaMultilingualNeural": {"name": "Ava (Multilingual)", "gender": "female"},
+                "en-US-AndrewMultilingualNeural": {"name": "Andrew (Multilingual)", "gender": "male"},
+                "en-US-BrianMultilingualNeural": {"name": "Brian (Multilingual)", "gender": "male"},
+                "en-US-EmmaMultilingualNeural": {"name": "Emma (Multilingual)", "gender": "female"},
+            },
+            "note": "Armenian not natively supported - using multilingual voices"
+        },
+        # Multilingual voices - for auto language detection or mixed content
+        "auto": {
+            "name": "Multilingual (Auto-detect)",
+            "voices": {
+                "en-US-AvaMultilingualNeural": {"name": "Ava (Multilingual)", "gender": "female"},
+                "en-US-AndrewMultilingualNeural": {"name": "Andrew (Multilingual)", "gender": "male"},
+                "en-US-BrianMultilingualNeural": {"name": "Brian (Multilingual)", "gender": "male"},
+                "en-US-EmmaMultilingualNeural": {"name": "Emma (Multilingual)", "gender": "female"},
+                "de-DE-FlorianMultilingualNeural": {"name": "Florian (Multilingual DE)", "gender": "male"},
+                "de-DE-SeraphinaMultilingualNeural": {"name": "Seraphina (Multilingual DE)", "gender": "female"},
+                "fr-FR-RemyMultilingualNeural": {"name": "Rémy (Multilingual FR)", "gender": "male"},
+                "fr-FR-VivienneMultilingualNeural": {"name": "Vivienne (Multilingual FR)", "gender": "female"},
+            },
+            "note": "Multilingual voices that can speak multiple languages naturally"
         }
     }
     
@@ -229,10 +257,18 @@ class TTSEngine:
         self,
         text: str,
         output_path: str,
-        voice: Optional[str] = None
+        voice: Optional[str] = None,
+        rate: str = "+0%"
     ) -> float:
         """
         Generate speech audio file from text.
         Alias for synthesize() for compatibility.
+        
+        Args:
+            text: Text to synthesize
+            output_path: Path to save the audio file
+            voice: Voice ID to use
+            rate: Speech rate adjustment (e.g., "-10%" for slower, "+10%" for faster)
+                  For teaching mode, use "-5%" to "-10%" for clearer pacing
         """
-        return await self.synthesize(text, output_path, voice)
+        return await self.synthesize(text, output_path, voice, rate=rate)

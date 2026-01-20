@@ -34,7 +34,7 @@ except ImportError:
 class MaterialAnalyzer:
     """Analyzes educational materials using Gemini AI"""
     
-    MODEL = "gemini-3-flash-preview"
+    MODEL = "gemini-flash-lite-latest"  # Fast lite model for analysis
     
     # Threshold for "massive" documents that warrant multiple videos
     MASSIVE_DOC_PAGES = 15

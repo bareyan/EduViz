@@ -1,19 +1,18 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Loader2, Settings, Palette, ChevronRight, ArrowLeft, Clock, Zap, Globe } from 'lucide-react'
+import { Loader2, Palette, ChevronRight, ArrowLeft, Clock, Zap, Globe } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { generateVideos, getVoices, Voice, Language, AnalysisResult } from '../api'
 
 export default function GenerationPage() {
-  const { analysisId } = useParams<{ analysisId: string }>()
+  const { analysisId: _analysisId } = useParams<{ analysisId: string }>()
   const navigate = useNavigate()
   
   const [languages, setLanguages] = useState<Language[]>([])
-  const [selectedLanguage, setSelectedLanguage] = useState('en')
+  const [selectedLanguage, setSelectedLanguage] = useState('auto')  // Auto-detect from document
   const [voices, setVoices] = useState<Voice[]>([])
   const [selectedVoice, setSelectedVoice] = useState('en-US-GuyNeural')
   const [style, setStyle] = useState('3b1b')
-  const [maxLength, setMaxLength] = useState(20)
   const [videoMode, setVideoMode] = useState<'comprehensive' | 'overview'>('comprehensive')
   const [isGenerating, setIsGenerating] = useState(false)
 
@@ -25,6 +24,7 @@ export default function GenerationPage() {
   useEffect(() => {
     const loadVoices = async () => {
       try {
+        // For auto mode, load multilingual voices (backend now supports 'auto' as a language code)
         const data = await getVoices(selectedLanguage)
         setVoices(data.voices)
         setLanguages(data.languages)
@@ -53,7 +53,6 @@ export default function GenerationPage() {
         analysis_id: analysis.analysis_id,
         selected_topics: selectedTopics,
         style,
-        max_video_length: maxLength,
         voice: selectedVoice,
         video_mode: videoMode,
         language: selectedLanguage,
@@ -194,7 +193,20 @@ export default function GenerationPage() {
           {/* Language Selection */}
           <div className="mb-4">
             <label className="text-sm text-gray-400 mb-2 block">Language</label>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
+              {/* Auto option first */}
+              <button
+                onClick={() => setSelectedLanguage('auto')}
+                className={`
+                  px-4 py-2 rounded-lg font-medium transition-all
+                  ${selectedLanguage === 'auto' 
+                    ? 'bg-math-purple text-white' 
+                    : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                  }
+                `}
+              >
+                🌐 Auto (Document)
+              </button>
               {languages.map(lang => (
                 <button
                   key={lang.code}
@@ -211,6 +223,11 @@ export default function GenerationPage() {
                 </button>
               ))}
             </div>
+            {selectedLanguage === 'auto' && (
+              <p className="text-xs text-gray-500 mt-2">
+                The video will be generated in the document's original language. You can add translations later.
+              </p>
+            )}
           </div>
           
           {/* Voice Selection */}
@@ -267,36 +284,6 @@ export default function GenerationPage() {
                 <p className="text-sm text-gray-500 pr-6">{s.desc}</p>
               </button>
             ))}
-          </div>
-        </div>
-
-        {/* Max Length */}
-        <div className="p-6 bg-gray-900/50 rounded-xl border border-gray-800">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-math-orange/20 rounded-lg">
-              <Settings className="w-5 h-5 text-math-orange" />
-            </div>
-            <h2 className="text-lg font-semibold">Video Settings</h2>
-          </div>
-          <div>
-            <label className="block text-sm text-gray-400 mb-2">
-              Maximum video length: {maxLength} minutes
-            </label>
-            <input
-              type="range"
-              min={5}
-              max={30}
-              value={maxLength}
-              onChange={(e) => setMaxLength(Number(e.target.value))}
-              className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer
-                         [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 
-                         [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-math-orange 
-                         [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer"
-            />
-            <div className="flex justify-between text-xs text-gray-500 mt-1">
-              <span>5 min</span>
-              <span>30 min</span>
-            </div>
           </div>
         </div>
       </div>

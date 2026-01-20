@@ -1,0 +1,120 @@
+{
+  "id": "95d6f8ef-3604-422a-866b-a44f8a105769",
+  "status": "completed",
+  "progress": 100,
+  "message": "Generated 1 video(s) successfully!",
+  "result": [
+    {
+      "video_id": "95d6f8ef-3604-422a-866b-a44f8a105769",
+      "title": "Mastering Dynamic Vector Databases: Random Walks and Graph Deletions in HNSW",
+      "duration": 941.736,
+      "chapters": [
+        {
+          "title": "The Era of Dynamic RAG and ANN",
+          "start_time": 0,
+          "duration": 50.784
+        },
+        {
+          "title": "HNSW Fundamentals: Navigating the Small World",
+          "start_time": 50.784,
+          "duration": 51.52799999999999
+        },
+        {
+          "title": "The Deletion Dilemma: Why Current Methods Fail",
+          "start_time": 102.31199999999998,
+          "duration": 57.55200000000001
+        },
+        {
+          "title": "Theorem 3.1: The Theory of Optimal Deletion",
+          "start_time": 159.86399999999998,
+          "duration": 51.144000000000005
+        },
+        {
+          "title": "The Softmax Walk: A Probabilistic Twin for HNSW",
+          "start_time": 211.00799999999998,
+          "duration": 55.488
+        },
+        {
+          "title": "Graph Sparsification and Random Walk Preservation",
+          "start_time": 266.496,
+          "duration": 47.28
+        },
+        {
+          "title": "Theorem 4.1: The Star-Mesh Transform",
+          "start_time": 313.77599999999995,
+          "duration": 50.976
+        },
+        {
+          "title": "The Graph Laplacian: A Linear Algebraic Perspective",
+          "start_time": 364.75199999999995,
+          "duration": 46.92
+        },
+        {
+          "title": "Theorem 4.3: Frobenius Norm Sparsification",
+          "start_time": 411.67199999999997,
+          "duration": 49.367999999999995
+        },
+        {
+          "title": "Theorem 4.5: Preserving Hitting Time",
+          "start_time": 461.03999999999996,
+          "duration": 47.088
+        },
+        {
+          "title": "The SPatch Algorithm: From Theory to Code",
+          "start_time": 508.128,
+          "duration": 47.064
+        },
+        {
+          "title": "Tuning SPatch: alpha and r",
+          "start_time": 555.192,
+          "duration": 46.967999999999996
+        },
+        {
+          "title": "Benchmark Environment: SIFT, GIST, and MPNet",
+          "start_time": 602.16,
+          "duration": 38.928000000000004
+        },
+        {
+          "title": "Results: The Recall-Speed Frontier",
+          "start_time": 641.088,
+          "duration": 41.856
+        },
+        {
+          "title": "Results: Deletion Time and Memory Utilization",
+          "start_time": 682.944,
+          "duration": 45.144
+        },
+        {
+          "title": "Validating the 'Twin' Formulation",
+          "start_time": 728.088,
+          "duration": 39.816
+        },
+        {
+          "title": "Theoretical Bounds on Clustering",
+          "start_time": 767.904,
+          "duration": 48.647999999999996
+        },
+        {
+          "title": "Implementation Secrets with FAISS and NetworkX",
+          "start_time": 816.552,
+          "duration": 46.848
+        },
+        {
+          "title": "The Future of Dynamic Vector Search",
+          "start_time": 863.4,
+          "duration": 32.88
+        },
+        {
+          "title": "Lecture Summary and Key Takeaways",
+          "start_time": 896.28,
+          "duration": 45.455999999999996
+        }
+      ],
+      "download_url": "/outputs/95d6f8ef-3604-422a-866b-a44f8a105769/final_video.mp4",
+      "thumbnail_url": null
+    }
+  ],
+  "error": null,
+  "created_at": "2026-01-20T01:24:54.684407",
+  "updated_at": "2026-01-20T01:32:28.784998"
+}

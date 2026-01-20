@@ -103,28 +103,36 @@ class VideoGenerator:
             if progress_callback:
                 progress_callback({"stage": "script", "progress": 100, "message": f"Script generated with {total_sections} sections"})
             
-            # Step 2: Generate audio and video for each section in parallel
-            # Uses subsection sync points for better audio-video alignment
+            # Step 2: Generate audio and video for each section
+            # NEW WORKFLOW: Audio-first approach for precise sync
+            # 1. Generate audio for all segments first
+            # 2. Get actual audio durations
+            # 3. Pass timing info to Gemini for video generation
+            # 4. One video per segment, compiled together
             section_videos = []
             section_audios = []
             chapters = []
             current_time = 0
             
-            # Target subsection duration for sync points (30-45 seconds for longer videos)
-            TARGET_SUBSECTION_DURATION = 35  # seconds - sweet spot for sync
-            MAX_SUBSECTION_DURATION = 50  # Never exceed this
-            
             # Limit concurrent processing to avoid overwhelming system
-            # Manim rendering is CPU-intensive, so limit to reasonable parallelism
-            max_concurrent = min(8, os.cpu_count() or 2)  # Max 8 concurrent, or CPU count
+            max_concurrent = min(8, os.cpu_count() or 2)
             semaphore = asyncio.Semaphore(max_concurrent)
             
             # Track progress across parallel tasks
-            completed_count = [0]  # Use list for mutability in closure
+            completed_count = [0]
             
             # Process sections in parallel for faster generation
             async def process_section(i: int, section: Dict[str, Any]) -> Dict[str, Any]:
-                """Process a single section - divides into subsections for sync, generates audio+video for each"""
+                """Process a single section using audio-first segment approach
+                
+                NEW WORKFLOW:
+                1. Get pre-defined narration segments from script (~10s each)
+                2. Generate audio for ALL segments first
+                3. Get actual audio durations
+                4. Pass segment timing info to Gemini for video generation
+                5. Generate one video per segment
+                6. Merge segment videos+audios together
+                """
                 async with semaphore:  # Limit concurrency
                     section_id = section.get("id", f"section_{i}")
                     section_dir = sections_dir / section_id
@@ -140,29 +148,22 @@ class VideoGenerator:
                         "title": section.get("title", f"Section {i + 1}")
                     }
                     
-                    # Get narration text
-                    tts_text = section.get("tts_narration") or section.get("narration", "")
-                    clean_narration = self._clean_narration_for_tts(tts_text)
+                    # Check if we have pre-segmented narration from script generator
+                    narration_segments = section.get("narration_segments", [])
                     
-                    # Divide section into subsections at natural breakpoints
-                    subsections = self._divide_into_subsections(
-                        narration=clean_narration,
-                        visual_description=section.get("visual_description", ""),
-                        target_duration=TARGET_SUBSECTION_DURATION,
-                        max_duration=MAX_SUBSECTION_DURATION
-                    )
-                    
-                    print(f"Section {i}: Divided into {len(subsections)} subsections for sync")
-                    
-                    if len(subsections) <= 1:
-                        # Simple case: single subsection, use original flow
+                    if not narration_segments:
+                        # Fallback: no segments, use old single-subsection flow
+                        tts_text = section.get("tts_narration") or section.get("narration", "")
+                        clean_narration = self._clean_narration_for_tts(tts_text)
+                        
                         subsection_results = await self._process_single_subsection(
                             section=section,
                             narration=clean_narration,
                             section_dir=section_dir,
                             section_index=i,
                             voice=voice,
-                            style=style
+                            style=style,
+                            language=language
                         )
                         result["video_path"] = subsection_results.get("video_path")
                         result["audio_path"] = subsection_results.get("audio_path")
@@ -171,21 +172,22 @@ class VideoGenerator:
                             section["manim_code"] = subsection_results["manim_code"]
                             result["manim_code"] = subsection_results["manim_code"]
                     else:
-                        # Multiple subsections: process each, then merge for perfect sync
-                        merged_result = await self._process_subsections_with_sync(
+                        # NEW: Audio-first segment processing
+                        segment_result = await self._process_segments_audio_first(
                             section=section,
-                            subsections=subsections,
+                            narration_segments=narration_segments,
                             section_dir=section_dir,
                             section_index=i,
                             voice=voice,
-                            style=style
+                            style=style,
+                            language=language
                         )
-                        result["video_path"] = merged_result.get("video_path")
-                        result["audio_path"] = merged_result.get("audio_path")
-                        result["duration"] = merged_result.get("duration", 30)
-                        if merged_result.get("manim_code"):
-                            section["manim_code"] = merged_result["manim_code"]
-                            result["manim_code"] = merged_result["manim_code"]
+                        result["video_path"] = segment_result.get("video_path")
+                        result["audio_path"] = segment_result.get("audio_path")
+                        result["duration"] = segment_result.get("duration", 30)
+                        if segment_result.get("manim_code"):
+                            section["manim_code"] = segment_result["manim_code"]
+                            result["manim_code"] = segment_result["manim_code"]
                     
                     # Update progress after completing each section
                     completed_count[0] += 1
@@ -477,7 +479,8 @@ class VideoGenerator:
         section_dir: Path,
         section_index: int,
         voice: str,
-        style: str
+        style: str,
+        language: str = "en"
     ) -> Dict[str, Any]:
         """Process a section with a single subsection (original flow)"""
         result = {
@@ -511,7 +514,8 @@ class VideoGenerator:
                 output_dir=str(section_dir),
                 section_index=section_index,
                 audio_duration=audio_duration,
-                style=style
+                style=style,
+                language=language
             )
             video_path = manim_result.get("video_path") if isinstance(manim_result, dict) else manim_result
             if video_path and os.path.exists(video_path):
@@ -523,6 +527,457 @@ class VideoGenerator:
         
         return result
     
+    async def _process_segments_audio_first(
+        self,
+        section: Dict[str, Any],
+        narration_segments: List[Dict[str, Any]],
+        section_dir: Path,
+        section_index: int,
+        voice: str,
+        style: str,
+        language: str = "en"
+    ) -> Dict[str, Any]:
+        """Process segments using audio-first approach for precise sync
+        
+        WORKFLOW:
+        1. Generate audio for ALL segments first
+        2. Get actual audio durations for each segment
+        3. Concatenate all audio into one section audio file
+        4. Pass ALL segment timing info to Gemini for ONE cohesive video
+        5. Generate ONE video for the entire section
+        6. Merge audio with video
+        
+        This creates smooth, continuous animations within each section.
+        """
+        result = {
+            "video_path": None,
+            "audio_path": None,
+            "duration": 0,
+            "manim_code": None
+        }
+        
+        num_segments = len(narration_segments)
+        print(f"Section {section_index}: Processing {num_segments} segments (audio-first, unified video)")
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # STEP 1: Generate audio for ALL segments first
+        # ═══════════════════════════════════════════════════════════════════════
+        segment_audio_info = []
+        cumulative_time = 0.0
+        
+        for seg_idx, segment in enumerate(narration_segments):
+            seg_dir = section_dir / f"seg_{seg_idx}"
+            seg_dir.mkdir(exist_ok=True)
+            
+            seg_text = segment.get("text", "")
+            clean_text = self._clean_narration_for_tts(seg_text)
+            
+            audio_path = seg_dir / "audio.mp3"
+            audio_duration = segment.get("estimated_duration", 10.0)
+            
+            try:
+                await self.tts_engine.generate_speech(
+                    text=clean_text,
+                    output_path=str(audio_path),
+                    voice=voice
+                )
+                audio_duration = await self._get_audio_duration(str(audio_path))
+            except Exception as e:
+                print(f"TTS error for section {section_index} segment {seg_idx}: {e}")
+                audio_path = None
+            
+            # Build timing info
+            segment_info = {
+                "segment_index": seg_idx,
+                "text": clean_text,
+                "audio_path": str(audio_path) if audio_path else None,
+                "duration": audio_duration,
+                "start_time": cumulative_time,
+                "end_time": cumulative_time + audio_duration,
+                "seg_dir": str(seg_dir)
+            }
+            segment_audio_info.append(segment_info)
+            cumulative_time += audio_duration
+            
+            print(f"  Segment {seg_idx}: {audio_duration:.1f}s (starts at {segment_info['start_time']:.1f}s)")
+        
+        total_duration = cumulative_time
+        print(f"Section {section_index}: Total audio duration = {total_duration:.1f}s")
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # STEP 2: Concatenate all audio segments into one file
+        # ═══════════════════════════════════════════════════════════════════════
+        section_audio_path = section_dir / "section_audio.mp3"
+        valid_audio_paths = [s["audio_path"] for s in segment_audio_info if s["audio_path"]]
+        
+        if len(valid_audio_paths) > 1:
+            await self._concatenate_audio_files(valid_audio_paths, str(section_audio_path))
+        elif len(valid_audio_paths) == 1:
+            import shutil
+            shutil.copy(valid_audio_paths[0], str(section_audio_path))
+        else:
+            print(f"Section {section_index}: No valid audio segments")
+            return result
+        
+        result["audio_path"] = str(section_audio_path)
+        result["duration"] = total_duration
+        
+        # Build unified section data with ALL segment timing information
+        # The Manim generator will create ONE continuous animation that covers all segments
+        unified_section = {
+            "id": section.get('id', 'section'),
+            "title": section.get('title', 'Section'),
+            # Combine all segment narrations into one
+            "narration": "\n\n".join([s["text"] for s in segment_audio_info]),
+            "tts_narration": "\n\n".join([s["text"] for s in segment_audio_info]),
+            "visual_description": section.get("visual_description", ""),
+            "key_concepts": section.get("key_concepts", []),
+            "animation_type": section.get("animation_type", "mixed"),
+            "style": style,
+            "language": language,
+            # CRITICAL: Timing information for the ENTIRE section
+            "total_duration": total_duration,
+            "is_unified_section": True,
+            "num_segments": num_segments,
+            # Detailed timing breakdown for each narration segment
+            # This helps Gemini time animations to sync with each part of the narration
+            "segment_timing": [
+                {
+                    "index": s["segment_index"],
+                    "text": s["text"],
+                    "start_time": s["start_time"],
+                    "end_time": s["end_time"],
+                    "duration": s["duration"]
+                }
+                for s in segment_audio_info
+            ]
+        }
+        
+        print(f"Section {section_index}: Generating unified video ({total_duration:.1f}s total)")
+        
+        video_path = None
+        manim_code = None
+        
+        try:
+            manim_result = await self.manim_generator.generate_section_video(
+                section=unified_section,
+                output_dir=str(section_dir),
+                section_index=str(section_index),
+                audio_duration=total_duration,
+                style=style,
+                language=language
+            )
+            video_path = manim_result.get("video_path") if isinstance(manim_result, dict) else manim_result
+            if isinstance(manim_result, dict) and manim_result.get("manim_code"):
+                manim_code = manim_result["manim_code"]
+        except Exception as e:
+            print(f"Manim error for unified section {section_index}: {e}")
+            import traceback
+            traceback.print_exc()
+            return result
+        
+        if not video_path:
+            print(f"Section {section_index}: Failed to generate unified video")
+            return result
+        
+        result["manim_code"] = manim_code
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # STEP 4: Merge unified video with concatenated audio
+        # ═══════════════════════════════════════════════════════════════════════
+        merged_path = section_dir / "final_section.mp4"
+        
+        audio_duration_actual = await self._get_media_duration(str(section_audio_path))
+        video_duration_actual = await self._get_media_duration(video_path)
+        
+        print(f"Section {section_index}: Merging video ({video_duration_actual:.1f}s) with audio ({audio_duration_actual:.1f}s)")
+        
+        if video_duration_actual >= audio_duration_actual:
+            # Video is longer - pad audio with silence to match video duration
+            silence_duration = video_duration_actual - audio_duration_actual
+            print(f"Section {section_index}: Adding {silence_duration:.1f}s silence to match video")
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", str(section_audio_path),
+                "-filter_complex", f"[1:a]apad=pad_dur={silence_duration}[a]",
+                "-map", "0:v:0",
+                "-map", "[a]",
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                "-t", str(video_duration_actual),
+                str(merged_path)
+            ]
+        else:
+            # Extend video to match audio by slowing it down or looping last frame
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", str(section_audio_path),
+                "-filter_complex", f"[0:v]tpad=stop_mode=clone:stop_duration={audio_duration_actual - video_duration_actual}[v]",
+                "-map", "[v]",
+                "-map", "1:a:0",
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                str(merged_path)
+            ]
+        
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+            
+            if process.returncode == 0 and merged_path.exists():
+                result["video_path"] = str(merged_path)
+                result["duration"] = total_duration
+                print(f"Section {section_index}: Successfully created unified video")
+            else:
+                print(f"Section {section_index}: FFmpeg merge failed: {stderr.decode()[:500]}")
+        except Exception as e:
+            print(f"Section {section_index}: Error merging video and audio: {e}")
+        
+        return result
+    
+    async def _merge_single_segment(
+        self,
+        segment: Dict[str, Any],
+        output_dir: Path,
+        section_index: int
+    ) -> Dict[str, Any]:
+        """Merge a single segment's video and audio"""
+        video_path = segment["video_path"]
+        audio_path = segment["audio_path"]
+        
+        merged_path = output_dir / "final_section.mp4"
+        final_audio = output_dir / "audio.mp3"
+        
+        # Get durations
+        audio_duration = await self._get_media_duration(audio_path)
+        video_duration = await self._get_media_duration(video_path)
+        
+        if video_duration >= audio_duration:
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", audio_path,
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-shortest",
+                str(merged_path)
+            ]
+        else:
+            # Extend video to match audio
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", audio_path,
+                "-filter_complex", f"[0:v]tpad=stop=-1:stop_mode=clone,setpts=PTS-STARTPTS[v]",
+                "-map", "[v]",
+                "-map", "1:a:0",
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                "-t", str(audio_duration),
+                str(merged_path)
+            ]
+        
+        try:
+            await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+        except Exception as e:
+            print(f"Error merging segment: {e}")
+            return {"video_path": None, "audio_path": None}
+        
+        # Copy audio for compatibility
+        if os.path.exists(audio_path):
+            import shutil
+            shutil.copy(audio_path, str(final_audio))
+        
+        return {
+            "video_path": str(merged_path) if merged_path.exists() else None,
+            "audio_path": str(final_audio) if final_audio.exists() else None
+        }
+    
+    async def _concatenate_audio_files(
+        self,
+        audio_paths: List[str],
+        output_path: str
+    ) -> bool:
+        """Concatenate multiple audio files into one using ffmpeg"""
+        if not audio_paths:
+            return False
+        
+        if len(audio_paths) == 1:
+            import shutil
+            shutil.copy(audio_paths[0], output_path)
+            return True
+        
+        # Create concat file list
+        concat_list_path = Path(output_path).parent / "concat_audio_list.txt"
+        with open(concat_list_path, 'w') as f:
+            for audio_path in audio_paths:
+                f.write(f"file '{audio_path}'\n")
+        
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_list_path),
+            "-c", "copy",
+            output_path
+        ]
+        
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
+            
+            if process.returncode != 0:
+                print(f"Audio concatenation failed: {stderr.decode()[:500]}")
+                return False
+            
+            return Path(output_path).exists()
+        except Exception as e:
+            print(f"Error concatenating audio: {e}")
+            return False
+        finally:
+            # Cleanup
+            if concat_list_path.exists():
+                concat_list_path.unlink()
+    
+    async def _merge_segments(
+        self,
+        segment_results: List[Dict[str, Any]],
+        output_dir: Path,
+        section_index: int
+    ) -> Dict[str, Any]:
+        """Merge multiple segments into a single section video
+        
+        Each segment has matched audio+video, so we:
+        1. Merge each segment's audio+video
+        2. Concatenate all merged clips
+        """
+        merged_clips = []
+        
+        for seg in segment_results:
+            seg_idx = seg["segment_index"]
+            video_path = seg["video_path"]
+            audio_path = seg["audio_path"]
+            merged_path = output_dir / f"merged_seg_{seg_idx}.mp4"
+            
+            audio_duration = await self._get_media_duration(audio_path)
+            video_duration = await self._get_media_duration(video_path)
+            
+            if video_duration >= audio_duration:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", video_path,
+                    "-i", audio_path,
+                    "-c:v", "libx264",
+                    "-c:a", "aac",
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
+                    "-shortest",
+                    str(merged_path)
+                ]
+            else:
+                cmd = [
+                    "ffmpeg", "-y",
+                    "-i", video_path,
+                    "-i", audio_path,
+                    "-filter_complex", f"[0:v]tpad=stop=-1:stop_mode=clone,setpts=PTS-STARTPTS[v]",
+                    "-map", "[v]",
+                    "-map", "1:a:0",
+                    "-c:v", "libx264",
+                    "-c:a", "aac",
+                    "-t", str(audio_duration),
+                    str(merged_path)
+                ]
+            
+            try:
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+                if result.returncode == 0 and merged_path.exists():
+                    merged_clips.append(str(merged_path))
+            except Exception as e:
+                print(f"Error merging segment {seg_idx}: {e}")
+        
+        if not merged_clips:
+            return {"video_path": None, "audio_path": None}
+        
+        # Concatenate all merged clips
+        final_video = output_dir / "final_section.mp4"
+        final_audio = output_dir / "audio.mp3"
+        
+        concat_file = output_dir / "concat_list.txt"
+        with open(concat_file, "w") as f:
+            for clip in merged_clips:
+                f.write(f"file '{clip}'\n")
+        
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", str(concat_file),
+            "-c", "copy",
+            str(final_video)
+        ]
+        
+        try:
+            await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+        except Exception as e:
+            print(f"Error concatenating segments: {e}")
+            if merged_clips:
+                import shutil
+                shutil.copy(merged_clips[0], str(final_video))
+        
+        # Extract audio
+        if final_video.exists():
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(final_video),
+                "-vn",
+                "-acodec", "libmp3lame",
+                str(final_audio)
+            ]
+            try:
+                await asyncio.to_thread(
+                    subprocess.run,
+                    cmd,
+                    capture_output=True,
+                    timeout=120
+                )
+            except Exception:
+                pass
+        
+        return {
+            "video_path": str(final_video) if final_video.exists() else None,
+            "audio_path": str(final_audio) if final_audio.exists() else None
+        }
+    
     async def _process_subsections_with_sync(
         self,
         section: Dict[str, Any],
@@ -530,7 +985,8 @@ class VideoGenerator:
         section_dir: Path,
         section_index: int,
         voice: str,
-        style: str
+        style: str,
+        language: str = "en"
     ) -> Dict[str, Any]:
         """Process multiple subsections and merge them for perfect sync
         
@@ -565,6 +1021,7 @@ class VideoGenerator:
                 "key_concepts": section.get("key_concepts", []),
                 "animation_type": section.get("animation_type", "text"),
                 "style": style,
+                "language": language,
                 "is_subsection": True,
                 "subsection_index": sub_idx,
                 "total_subsections": len(subsections)
@@ -596,7 +1053,8 @@ class VideoGenerator:
                     output_dir=str(sub_dir),
                     section_index=f"{section_index}_{sub_idx}",
                     audio_duration=audio_duration,
-                    style=style
+                    style=style,
+                    language=language
                 )
                 video_path = manim_result.get("video_path") if isinstance(manim_result, dict) else manim_result
                 if isinstance(manim_result, dict) and manim_result.get("manim_code"):
@@ -844,16 +1302,19 @@ class VideoGenerator:
             print(f"Section {i}: Video={video_duration:.1f}s, Audio={audio_duration:.1f}s")
             
             if video_duration >= audio_duration:
-                # Video is long enough, just merge with -shortest
+                # Video is longer - pad audio with silence to match video duration
+                silence_duration = video_duration - audio_duration
+                print(f"Section {i}: Adding {silence_duration:.1f}s silence to match video")
                 cmd = [
                     "ffmpeg", "-y",
                     "-i", video,
                     "-i", audio,
+                    "-filter_complex", f"[1:a]apad=pad_dur={silence_duration}[a]",
+                    "-map", "0:v:0",
+                    "-map", "[a]",
                     "-c:v", "libx264",
                     "-c:a", "aac",
-                    "-map", "0:v:0",
-                    "-map", "1:a:0",
-                    "-shortest",
+                    "-t", str(video_duration),
                     str(merged_path)
                 ]
             else:

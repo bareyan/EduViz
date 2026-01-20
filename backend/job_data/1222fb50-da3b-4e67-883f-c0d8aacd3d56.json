@@ -1,0 +1,120 @@
+{
+  "id": "1222fb50-da3b-4e67-883f-c0d8aacd3d56",
+  "status": "completed",
+  "progress": 100,
+  "message": "Generated 1 video(s) successfully!",
+  "result": [
+    {
+      "video_id": "1222fb50-da3b-4e67-883f-c0d8aacd3d56",
+      "title": "Introduction aux \u00c9quations Diff\u00e9rentielles : Fondements et R\u00e9solutions",
+      "duration": 618.4319999999999,
+      "chapters": [
+        {
+          "title": "Introduction : Pourquoi \u00e9tudier le changement ?",
+          "start_time": 0,
+          "duration": 46.992000000000004
+        },
+        {
+          "title": "Le Mod\u00e8le de Population : y' = ay",
+          "start_time": 46.992000000000004,
+          "duration": 39.36
+        },
+        {
+          "title": "Vocabulaire et D\u00e9finition de l'\u00c9quation",
+          "start_time": 86.352,
+          "duration": 29.711999999999996
+        },
+        {
+          "title": "Que signifie 'R\u00e9soudre' une \u00e9quation diff\u00e9rentielle ?",
+          "start_time": 116.064,
+          "duration": 33.072
+        },
+        {
+          "title": "R\u00e9solution de y' = ay : L'intuition exponentielle",
+          "start_time": 149.136,
+          "duration": 49.8
+        },
+        {
+          "title": "La Solution Maximale : Aller au bout de l'intervalle",
+          "start_time": 198.93599999999998,
+          "duration": 31.031999999999996
+        },
+        {
+          "title": "Visualisation : J vs J1 et Restrictions",
+          "start_time": 229.96799999999996,
+          "duration": 31.92
+        },
+        {
+          "title": "Les \u00c9quations Diff\u00e9rentielles Lin\u00e9aires (EDL1)",
+          "start_time": 261.888,
+          "duration": 29.856
+        },
+        {
+          "title": "La Formule G\u00e9n\u00e9rale des EDL1",
+          "start_time": 291.74399999999997,
+          "duration": 34.968
+        },
+        {
+          "title": "D\u00e9monstration : La m\u00e9thode du facteur int\u00e9grant",
+          "start_time": 326.712,
+          "duration": 34.92
+        },
+        {
+          "title": "Solutions Globales vs Maximales",
+          "start_time": 361.632,
+          "duration": 25.968
+        },
+        {
+          "title": "L'Exemple Non Lin\u00e9aire : y' = y\u00b2",
+          "start_time": 387.6,
+          "duration": 22.368
+        },
+        {
+          "title": "Explosion en temps fini : R\u00e9soudre y' = y\u00b2",
+          "start_time": 409.968,
+          "duration": 30.936
+        },
+        {
+          "title": "Analyse des Intervalles J+ et J-",
+          "start_time": 440.904,
+          "duration": 26.567999999999998
+        },
+        {
+          "title": "La solution nulle et l'unicit\u00e9",
+          "start_time": 467.472,
+          "duration": 24.216
+        },
+        {
+          "title": "Preuve de l'unicit\u00e9e pour y' = y\u00b2",
+          "start_time": 491.688,
+          "duration": 32.208
+        },
+        {
+          "title": "Bilan de l'exemple non-lin\u00e9aire",
+          "start_time": 523.896,
+          "duration": 19.776
+        },
+        {
+          "title": "Le Probl\u00e8me de Cauchy",
+          "start_time": 543.6719999999999,
+          "duration": 22.752
+        },
+        {
+          "title": "Th\u00e9or\u00e8me d'Unicit\u00e9 (Cas C1)",
+          "start_time": 566.4239999999999,
+          "duration": 24.648
+        },
+        {
+          "title": "Synth\u00e8se et Perspectives",
+          "start_time": 591.0719999999999,
+          "duration": 27.36
+        }
+      ],
+      "download_url": "/outputs/1222fb50-da3b-4e67-883f-c0d8aacd3d56/final_video.mp4",
+      "thumbnail_url": null
+    }
+  ],
+  "error": null,
+  "created_at": "2026-01-20T01:17:32.521041",
+  "updated_at": "2026-01-20T01:22:40.008418"
+}

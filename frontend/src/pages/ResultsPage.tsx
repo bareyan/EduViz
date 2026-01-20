@@ -7,10 +7,24 @@ import {
   Download, 
   Play, 
   Home,
-  RefreshCw
+  RefreshCw,
+  Globe,
+  Languages,
+  Plus
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { getJobStatus, JobResponse, GeneratedVideo, getVideoUrl, API_BASE } from '../api'
+import { 
+  getJobStatus, 
+  JobResponse, 
+  GeneratedVideo, 
+  getVideoUrl, 
+  API_BASE,
+  getJobTranslations,
+  createTranslation,
+  TranslationsResponse,
+  AVAILABLE_LANGUAGES,
+  MULTILINGUAL_VOICES
+} from '../api'
 
 export default function ResultsPage() {
   const { jobId } = useParams<{ jobId: string }>()
@@ -19,6 +33,13 @@ export default function ResultsPage() {
   const [job, setJob] = useState<JobResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedVideo, setSelectedVideo] = useState<GeneratedVideo | null>(null)
+  
+  // Translation state
+  const [translations, setTranslations] = useState<TranslationsResponse | null>(null)
+  const [showTranslationModal, setShowTranslationModal] = useState(false)
+  const [selectedLanguage, setSelectedLanguage] = useState('')
+  const [selectedVoice, setSelectedVoice] = useState(MULTILINGUAL_VOICES[0].id)
+  const [isTranslating, setIsTranslating] = useState(false)
 
   useEffect(() => {
     if (!jobId) return
@@ -37,6 +58,8 @@ export default function ResultsPage() {
 
         if (status.status === 'completed' && status.result && status.result.length > 0) {
           setSelectedVideo(status.result[0])
+          // Fetch translations when job is complete
+          fetchTranslations()
         }
 
         // Continue polling if not completed or failed
@@ -50,6 +73,17 @@ export default function ResultsPage() {
         }
       }
     }
+    
+    const fetchTranslations = async () => {
+      try {
+        const data = await getJobTranslations(jobId)
+        if (isMounted) {
+          setTranslations(data)
+        }
+      } catch (err) {
+        console.error('Failed to fetch translations:', err)
+      }
+    }
 
     pollStatus()
 
@@ -58,6 +92,45 @@ export default function ResultsPage() {
       if (timeoutId) clearTimeout(timeoutId)
     }
   }, [jobId])  // Only depend on jobId, not job.status
+  
+  // Handle translation creation
+  const handleCreateTranslation = async () => {
+    if (!jobId || !selectedLanguage) return
+    
+    setIsTranslating(true)
+    try {
+      await createTranslation(jobId, selectedLanguage, selectedVoice)
+      toast.success(`Translation to ${AVAILABLE_LANGUAGES.find(l => l.code === selectedLanguage)?.name || selectedLanguage} started!`)
+      setShowTranslationModal(false)
+      setSelectedLanguage('')
+      
+      // Poll for translation completion
+      const pollTranslations = setInterval(async () => {
+        try {
+          const data = await getJobTranslations(jobId)
+          setTranslations(data)
+          
+          // Check if translation is complete
+          const translation = data.translations.find(t => t.language === selectedLanguage)
+          if (translation?.has_video) {
+            clearInterval(pollTranslations)
+            toast.success('Translation complete!')
+          }
+        } catch {
+          // Ignore errors during polling
+        }
+      }, 3000)
+      
+      // Stop polling after 10 minutes
+      setTimeout(() => clearInterval(pollTranslations), 600000)
+      
+    } catch (err) {
+      console.error('Failed to create translation:', err)
+      toast.error('Failed to start translation')
+    } finally {
+      setIsTranslating(false)
+    }
+  }
 
   const statusInfo = getStatusInfo(job?.status)
 
@@ -249,8 +322,146 @@ export default function ResultsPage() {
               />
             ))}
           </div>
+          
+          {/* Translations Section */}
+          <div className="mt-6 pt-6 border-t border-gray-800">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Languages className="w-5 h-5 text-math-purple" />
+                <h2 className="text-lg font-semibold">Translations</h2>
+              </div>
+              <button
+                onClick={() => setShowTranslationModal(true)}
+                className="flex items-center gap-1 px-3 py-1.5 bg-math-purple/20 text-math-purple 
+                           rounded-lg hover:bg-math-purple/30 transition-colors text-sm"
+              >
+                <Plus className="w-4 h-4" />
+                Add Translation
+              </button>
+            </div>
+            
+            {/* Original Language */}
+            {translations && (
+              <p className="text-sm text-gray-500 mb-3">
+                Original: {AVAILABLE_LANGUAGES.find(l => l.code === translations.original_language)?.name || translations.original_language}
+              </p>
+            )}
+            
+            {/* Translation List */}
+            <div className="space-y-2">
+              {translations?.translations.map(t => (
+                <div 
+                  key={t.language}
+                  className="flex items-center justify-between p-3 bg-gray-800/50 rounded-lg"
+                >
+                  <div className="flex items-center gap-2">
+                    <Globe className="w-4 h-4 text-gray-400" />
+                    <span>{AVAILABLE_LANGUAGES.find(l => l.code === t.language)?.name || t.language}</span>
+                  </div>
+                  {t.has_video ? (
+                    <a 
+                      href={`${API_BASE}${t.video_url}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 text-sm text-math-blue hover:underline"
+                    >
+                      <Play className="w-3 h-3" />
+                      Watch
+                    </a>
+                  ) : (
+                    <span className="flex items-center gap-1 text-sm text-gray-500">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Processing...
+                    </span>
+                  )}
+                </div>
+              ))}
+              
+              {(!translations || translations.translations.length === 0) && (
+                <p className="text-sm text-gray-500 text-center py-4">
+                  No translations yet. Click "Add Translation" to create one.
+                </p>
+              )}
+            </div>
+          </div>
         </div>
       </div>
+      
+      {/* Translation Modal */}
+      {showTranslationModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-gray-900 rounded-xl p-6 max-w-md w-full mx-4 border border-gray-800">
+            <h3 className="text-xl font-semibold mb-4">Add Translation</h3>
+            <p className="text-gray-400 text-sm mb-4">
+              Select a language to translate the video into. The narration will be translated and 
+              new audio will be generated.
+            </p>
+            
+            {/* Language Selection */}
+            <label className="block text-sm font-medium text-gray-300 mb-2">Target Language</label>
+            <div className="space-y-2 max-h-40 overflow-y-auto mb-4">
+              {AVAILABLE_LANGUAGES
+                .filter(lang => lang.code !== translations?.original_language)
+                .filter(lang => !translations?.translations.some(t => t.language === lang.code))
+                .map(lang => (
+                  <button
+                    key={lang.code}
+                    onClick={() => setSelectedLanguage(lang.code)}
+                    className={`w-full p-3 rounded-lg text-left transition-all ${
+                      selectedLanguage === lang.code
+                        ? 'bg-math-purple/20 border-math-purple border'
+                        : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                    }`}
+                  >
+                    {lang.name}
+                  </button>
+                ))}
+            </div>
+            
+            {/* Voice Selection */}
+            <label className="block text-sm font-medium text-gray-300 mb-2">Voice</label>
+            <select
+              value={selectedVoice}
+              onChange={(e) => setSelectedVoice(e.target.value)}
+              className="w-full p-3 rounded-lg bg-gray-800 border border-gray-700 text-white mb-4
+                         focus:outline-none focus:border-math-purple"
+            >
+              {MULTILINGUAL_VOICES.map(voice => (
+                <option key={voice.id} value={voice.id}>
+                  {voice.name} ({voice.gender})
+                </option>
+              ))}
+            </select>
+            
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setShowTranslationModal(false)
+                  setSelectedLanguage('')
+                }}
+                className="flex-1 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreateTranslation}
+                disabled={!selectedLanguage || isTranslating}
+                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-math-purple text-white 
+                           rounded-lg hover:bg-math-purple/80 transition-colors disabled:opacity-50"
+              >
+                {isTranslating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Starting...
+                  </>
+                ) : (
+                  'Start Translation'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

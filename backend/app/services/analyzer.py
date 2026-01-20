@@ -199,7 +199,7 @@ class MaterialAnalyzer:
                 
                 response = await asyncio.to_thread(
                     self.gemini_client.models.generate_content,
-                    model="gemini-3-flash-preview",
+                    model="gemini-flash-lite-latest",
                     contents=[
                         "Extract all text and mathematical content from this image. Format equations in LaTeX where possible.",
                         image

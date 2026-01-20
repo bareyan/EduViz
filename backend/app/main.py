@@ -21,6 +21,7 @@ load_dotenv()
 from .services.analyzer_v2 import MaterialAnalyzer
 from .services.video_generator_v2 import VideoGenerator
 from .services.job_manager import JobManager, JobStatus
+from .services.translation_service import get_translation_service
 
 app = FastAPI(
     title="MathViz API",
@@ -1265,6 +1266,430 @@ async def regenerate_section(job_id: str, section_id: str):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Regeneration failed: {str(e)}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TRANSLATION ENDPOINTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TranslationRequest(BaseModel):
+    target_language: str  # Target language code (e.g., 'fr', 'es', 'de')
+    voice: Optional[str] = None  # Optional voice override (defaults to language-specific)
+
+
+class TranslationResponse(BaseModel):
+    job_id: str
+    translation_id: str
+    target_language: str
+    status: str
+    message: str
+
+
+@app.get("/job/{job_id}/translations")
+async def get_job_translations(job_id: str):
+    """Get all available translations for a job"""
+    job_dir = os.path.join(OUTPUT_DIR, job_id)
+    if not os.path.exists(job_dir):
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    translations = []
+    
+    # Check for translations directory
+    translations_dir = os.path.join(job_dir, "translations")
+    if os.path.exists(translations_dir):
+        for lang_dir in os.listdir(translations_dir):
+            lang_path = os.path.join(translations_dir, lang_dir)
+            if os.path.isdir(lang_path):
+                # Check if translation is complete
+                script_path = os.path.join(lang_path, "script.json")
+                video_path = os.path.join(lang_path, "final_video.mp4")
+                
+                translations.append({
+                    "language": lang_dir,
+                    "has_script": os.path.exists(script_path),
+                    "has_video": os.path.exists(video_path),
+                    "video_url": f"/outputs/{job_id}/translations/{lang_dir}/final_video.mp4" if os.path.exists(video_path) else None
+                })
+    
+    # Also get the original language from the main script
+    original_language = "en"
+    script_path = os.path.join(job_dir, "script.json")
+    if os.path.exists(script_path):
+        with open(script_path, "r") as f:
+            script = json.load(f)
+        original_language = script.get("source_language", script.get("language", "en"))
+    
+    return {
+        "job_id": job_id,
+        "original_language": original_language,
+        "translations": translations
+    }
+
+
+@app.post("/job/{job_id}/translate", response_model=TranslationResponse)
+async def create_translation(job_id: str, request: TranslationRequest, background_tasks: BackgroundTasks):
+    """Start translation of a completed video to a new language"""
+    job_dir = os.path.join(OUTPUT_DIR, job_id)
+    if not os.path.exists(job_dir):
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Check if original video exists
+    script_path = os.path.join(job_dir, "script.json")
+    if not os.path.exists(script_path):
+        raise HTTPException(status_code=400, detail="Original video not yet generated")
+    
+    target_language = request.target_language
+    translation_id = f"{job_id}_{target_language}"
+    
+    # Create translations directory
+    translation_dir = os.path.join(job_dir, "translations", target_language)
+    os.makedirs(translation_dir, exist_ok=True)
+    
+    # Start translation in background
+    async def run_translation():
+        try:
+            translation_service = get_translation_service()
+            
+            # Load original script
+            with open(script_path, "r") as f:
+                original_script = json.load(f)
+            
+            source_language = original_script.get("source_language", original_script.get("language", "en"))
+            
+            print(f"[Translation] Starting translation from {source_language} to {target_language}")
+            
+            # Translate the script
+            translated_script = await translation_service.translate_script(
+                original_script,
+                target_language,
+                source_language
+            )
+            
+            # Save translated script
+            translated_script_path = os.path.join(translation_dir, "script.json")
+            with open(translated_script_path, "w") as f:
+                json.dump(translated_script, f, indent=2, ensure_ascii=False)
+            
+            print(f"[Translation] Script translated, now generating video...")
+            
+            # Get voice - use provided voice or fall back to language default
+            voice = request.voice if request.voice else _get_voice_for_language(target_language)
+            
+            # Generate video with translated script
+            # Use the existing video generator but with translated script
+            await _generate_translated_video(
+                job_id,
+                translated_script,
+                translation_dir,
+                target_language,
+                voice
+            )
+            
+            print(f"[Translation] Translation complete for {target_language}")
+            
+        except Exception as e:
+            print(f"[Translation] Error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    background_tasks.add_task(run_translation)
+    
+    return TranslationResponse(
+        job_id=job_id,
+        translation_id=translation_id,
+        target_language=target_language,
+        status="processing",
+        message=f"Translation to {target_language} started"
+    )
+
+
+def _get_voice_for_language(language: str) -> str:
+    """Get appropriate TTS voice for a language"""
+    voice_map = {
+        "en": "en-US-GuyNeural",
+        "fr": "fr-FR-HenriNeural",
+        "es": "es-ES-AlvaroNeural",
+        "de": "de-DE-ConradNeural",
+        "it": "it-IT-DiegoNeural",
+        "pt": "pt-BR-AntonioNeural",
+        "zh": "zh-CN-YunxiNeural",
+        "ja": "ja-JP-KeitaNeural",
+        "ko": "ko-KR-InJoonNeural",
+        "ar": "ar-SA-HamedNeural",
+        "ru": "ru-RU-DmitryNeural",
+        "hy": "hy-AM-HaykNeural",
+        "hi": "hi-IN-MadhurNeural",
+        "tr": "tr-TR-AhmetNeural",
+        "pl": "pl-PL-MarekNeural",
+        "nl": "nl-NL-MaartenNeural",
+    }
+    return voice_map.get(language, "en-US-GuyNeural")
+
+
+async def _generate_translated_video(
+    job_id: str,
+    translated_script: Dict[str, Any],
+    output_dir: str,
+    target_language: str,
+    voice: str
+):
+    """Generate video from translated script with translated Manim animations"""
+    from .services.tts_engine import TTSEngine
+    from .services.manim_generator import ManimGenerator
+    from .services.translation_service import TranslationService
+    import subprocess
+    
+    tts_engine = TTSEngine()
+    manim_gen = ManimGenerator()
+    translation_service = TranslationService()
+    
+    source_language = translated_script.get("translated_from", "en")
+    
+    sections = translated_script.get("sections", [])
+    section_videos = []
+    
+    for i, section in enumerate(sections):
+        print(f"[Translation] Processing section {i+1}/{len(sections)}")
+        
+        section_dir = os.path.join(output_dir, f"section_{i}")
+        os.makedirs(section_dir, exist_ok=True)
+        
+        # Generate new audio from translated narration
+        narration = section.get("tts_narration", section.get("narration", ""))
+        if not narration:
+            print(f"[Translation] No narration for section {i}, skipping")
+            continue
+        
+        audio_path = os.path.join(section_dir, "audio.mp3")
+        
+        try:
+            await tts_engine.generate_speech(
+                text=narration,
+                output_path=audio_path,
+                voice=voice
+            )
+        except Exception as e:
+            print(f"[Translation] TTS error for section {i}: {e}")
+            continue
+        
+        audio_duration = await _get_media_duration_async(audio_path)
+        print(f"[Translation] Section {i}: audio duration = {audio_duration:.1f}s")
+        
+        # Try to find original Manim code - first check section data, then common file locations
+        # Section directories are sometimes named by section id (from script) or as section_{i}
+        section_id_dir = section.get("id")
+        possible_section_dirs = []
+        if section_id_dir:
+            possible_section_dirs.append(os.path.join(OUTPUT_DIR, job_id, section_id_dir))
+        possible_section_dirs.append(os.path.join(OUTPUT_DIR, job_id, f"section_{i}"))
+
+        # Set default original_section_dir (use first existing or fallback to section_{i})
+        original_section_dir = os.path.join(OUTPUT_DIR, job_id, f"section_{i}")
+        for sd in possible_section_dirs:
+            if os.path.isdir(sd):
+                original_section_dir = sd
+                break
+
+        original_manim_path = ""
+        for sd in possible_section_dirs:
+            candidate = os.path.join(sd, "scene.py")
+            if os.path.exists(candidate):
+                original_manim_path = candidate
+                original_section_dir = sd
+                break
+        
+        # Get original manim from section data (stored in script.json)
+        original_manim = section.get("manim_code", "")
+        
+        # Fallback to file if not in section data and a path was found
+        if not original_manim and original_manim_path and os.path.exists(original_manim_path):
+            with open(original_manim_path, "r") as f:
+                original_manim = f.read()
+        
+        video_path = None
+        
+        # Enable/disable Manim re-rendering for translations
+        # When True: translates Text() strings in Manim and re-renders animation
+        # When False: uses original video with only translated audio
+        ENABLE_MANIM_TRANSLATION = True
+        
+        if ENABLE_MANIM_TRANSLATION and original_manim:
+            print(f"[Translation] Found original Manim code ({len(original_manim)} chars), translating...")
+            
+            try:
+                # Translate the Manim code
+                translated_manim = await translation_service.translate_manim_code(
+                    original_manim,
+                    target_language,
+                    source_language
+                )
+                
+                print(f"[Translation] Translation complete ({len(translated_manim)} chars)")
+                
+                # Save translated Manim
+                translated_manim_path = os.path.join(section_dir, "scene.py")
+                with open(translated_manim_path, "w") as f:
+                    f.write(translated_manim)
+                
+                print(f"[Translation] Rendering translated Manim animation...")
+                
+                # Render the translated Manim using render_from_code
+                video_path = await manim_gen.render_from_code(
+                    translated_manim,
+                    section_dir,
+                    section_index=i
+                )
+                
+                if video_path and os.path.exists(video_path):
+                    print(f"[Translation] Manim rendered successfully: {video_path}")
+                else:
+                    print(f"[Translation] Manim render failed, falling back to original video")
+                    video_path = None
+                    
+            except Exception as e:
+                print(f"[Translation] Manim translation/render error: {e}")
+                import traceback
+                traceback.print_exc()
+                video_path = None
+        else:
+            if not original_manim:
+                print(f"[Translation] No original Manim code found for section {i}")
+        
+        # Fallback: use original video if Manim translation failed
+        if not video_path or not os.path.exists(video_path):
+            original_section_video = os.path.join(original_section_dir, "final_section.mp4")
+            if not os.path.exists(original_section_video):
+                original_section_video = section.get("video", "")
+            
+            if os.path.exists(original_section_video):
+                video_path = original_section_video
+                print(f"[Translation] Using original video: {video_path}")
+            else:
+                print(f"[Translation] No video source for section {i}, skipping")
+                continue
+        
+        # Combine video with translated audio
+        video_duration = await _get_media_duration_async(video_path)
+        output_video = os.path.join(section_dir, "translated_section.mp4")
+        
+        print(f"[Translation] Section {i}: video={video_duration:.1f}s, audio={audio_duration:.1f}s")
+        
+        if audio_duration > video_duration * 0.9 and audio_duration < video_duration * 1.5:
+            # Audio is somewhat longer - slow down video to match
+            speed_factor = video_duration / audio_duration
+            print(f"[Translation] Slowing video by factor {speed_factor:.2f}")
+            
+            # Use setpts filter to slow down video
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", audio_path,
+                "-filter_complex", f"[0:v]setpts={1/speed_factor}*PTS[v]",
+                "-map", "[v]",
+                "-map", "1:a",
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                "-shortest",
+                output_video
+            ]
+        elif audio_duration > video_duration * 1.5:
+            # Audio is much longer - loop/extend video
+            print(f"[Translation] Extending video with tpad")
+            extend_duration = audio_duration - video_duration
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", audio_path,
+                "-filter_complex", f"[0:v]tpad=stop_mode=clone:stop_duration={extend_duration}[v]",
+                "-map", "[v]",
+                "-map", "1:a",
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                output_video
+            ]
+        else:
+            # Audio is shorter or about the same - pad audio with silence to match video
+            silence_duration = video_duration - audio_duration
+            print(f"[Translation] Adding {silence_duration:.1f}s silence to match video")
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", audio_path,
+                "-filter_complex", f"[1:a]apad=pad_dur={silence_duration}[a]",
+                "-map", "0:v",
+                "-map", "[a]",
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                "-t", str(video_duration),
+                output_video
+            ]
+        
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+            
+            if process.returncode == 0 and os.path.exists(output_video):
+                section_videos.append(output_video)
+            else:
+                print(f"[Translation] FFmpeg error: {stderr.decode()[:500]}")
+        except Exception as e:
+            print(f"[Translation] Error processing section {i}: {e}")
+    
+    # Concatenate all section videos
+    if section_videos:
+        final_video = os.path.join(output_dir, "final_video.mp4")
+        
+        # Create concat file
+        concat_file = os.path.join(output_dir, "concat.txt")
+        with open(concat_file, "w") as f:
+            for video in section_videos:
+                f.write(f"file '{video}'\n")
+        
+        cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat",
+            "-safe", "0",
+            "-i", concat_file,
+            "-c", "copy",
+            final_video
+        ]
+        
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        await process.communicate()
+        
+        print(f"[Translation] Final video created: {final_video}")
+
+
+async def _get_media_duration_async(file_path: str) -> float:
+    """Get duration of media file in seconds"""
+    import subprocess
+    
+    cmd = [
+        "ffprobe",
+        "-v", "quiet",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        file_path
+    ]
+    
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await process.communicate()
+        return float(stdout.decode().strip())
+    except:
+        return 10.0  # Default
 
 
 if __name__ == "__main__":
