@@ -90,7 +90,7 @@ class TTSEngine:
         text: str,
         output_path: str,
         voice: Optional[str] = None,
-        rate: str = "+0%",
+        rate: str = "+12%",  # 12% faster for better pacing
         pitch: str = "+0Hz"
     ) -> float:
         """
@@ -258,7 +258,7 @@ class TTSEngine:
         text: str,
         output_path: str,
         voice: Optional[str] = None,
-        rate: str = "+0%"
+        rate: str = "+12%"  # 12% faster for better pacing
     ) -> float:
         """
         Generate speech audio file from text.
@@ -268,7 +268,6 @@ class TTSEngine:
             text: Text to synthesize
             output_path: Path to save the audio file
             voice: Voice ID to use
-            rate: Speech rate adjustment (e.g., "-10%" for slower, "+10%" for faster)
-                  For teaching mode, use "-5%" to "-10%" for clearer pacing
+            rate: Speech rate adjustment (default: +12% for snappier delivery)
         """
         return await self.synthesize(text, output_path, voice, rate=rate)

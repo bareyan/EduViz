@@ -1,6 +1,7 @@
 """
-Visual Quality Control - Uses local LLM with vision to check generated videos
-Analyzes video frames for overlaps, off-screen elements, and visual issues
+Visual Quality Control - Uses Gemini Flash Lite with video analysis to check generated videos
+Analyzes video segments for overlaps, off-screen elements, and visual issues
+Uses structured output for reliable error detection
 """
 
 import os
@@ -8,566 +9,651 @@ import subprocess
 import tempfile
 import re
 import json
+import base64
 from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 import asyncio
 
+# Gemini SDK
 try:
-    from ollama import AsyncClient
-    OLLAMA_AVAILABLE = True
+    from google import genai
+    from google.genai import types
+    GEMINI_AVAILABLE = True
 except ImportError:
-    OLLAMA_AVAILABLE = False
-    print("[VisualQC] Warning: ollama package not installed. Run: pip install ollama")
+    genai = None
+    types = None
+    GEMINI_AVAILABLE = False
+    print("[VisualQC] Warning: google-genai package not installed. Run: pip install google-genai")
 
 
 class VisualQualityController:
     """
-    Analyzes generated Manim videos using a local vision-capable LLM
-    Checks for visual issues and suggests code fixes
+    Analyzes generated Manim videos using Gemini Flash Lite with video input
+    Sends downscaled 480p video at 1fps for efficient analysis
+    Uses structured output for reliable error detection
     """
     
-    # Fast local model with vision capabilities
-    # Options: llama3.2-vision, minicpm-v, llava, moondream
-    DEFAULT_MODEL = "llama3.2-vision:latest"
+    # Gemini Flash Lite for fast, cheap vision analysis
+    DEFAULT_MODEL = "gemini-2.0-flash-lite"
     
-    # Alternative models (in order of speed vs capability)
-    MODELS = {
-        "fastest": "moondream:latest",           # ~2GB, very fast
-        "balanced": "llama3.2-vision:latest",    # ~8GB, good balance
-        "capable": "llava:13b",                  # ~8GB, more capable
-        "best": "minicpm-v:latest"               # ~16GB, most capable
-    }
+    # Video processing settings
+    TARGET_HEIGHT = 480  # 480p
+    TARGET_FPS = 1  # 1 frame per second for analysis
     
     MAX_QC_ITERATIONS = 2  # Maximum times to retry fixing visual issues
     
+    # Pricing for gemini-2.0-flash-lite (per 1M tokens)
+    PRICING = {
+        "input": 0.075,      # $0.075 per 1M input tokens (includes video tokens)
+        "output": 0.30,      # $0.30 per 1M output tokens
+    }
+    
+    # System instruction for strict visual error detection
+    SYSTEM_INSTRUCTION = """You are an expert visual quality control inspector for educational Manim animation videos.
+
+Your task is to analyze videos and detect CRITICAL VISUAL RENDERING ERRORS that affect readability and understanding.
+
+## ERRORS TO DETECT (Be STRICT and THOROUGH):
+
+### 1. TEXT/EQUATION OVERFLOW (CRITICAL)
+- Text or equations extending beyond the visible frame edges (left, right, top, bottom)
+- Content cut off or partially hidden at screen boundaries
+- Elements positioned too close to edges with risk of clipping
+
+### 2. ELEMENT OVERLAPS (CRITICAL)
+- Text overlapping other text (making content unreadable)
+- Equations overlapping explanatory text
+- Shapes or diagrams covering text content
+- Bounding boxes or highlights overlapping unrelated content
+- Multiple elements stacked in a confusing manner
+
+### 3. RENDERING FAILURES
+- Missing LaTeX symbols (showing as boxes or question marks)
+- Corrupted or glitched visual elements
+- Text not properly rendered (boxes instead of characters)
+- Broken or malformed mathematical notation
+
+### 4. LAYOUT ISSUES
+- Text too close together (inadequate spacing)
+- Elements not properly aligned when they should be
+- Inconsistent margins or spacing
+- Wrong bounding boxes (highlighting wrong elements)
+- Boxes not properly containing their target content
+
+### 5. READABILITY PROBLEMS
+- Text too small to read clearly
+- Poor contrast (light text on light background or vice versa)
+- Overlapping animations creating visual confusion
+
+## WHAT TO IGNORE (NOT ERRORS):
+- Smooth animations and transitions (fading, morphing, moving)
+- Elements animating in/out (partial opacity during transition)
+- Dark/black backgrounds (this is the standard Manim style)
+- Empty frames at the very start or end
+- Motion blur during fast animations
+- Artistic style choices (colors, fonts)
+
+## ANALYSIS APPROACH:
+1. Watch the entire video carefully
+2. Note the timestamp (in seconds) when each error occurs
+3. Describe the error location specifically (e.g., "top-right corner", "center of screen")
+4. Provide a concrete, actionable description of what's wrong
+5. Be STRICT - if something looks wrong, report it
+6. Be SPECIFIC - vague descriptions are not helpful"""
+
     def __init__(self, model: str = None):
         """Initialize the visual QC service
         
         Args:
-            model: Model name or tier ("fastest", "balanced", "capable", "best")
+            model: Model name (default: gemini-2.0-flash-lite)
         """
-        if not OLLAMA_AVAILABLE:
-            raise ImportError("ollama package required. Install with: pip install ollama")
+        if not GEMINI_AVAILABLE:
+            raise ImportError("google-genai package required. Install with: pip install google-genai")
         
-        # Resolve model name
-        if model in self.MODELS:
-            self.model = self.MODELS[model]
-        elif model:
-            self.model = model
-        else:
-            self.model = self.DEFAULT_MODEL
+        self.model = model or self.DEFAULT_MODEL
         
-        self.client = AsyncClient()
-        print(f"[VisualQC] Initialized with model: {self.model}")
+        # Initialize Gemini client
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is required")
+        
+        self.client = genai.Client(api_key=api_key)
+        print(f"[VisualQC] Initialized with model: {self.model} (video mode, {self.TARGET_HEIGHT}p @ {self.TARGET_FPS}fps)")
+        
+        # Token usage tracking
+        self.usage_stats = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "videos_processed": 0,
+            "total_cost": 0.0
+        }
+        
+        # Error tracking for debugging
+        self.error_frames: List[Dict[str, Any]] = []
+        self.errors_dir: Optional[Path] = None
+        
+        # Create structured output schema (lazy initialization)
+        self._error_schema = None
     
-    async def check_model_available(self) -> bool:
-        """Check if the vision model is available locally"""
+    @property
+    def error_schema(self):
+        """Lazily create the structured output schema for error detection"""
+        if self._error_schema is None:
+            self._error_schema = genai.types.Schema(
+                type=genai.types.Type.OBJECT,
+                required=["errors_detected", "error_descriptions"],
+                properties={
+                    "errors_detected": genai.types.Schema(
+                        type=genai.types.Type.BOOLEAN,
+                        description="True if any visual errors were detected, False if video is clean"
+                    ),
+                    "error_descriptions": genai.types.Schema(
+                        type=genai.types.Type.ARRAY,
+                        description="List of detected errors with timestamps and descriptions",
+                        items=genai.types.Schema(
+                            type=genai.types.Type.OBJECT,
+                            required=["second", "location", "error_type", "description"],
+                            properties={
+                                "second": genai.types.Schema(
+                                    type=genai.types.Type.NUMBER,
+                                    description="Timestamp in seconds when the error is visible"
+                                ),
+                                "location": genai.types.Schema(
+                                    type=genai.types.Type.STRING,
+                                    description="Screen location: top-left, top-center, top-right, center-left, center, center-right, bottom-left, bottom-center, bottom-right, or full-screen"
+                                ),
+                                "error_type": genai.types.Schema(
+                                    type=genai.types.Type.STRING,
+                                    description="Type of error: overflow, overlap, rendering_failure, layout_issue, readability"
+                                ),
+                                "description": genai.types.Schema(
+                                    type=genai.types.Type.STRING,
+                                    description="Specific, concrete description of the error and what element is affected"
+                                )
+                            }
+                        )
+                    )
+                }
+            )
+        return self._error_schema
+    
+    def _track_usage(self, response, num_videos: int = 0):
+        """Track token usage and cost from Gemini response
+        
+        Args:
+            response: Gemini API response
+            num_videos: Number of videos in the request
+        """
         try:
-            # List available models
-            models_response = await self.client.list()
-            
-            # Handle different response formats
-            if hasattr(models_response, 'models'):
-                models_list = models_response.models
-            elif isinstance(models_response, dict):
-                models_list = models_response.get('models', [])
+            # Extract usage from response
+            if hasattr(response, 'usage_metadata'):
+                usage = response.usage_metadata
+                input_tokens = getattr(usage, 'prompt_token_count', 0)
+                output_tokens = getattr(usage, 'candidates_token_count', 0)
             else:
-                models_list = []
+                input_tokens = 0
+                output_tokens = 0
             
-            # Extract model names
-            available_models = []
-            for m in models_list:
-                if hasattr(m, 'model'):
-                    available_models.append(m.model)
-                elif isinstance(m, dict) and 'name' in m:
-                    available_models.append(m['name'])
-                elif isinstance(m, dict) and 'model' in m:
-                    available_models.append(m['model'])
+            # Update stats
+            self.usage_stats["input_tokens"] += input_tokens
+            self.usage_stats["output_tokens"] += output_tokens
+            self.usage_stats["videos_processed"] += num_videos
             
-            # Check if our model is available
-            model_base = self.model.split(':')[0]
-            is_available = any(model_base in m for m in available_models)
+            # Calculate cost
+            input_cost = (input_tokens / 1_000_000) * self.PRICING["input"]
+            output_cost = (output_tokens / 1_000_000) * self.PRICING["output"]
             
-            if not is_available:
-                print(f"[VisualQC] Model {self.model} not found locally")
-                print(f"[VisualQC] To install: ollama pull {self.model}")
-                print(f"[VisualQC] Available models: {', '.join(available_models) if available_models else 'none'}")
+            self.usage_stats["total_cost"] += input_cost + output_cost
             
-            return is_available
         except Exception as e:
-            print(f"[VisualQC] Error checking model availability: {e}")
-            import traceback
-            traceback.print_exc()
-            return False
+            print(f"[VisualQC] Warning: Could not track usage: {e}")
     
-    def extract_keyframes(self, video_path: str, num_frames: int = 5) -> tuple[List[str], List[float]]:
-        """Extract keyframes from video for analysis
+    def get_usage_stats(self) -> Dict[str, Any]:
+        """Get usage statistics and costs
+        
+        Returns:
+            Dict with token counts, videos processed, and total cost
+        """
+        return {
+            "input_tokens": self.usage_stats["input_tokens"],
+            "output_tokens": self.usage_stats["output_tokens"],
+            "total_tokens": self.usage_stats["input_tokens"] + self.usage_stats["output_tokens"],
+            "videos_processed": self.usage_stats["videos_processed"],
+            "total_cost_usd": round(self.usage_stats["total_cost"], 4)
+        }
+    
+    def set_errors_dir(self, output_dir: str):
+        """Set the directory to store error screenshots for debugging
+        
+        Args:
+            output_dir: Base output directory (errors folder will be created inside)
+        """
+        self.errors_dir = Path(output_dir) / "errors"
+        self.errors_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[VisualQC] Error screenshots will be saved to: {self.errors_dir}")
+    
+    def _extract_error_frame(
+        self, 
+        video_path: str,
+        timestamp: float, 
+        section_title: str,
+        error_description: str,
+        qc_iteration: int = 0
+    ):
+        """Extract and save a frame at the error timestamp for debugging
         
         Args:
             video_path: Path to the video file
-            num_frames: Number of frames to extract (evenly distributed)
+            timestamp: Timestamp in seconds where error was detected
+            section_title: Title of the section
+            error_description: Description of the error
+            qc_iteration: Which QC iteration this error was found in
+        """
+        if not self.errors_dir:
+            return
+        
+        try:
+            # Create a safe filename
+            safe_title = "".join(c if c.isalnum() or c in "._-" else "_" for c in section_title[:30])
+            filename = f"{safe_title}_t{timestamp:.1f}s_iter{qc_iteration}.jpg"
+            dest_path = self.errors_dir / filename
+            
+            # Extract frame from video at the timestamp
+            cmd = [
+                "ffmpeg",
+                "-ss", str(timestamp),
+                "-i", str(video_path),
+                "-vframes", "1",
+                "-q:v", "2",
+                "-y",
+                str(dest_path)
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            if result.returncode != 0:
+                print(f"[VisualQC] Warning: Could not extract error frame at {timestamp}s")
+                return
+            
+            # Track this error
+            error_info = {
+                "section": section_title,
+                "timestamp": timestamp,
+                "frame_path": str(dest_path),
+                "error": error_description,
+                "qc_iteration": qc_iteration
+            }
+            self.error_frames.append(error_info)
+            
+            print(f"[VisualQC] 📸 Saved error frame: {filename}")
+            
+        except Exception as e:
+            print(f"[VisualQC] Warning: Could not save error frame: {e}")
+    
+    def print_error_summary(self):
+        """Print a summary of all detected errors (even those that were fixed)"""
+        if not self.error_frames:
+            print("\n[VisualQC] ═══════════════════════════════════════════════════════")
+            print("[VisualQC] ERROR SUMMARY: No visual errors detected during QC")
+            print("[VisualQC] ═══════════════════════════════════════════════════════\n")
+            return
+        
+        print("\n[VisualQC] ═══════════════════════════════════════════════════════")
+        print(f"[VisualQC] ERROR SUMMARY: {len(self.error_frames)} error(s) detected")
+        print("[VisualQC] ═══════════════════════════════════════════════════════")
+        
+        # Group by section
+        sections = {}
+        for err in self.error_frames:
+            section = err.get("section", "Unknown")
+            if section not in sections:
+                sections[section] = []
+            sections[section].append(err)
+        
+        for section, errors in sections.items():
+            print(f"\n[VisualQC] Section: {section}")
+            for err in errors:
+                iter_str = f"[Iter {err['qc_iteration'] + 1}]" if err.get('qc_iteration', 0) > 0 else "[Initial]"
+                print(f"[VisualQC]   {iter_str} {err['timestamp']:.1f}s: {err['error'][:100]}...")
+        
+        if self.errors_dir:
+            print(f"\n[VisualQC] Error frames saved to: {self.errors_dir}")
+        print("[VisualQC] ═══════════════════════════════════════════════════════\n")
+    
+    def get_error_frames(self) -> List[Dict[str, Any]]:
+        """Get list of all detected error frames
         
         Returns:
-            Tuple of (list of frame image paths, list of timestamps in seconds)
+            List of error frame info dicts
+        """
+        return self.error_frames.copy()
+    
+    def clear_error_frames(self):
+        """Clear the error frames list (call at start of new job)"""
+        self.error_frames = []
+
+    async def check_model_available(self) -> bool:
+        """Check if the Gemini API is accessible (always true if client initialized)"""
+        return True
+    
+    def _prepare_video_for_analysis(self, video_path: str) -> Optional[str]:
+        """Downscale video to 480p at 1fps for efficient analysis
+        
+        Args:
+            video_path: Path to the original video file
+        
+        Returns:
+            Path to the downscaled video file, or None if failed
         """
         video_path = Path(video_path)
         if not video_path.exists():
             print(f"[VisualQC] Video not found: {video_path}")
-            return [], []
+            return None
         
-        # Create temp directory for frames
-        temp_dir = video_path.parent / f".qc_frames_{video_path.stem}"
+        # Create temp file for downscaled video
+        temp_dir = video_path.parent / ".qc_temp"
         temp_dir.mkdir(exist_ok=True)
-        
-        frame_paths = []
-        timestamps = []
+        output_path = temp_dir / f"qc_{video_path.stem}_480p_1fps.mp4"
         
         try:
-            # Get video duration first
-            duration_cmd = [
+            # Get original video info
+            probe_cmd = [
                 "ffprobe",
                 "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
+                "-select_streams", "v:0",
+                "-show_entries", "stream=width,height,duration",
+                "-of", "json",
                 str(video_path)
             ]
             
-            result = subprocess.run(duration_cmd, capture_output=True, text=True, timeout=10)
-            
+            result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=10)
             if result.returncode != 0:
-                print(f"[VisualQC] Failed to get video duration")
-                return [], []
+                print(f"[VisualQC] Failed to probe video")
+                return None
             
-            try:
-                duration = float(result.stdout.strip())
-            except ValueError:
-                print(f"[VisualQC] Invalid duration value")
-                return [], []
-            
-            # Extract frames at even intervals
-            for i in range(num_frames):
-                # Calculate timestamp (avoid very start and end)
-                timestamp = (duration * (i + 1)) / (num_frames + 1)
-                
-                frame_path = temp_dir / f"frame_{i:02d}.png"
-                
-                # Extract frame using ffmpeg
-                cmd = [
-                    "ffmpeg",
-                    "-ss", str(timestamp),
-                    "-i", str(video_path),
-                    "-vframes", "1",
-                    "-q:v", "2",  # High quality
-                    "-y",  # Overwrite
-                    str(frame_path)
-                ]
-                
-                result = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=30
-                )
-                
-                if result.returncode == 0 and frame_path.exists():
-                    frame_paths.append(str(frame_path))
-                    timestamps.append(round(timestamp, 2))  # Round to 2 decimal places
-                else:
-                    print(f"[VisualQC] Failed to extract frame {i}")
-            
-            return frame_paths, timestamps
-        
-        except subprocess.TimeoutExpired:
-            print(f"[VisualQC] Frame extraction timed out")
-            return frame_paths, timestamps
-        except Exception as e:
-            print(f"[VisualQC] Error extracting frames: {e}")
-            return frame_paths, timestamps
-    
-    async def analyze_frames(
-        self,
-        frame_paths: List[str],
-        timestamps: List[float],
-        section_info: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Analyze video frames for visual quality issues
-        
-        Args:
-            frame_paths: List of frame image paths to analyze
-            timestamps: List of timestamps (in seconds) corresponding to each frame
-            section_info: Section metadata (title, narration, visual_description)
-        
-        Returns:
-            Dict with status ("ok" or "issues"), description, and issues list
-        """
-        if not frame_paths:
-            return {
-                "status": "error",
-                "description": "No frames to analyze",
-                "issues": []
-            }
-        
-        # Build analysis prompt
-        title = section_info.get("title", "Untitled")
-        visual_desc = section_info.get("visual_description", "")
-        narration = section_info.get("narration", "")[:500]  # Truncate for context
-        
-        # Build frame info with timestamps
-        frame_info = "\n".join([
-            f"Frame {i}: {ts}s into the video"
-            for i, ts in enumerate(timestamps)
-        ])
-        
-        prompt = f"""You are analyzing frames from an educational math/science video animation made with Manim.
-
-**Section Context:**
-- Title: {title}
-- Intended Visuals: {visual_desc}
-- Narration (excerpt): {narration}
-
-**Frames Analyzed:**
-{frame_info}
-
-**Your Task:**
-Analyze these frames and identify ANY visual problems:
-
-**CRITICAL ISSUES** (must fix):
-1. **Text Overlap**: Text overlapping with other text or equations
-2. **Off-screen Elements**: Important content cut off or outside the frame
-3. **Unreadable Text**: Text too small, wrong color contrast, or blurry
-4. **Crowded Layout**: Too many elements squeezed into one area
-5. **Element Collision**: Shapes/diagrams overlapping inappropriately
-6. **Poor Positioning**: Elements awkwardly placed or misaligned
-
-**MODERATE ISSUES** (should fix if easy):
-7. **Timing Issues**: Elements appearing/disappearing too quickly
-8. **Color Problems**: Poor color choices or insufficient contrast
-9. **Layout Imbalance**: Content heavily weighted to one side
-10. **Visual Clutter**: Too many elements on screen at once
-
-**Response Format:**
-Provide a JSON object:
-```json
-{{
-  "status": "ok" or "issues",
-  "description": "Detailed overall summary of all visual problems found (ONLY if there are issues)",
-  "issues": [
-    {{
-      "severity": "critical" or "moderate",
-      "type": "overlap|offscreen|unreadable|crowded|collision|positioning|timing|color|balance|clutter",
-      "description": "Detailed, specific description of what's wrong - include which elements are affected, their positions, and visual impact",
-      "timestamps": [1.5, 3.2],
-      "suggestion": "Specific, actionable Manim code suggestion with concrete methods and parameters"
-    }}
-  ]
-}}
-```
-
-**IMPORTANT - Be Detailed When Reporting Issues**: 
-- For each issue, provide SPECIFIC details: which elements (by their visible text/content), exact nature of the problem, and visual impact
-- Example GOOD description: "The title text 'Linear Equations' overlaps with the equation 'y = mx + b' below it by approximately 20 pixels, making both partially unreadable. The title is positioned at screen top-center while the equation is also near top, causing the collision."
-- Example BAD description: "Text overlaps with equation"
-- Include the TIMESTAMP(S) in seconds where the problem appears
-- Provide specific Manim code suggestions: "Use title.next_to(equation, UP, buff=0.8) to position title above with proper spacing"
-
-**If NO Issues Found:**
-Respond with ONLY:
-```json
-{{
-  "status": "ok",
-  "issues": []
-}}
-```
-DO NOT include a description if status is "ok".
-
-Analyze carefully and be DETAILED and SPECIFIC about problems you see."""
-
-        try:
-            # Prepare images for the model
-            messages = [
-                {
-                    "role": "user",
-                    "content": prompt,
-                    "images": frame_paths
-                }
+            # Downscale to 480p height at 1fps
+            # Using -vf scale=-2:480 to maintain aspect ratio (width divisible by 2)
+            cmd = [
+                "ffmpeg",
+                "-i", str(video_path),
+                "-vf", f"scale=-2:{self.TARGET_HEIGHT},fps={self.TARGET_FPS}",
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "28",  # Lower quality is fine for analysis
+                "-an",  # No audio needed
+                "-y",  # Overwrite
+                str(output_path)
             ]
             
-            # Call vision model
-            response = await self.client.chat(
-                model=self.model,
-                messages=messages,
-                options={
-                    "temperature": 0.1,  # Low temperature for consistent analysis
-                    "num_predict": 1000,  # Allow detailed response
-                }
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
             
-            response_text = response.get("message", {}).get("content", "")
+            if result.returncode != 0:
+                print(f"[VisualQC] Failed to downscale video: {result.stderr}")
+                return None
             
-            # Parse JSON response
-            result = self._parse_analysis_response(response_text)
-            
-            # Print results to console
-            if result.get("status") == "ok":
-                print(f"[VisualQC] ✅ QC PASSED - {result.get('description', 'No issues found')}")
-            elif result.get("status") == "issues":
-                issues = result.get("issues", [])
-                critical = [i for i in issues if i.get("severity") == "critical"]
-                moderate = [i for i in issues if i.get("severity") == "moderate"]
-                print(f"[VisualQC] ⚠️  QC FOUND ISSUES - {result.get('description', '')}")
-                if critical:
-                    print(f"[VisualQC]    Critical issues: {len(critical)}")
-                    for issue in critical:
-                        print(f"[VisualQC]      - {issue.get('type', 'unknown')}: {issue.get('description', 'N/A')}")
-                if moderate:
-                    print(f"[VisualQC]    Moderate issues: {len(moderate)}")
-                    for issue in moderate:
-                        print(f"[VisualQC]      - {issue.get('type', 'unknown')}: {issue.get('description', 'N/A')}")
+            if output_path.exists():
+                # Get file size for logging
+                size_mb = output_path.stat().st_size / (1024 * 1024)
+                print(f"[VisualQC] ✓ Prepared video for analysis: {size_mb:.2f} MB ({self.TARGET_HEIGHT}p @ {self.TARGET_FPS}fps)")
+                return str(output_path)
             else:
-                print(f"[VisualQC] ❌ QC ERROR - {result.get('description', 'Unknown error')}")
-            
-            return result
-        
+                return None
+                
+        except subprocess.TimeoutExpired:
+            print(f"[VisualQC] Video preparation timed out")
+            return None
         except Exception as e:
-            print(f"[VisualQC] Error during frame analysis: {e}")
-            return {
-                "status": "error",
-                "description": f"Analysis failed: {str(e)}",
-                "issues": []
-            }
+            print(f"[VisualQC] Error preparing video: {e}")
+            return None
     
-    def _parse_analysis_response(self, response_text: str) -> Dict[str, Any]:
-        """Parse the LLM's analysis response"""
-        import re
-        
-        # Try to extract JSON from response
-        json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_text, re.DOTALL)
-        if not json_match:
-            # Try without code blocks
-            json_match = re.search(r'(\{.*\})', response_text, re.DOTALL)
-        
-        if json_match:
-            try:
-                result = json.loads(json_match.group(1))
-                return result
-            except json.JSONDecodeError:
-                pass
-        
-        # Fallback: parse manually
-        if "ok" in response_text.lower() and "no issues" in response_text.lower():
-            return {
-                "status": "ok",
-                "description": "Visuals appear acceptable",
-                "issues": []
-            }
-        else:
-            # If we can't parse but there seem to be issues mentioned
-            return {
-                "status": "issues",
-                "description": "Potential issues detected (parse failed)",
-                "issues": [{
-                    "severity": "moderate",
-                    "type": "unknown",
-                    "description": response_text[:300],
-                    "frame_indices": [],
-                    "suggestion": "Review the video manually"
-                }]
-            }
-    
-    async def generate_fix(
+    def _cleanup_temp_video(self, temp_video_path: str):
+        """Clean up temporary video file"""
+        try:
+            temp_path = Path(temp_video_path)
+            if temp_path.exists():
+                temp_path.unlink()
+            
+            # Remove parent directory if empty
+            parent = temp_path.parent
+            if parent.exists() and parent.name == ".qc_temp":
+                try:
+                    parent.rmdir()
+                except OSError:
+                    pass
+        except Exception as e:
+            print(f"[VisualQC] Warning: Could not clean up temp video: {e}")
+
+    async def analyze_video(
         self,
-        original_code: str,
+        video_path: str,
         section_info: Dict[str, Any],
-        analysis_result: Dict[str, Any]
-    ) -> Optional[str]:
-        """Generate fixed Manim code based on visual QC analysis
+        qc_iteration: int = 0
+    ) -> Dict[str, Any]:
+        """Analyze a video segment for visual quality issues using Gemini video input
         
         Args:
-            original_code: The original Manim code that produced issues
+            video_path: Path to the downscaled video file
             section_info: Section metadata
-            analysis_result: The QC analysis result with issues
+            qc_iteration: Current QC iteration
         
         Returns:
-            Fixed Manim code, or None if fix generation failed
+            Dict with status ("ok" or "issues") and error_report
         """
-        issues = analysis_result.get("issues", [])
-        if not issues:
-            return None
+        section_title = section_info.get("title", "Unknown")
+        full_narration = section_info.get("narration", section_info.get("tts_narration", ""))
+        visual_description = section_info.get("visual_description", "")
+        duration = section_info.get("duration_seconds", section_info.get("duration", 30))
         
-        # Build fix prompt with timestamp information
-        issues_description = "\n".join([
-            f"- [{issue.get('severity', 'unknown').upper()}] {issue.get('type', 'unknown')} at {', '.join(str(t)+'s' for t in issue.get('timestamps', []))}: {issue.get('description', '')}\n  Suggestion: {issue.get('suggestion', 'N/A')}"
-            for issue in issues
-        ])
+        # Build context for the prompt
+        narration_segments = section_info.get("narration_segments", [])
+        segment_context = ""
+        if narration_segments:
+            segment_lines = []
+            cumulative = 0.0
+            for seg in narration_segments:
+                seg_duration = seg.get("estimated_duration", seg.get("duration", 5))
+                seg_text = seg.get("text", seg.get("tts_text", ""))[:80]
+                segment_lines.append(f"  [{cumulative:.1f}s-{cumulative + seg_duration:.1f}s]: \"{seg_text}...\"")
+                cumulative += seg_duration
+            segment_context = "\n".join(segment_lines)
         
-        prompt = f"""You are an expert Manim programmer fixing visual quality issues.
+        # Build the analysis prompt
+        user_prompt = f"""Analyze this Manim educational animation video for VISUAL ERRORS.
 
-**ORIGINAL MANIM CODE:**
-```python
-{original_code}
-```
+VIDEO CONTEXT:
+- Section Title: "{section_title}"
+- Total Duration: {duration:.1f} seconds
+- Expected Content: {visual_description[:300] if visual_description else "Educational mathematical animation"}
 
-**VISUAL QUALITY ISSUES DETECTED:**
-{issues_description}
+NARRATION TIMELINE (what should be shown when):
+{segment_context if segment_context else full_narration[:500]}
 
-**SECTION INFO:**
-- Title: {section_info.get('title', '')}
-- Visual Description: {section_info.get('visual_description', '')}
-- Target Duration: {section_info.get('target_duration', 30)} seconds
+ANALYSIS INSTRUCTIONS:
+1. Watch the ENTIRE video carefully from start to finish
+2. Look for ANY visual rendering errors throughout the video
+3. Note the EXACT timestamp (in seconds) when each error is visible
+4. Describe the SPECIFIC location on screen and what element is affected
+5. Be STRICT - report anything that looks wrong
+6. Be THOROUGH - check every frame transition
 
-**YOUR TASK:**
-Fix the Manim code to address ALL the identified issues while maintaining the educational intent.
-
-**COMMON FIXES:**
-
-1. **Text Overlap:**
-   - Use `.next_to()` with proper buffer: `text2.next_to(text1, DOWN, buff=0.5)`
-   - Use `.arrange()` for groups: `VGroup(text1, text2).arrange(DOWN, buff=0.5)`
-   - Scale down if needed: `text.scale(0.8)`
-
-2. **Off-screen Elements:**
-   - Use `.to_edge()`: `text.to_edge(UP)`
-   - Use `.shift()`: `equation.shift(UP * 2)`
-   - Center with `.move_to(ORIGIN)` or `.center()`
-
-3. **Unreadable Text:**
-   - Increase font_size: `Text("Title", font_size=48)`
-   - Use high-contrast colors: `Text("Text", color=WHITE)` on dark bg
-   - Avoid tiny text: minimum font_size=24
-
-4. **Crowded Layout:**
-   - Show fewer elements at once
-   - Use FadeOut to remove old content before adding new
-   - Spread elements: `.arrange(RIGHT, buff=1.0)`
-
-5. **Element Collision:**
-   - Check positions with `.get_center()`, `.get_top()`, etc.
-   - Use `.next_to()` relative positioning
-   - Clear the scene: `self.play(FadeOut(VGroup(*self.mobjects)))`
-
-6. **Poor Positioning:**
-   - Align to edges: `.to_edge(LEFT)`, `.to_corner(UL)`
-   - Use standard positions: `UP`, `DOWN`, `LEFT`, `RIGHT`
-   - Balance layout: place related items together
-
-**RESPOND WITH ONLY THE FIXED CODE:**
-Return the complete, working Python code with the fixes applied. Start with imports, include the full class definition.
-Do NOT include explanations or markdown - just the code."""
+REMEMBER:
+- Animations (fading, morphing, moving) are NOT errors
+- Dark/black backgrounds are the standard style
+- Focus on overlaps, overflow, rendering failures, and layout issues"""
 
         try:
-            # Use the LLM to generate fixed code (text-only, no vision needed)
-            response = await self.client.chat(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                options={
-                    "temperature": 0.2,
-                    "num_predict": 2000
-                }
+            # Read video file as bytes
+            with open(video_path, "rb") as f:
+                video_bytes = f.read()
+            
+            # Create video part for Gemini
+            # Note: video_metadata is not supported in from_bytes, fps is inferred from the video
+            video_part = types.Part.from_bytes(
+                data=video_bytes,
+                mime_type="video/mp4"
             )
             
-            fixed_code = response.get("message", {}).get("content", "")
+            # Create content with video and prompt
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[video_part]
+                ),
+                types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=user_prompt)]
+                )
+            ]
             
-            # Extract code if wrapped in markdown
-            code_match = re.search(r'```python\s*(.*?)\s*```', fixed_code, re.DOTALL)
-            if code_match:
-                fixed_code = code_match.group(1)
+            # Generate content config with structured output
+            config = types.GenerateContentConfig(
+                system_instruction=[types.Part.from_text(text=self.SYSTEM_INSTRUCTION)],
+                media_resolution="MEDIA_RESOLUTION_LOW",  # Low res for efficiency
+                temperature=0.1,  # Low temperature for consistent analysis
+                max_output_tokens=2048,
+                response_mime_type="application/json",
+                response_schema=self.error_schema
+            )
             
-            # Validate the fixed code has basic structure
-            if "class" in fixed_code and "def construct" in fixed_code:
-                return fixed_code
+            # Call Gemini API
+            print(f"[VisualQC] Sending video to Gemini for analysis...")
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.model,
+                contents=contents,
+                config=config
+            )
+            
+            # Track usage
+            self._track_usage(response, num_videos=1)
+            
+            # Parse structured JSON response
+            response_text = response.text.strip() if response.text else "{}"
+            
+            try:
+                result = json.loads(response_text)
+            except json.JSONDecodeError as e:
+                print(f"[VisualQC] Warning: Failed to parse JSON response: {e}")
+                print(f"[VisualQC] Raw response: {response_text[:500]}")
+                return {
+                    "status": "error",
+                    "error_report": "Failed to parse QC response"
+                }
+            
+            # Process structured result
+            errors_detected = result.get("errors_detected", False)
+            error_descriptions = result.get("error_descriptions", [])
+            
+            if errors_detected and error_descriptions:
+                error_reports = []
+                
+                # Get the original video path for frame extraction
+                original_video = section_info.get("_original_video_path", video_path)
+                
+                for error in error_descriptions:
+                    timestamp = error.get("second", 0)
+                    location = error.get("location", "unknown")
+                    error_type = error.get("error_type", "unknown")
+                    description = error.get("description", "No description")
+                    
+                    error_str = f"At {timestamp:.1f}s [{location}] ({error_type}): {description}"
+                    error_reports.append(error_str)
+                    
+                    # Extract and save error frame for debugging
+                    self._extract_error_frame(
+                        original_video,
+                        timestamp,
+                        section_title,
+                        f"[{location}] {error_type}: {description}",
+                        qc_iteration
+                    )
+                
+                full_report = "\n".join(error_reports)
+                print(f"[VisualQC] ⚠️  Found {len(error_reports)} issue(s):")
+                for report in error_reports:
+                    print(f"[VisualQC]    {report}")
+                
+                return {
+                    "status": "issues",
+                    "error_report": full_report
+                }
             else:
-                print("[VisualQC] Fixed code missing required structure")
-                return None
+                print(f"[VisualQC] ✅ QC PASSED - No visual errors detected")
+                return {
+                    "status": "ok",
+                    "error_report": ""
+                }
         
         except Exception as e:
-            print(f"[VisualQC] Error generating fix: {e}")
-            return None
-    
-    def cleanup_frames(self, frame_paths: List[str]):
-        """Clean up extracted frame files"""
-        for frame_path in frame_paths:
-            try:
-                frame_file = Path(frame_path)
-                if frame_file.exists():
-                    frame_file.unlink()
-                
-                # Remove parent directory if empty
-                parent = frame_file.parent
-                if parent.exists() and parent.name.startswith('.qc_frames_'):
-                    try:
-                        parent.rmdir()
-                    except OSError:
-                        pass  # Directory not empty
-            except Exception as e:
-                print(f"[VisualQC] Error cleaning up frame: {e}")
-    
+            print(f"[VisualQC] Error analyzing video: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "status": "error",
+                "error_report": f"Analysis failed: {str(e)}"
+            }
+
     async def check_video_quality(
         self,
         video_path: str,
         section_info: Dict[str, Any],
-        num_frames: int = 5
+        seconds_per_frame: float = 7.5,  # Kept for backward compatibility, not used
+        skip_first: bool = True,  # Kept for backward compatibility, not used
+        qc_iteration: int = 0
     ) -> Dict[str, Any]:
-        """Complete quality check workflow: extract frames, analyze, return results
+        """Complete quality check workflow: prepare video, analyze with Gemini, return results
         
         Args:
             video_path: Path to the generated video
             section_info: Section metadata
-            num_frames: Number of frames to extract for analysis
+            seconds_per_frame: (Deprecated) Not used in video mode
+            skip_first: (Deprecated) Not used in video mode
+            qc_iteration: Current QC iteration (0 = initial, 1 = after first fix, etc.)
         
         Returns:
-            Dict with status, description, issues, and frame_paths
+            Dict with status, error_report, and temp_video_path
         """
         section_title = section_info.get("title", "Unknown")
-        print(f"[VisualQC] Starting QC for section: '{section_title}'")
+        print(f"[VisualQC] Starting video QC for section: '{section_title}'")
         print(f"[VisualQC] Video path: {video_path}")
+        print(f"[VisualQC] Mode: Video analysis ({self.TARGET_HEIGHT}p @ {self.TARGET_FPS}fps)")
         
-        # Extract keyframes
-        frame_paths, timestamps = self.extract_keyframes(video_path, num_frames)
+        # Prepare video for analysis (downscale to 480p at 1fps)
+        temp_video_path = self._prepare_video_for_analysis(video_path)
         
-        if not frame_paths:
-            print(f"[VisualQC] ❌ Failed to extract frames")
+        if not temp_video_path:
+            print(f"[VisualQC] ❌ Failed to prepare video for analysis")
             return {
                 "status": "error",
-                "description": "Failed to extract frames from video",
-                "issues": [],
-                "frame_paths": []
+                "error_report": "Failed to prepare video for analysis",
+                "temp_video_path": None
             }
         
-        print(f"[VisualQC] ✓ Extracted {len(frame_paths)} frames at: {', '.join(f'{t}s' for t in timestamps)}")
+        # Store original video path for frame extraction on errors
+        section_info["_original_video_path"] = video_path
         
-        # Analyze frames
-        analysis = await self.analyze_frames(frame_paths, timestamps, section_info)
-        analysis["frame_paths"] = frame_paths
-        
-        # Enhanced console output
-        if analysis["status"] == "ok":
-            print(f"[VisualQC] ✅ Visual QC passed - no issues detected")
-        elif analysis["status"] == "issues":
-            issues = analysis.get("issues", [])
-            description = analysis.get("description", "")
-            
-            print(f"[VisualQC] ⚠️ Found {len(issues)} issue(s)")
-            if description:
-                print(f"[VisualQC] Summary: {description}")
-            print(f"[VisualQC] Issues:")
-            
-            for idx, issue in enumerate(issues, 1):
-                severity_emoji = "❌" if issue.get("severity") == "critical" else "⚠️"
-                timestamps_str = ", ".join(f"{t}s" for t in issue.get("timestamps", []))
-                issue_type = issue.get('type', 'unknown').upper()
-                
-                print(f"  {idx}. {severity_emoji} [{issue_type}] at {timestamps_str}")
-                print(f"     Problem: {issue.get('description', 'No description')}")
-                print(f"     Fix: {issue.get('suggestion', 'No suggestion')}")
+        # Analyze video
+        analysis = await self.analyze_video(temp_video_path, section_info, qc_iteration)
+        analysis["temp_video_path"] = temp_video_path
         
         return analysis
+    
+    def cleanup_frames(self, frame_paths: List[str] = None, temp_video_path: str = None):
+        """Clean up temporary files
+        
+        Args:
+            frame_paths: (Deprecated) Not used in video mode
+            temp_video_path: Path to temporary video file to clean up
+        """
+        if temp_video_path:
+            self._cleanup_temp_video(temp_video_path)
 
 
 # Convenience function for easy import
 async def check_section_video(
     video_path: str,
     section_info: Dict[str, Any],
-    model: str = "balanced"
+    model: str = "gemini-2.0-flash-lite"
 ) -> Dict[str, Any]:
     """
     Quick check of a section video
@@ -575,10 +661,10 @@ async def check_section_video(
     Args:
         video_path: Path to video file
         section_info: Section metadata
-        model: Model tier ("fastest", "balanced", "capable", "best")
+        model: Model name (default: gemini-2.0-flash-lite)
     
     Returns:
-        Analysis result with status and issues
+        Analysis result with status and error_report
     """
     qc = VisualQualityController(model=model)
     
@@ -586,15 +672,14 @@ async def check_section_video(
     if not await qc.check_model_available():
         return {
             "status": "error",
-            "description": f"Model {qc.model} not available. Install with: ollama pull {qc.model}",
-            "issues": []
+            "error_report": f"Model {qc.model} not available"
         }
     
     # Run QC
     result = await qc.check_video_quality(video_path, section_info)
     
     # Cleanup
-    if result.get("frame_paths"):
-        qc.cleanup_frames(result["frame_paths"])
+    if result.get("temp_video_path"):
+        qc.cleanup_frames(temp_video_path=result["temp_video_path"])
     
     return result

@@ -1475,28 +1475,44 @@ async def _generate_translated_video(
         audio_duration = await _get_media_duration_async(audio_path)
         print(f"[Translation] Section {i}: audio duration = {audio_duration:.1f}s")
         
-        # Try to find original Manim code - first check section data, then common file locations
-        # Section directories are sometimes named by section id (from script) or as section_{i}
-        section_id_dir = section.get("id")
-        possible_section_dirs = []
-        if section_id_dir:
-            possible_section_dirs.append(os.path.join(OUTPUT_DIR, job_id, section_id_dir))
-        possible_section_dirs.append(os.path.join(OUTPUT_DIR, job_id, f"section_{i}"))
+        # Find original section directory from script.json paths (video/audio fields)
+        original_section_dir = None
+        
+        # Extract directory from video or audio path in script.json
+        section_video_path = section.get("video", "")
+        section_audio_path = section.get("audio", "")
+        
+        if section_video_path and os.path.exists(section_video_path):
+            original_section_dir = os.path.dirname(section_video_path)
+        elif section_audio_path and os.path.exists(section_audio_path):
+            original_section_dir = os.path.dirname(section_audio_path)
+        
+        # Fallback: try common locations if paths from script.json don't work
+        if not original_section_dir or not os.path.isdir(original_section_dir):
+            section_id_dir = section.get("id")  # e.g., "sec_01"
+            possible_dirs = []
+            if section_id_dir:
+                possible_dirs.append(os.path.join(OUTPUT_DIR, job_id, "sections", section_id_dir))
+                possible_dirs.append(os.path.join(OUTPUT_DIR, job_id, section_id_dir))
+            possible_dirs.append(os.path.join(OUTPUT_DIR, job_id, "sections", f"section_{i}"))
+            possible_dirs.append(os.path.join(OUTPUT_DIR, job_id, f"section_{i}"))
+            
+            for sd in possible_dirs:
+                if os.path.isdir(sd):
+                    original_section_dir = sd
+                    break
+        
+        if not original_section_dir:
+            print(f"[Translation] Could not find original section directory for section {i}")
+            original_section_dir = os.path.join(OUTPUT_DIR, job_id, "sections", section.get("id", f"section_{i}"))
 
-        # Set default original_section_dir (use first existing or fallback to section_{i})
-        original_section_dir = os.path.join(OUTPUT_DIR, job_id, f"section_{i}")
-        for sd in possible_section_dirs:
-            if os.path.isdir(sd):
-                original_section_dir = sd
-                break
-
+        # Find scene file in the section directory
         original_manim_path = ""
-        for sd in possible_section_dirs:
-            candidate = os.path.join(sd, "scene.py")
-            if os.path.exists(candidate):
-                original_manim_path = candidate
-                original_section_dir = sd
-                break
+        if os.path.isdir(original_section_dir):
+            for f in os.listdir(original_section_dir):
+                if f.startswith("scene") and f.endswith(".py"):
+                    original_manim_path = os.path.join(original_section_dir, f)
+                    break
         
         # Get original manim from section data (stored in script.json)
         original_manim = section.get("manim_code", "")

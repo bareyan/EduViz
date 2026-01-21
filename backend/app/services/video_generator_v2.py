@@ -73,6 +73,11 @@ class VideoGenerator:
         sections_dir = job_dir / "sections"
         sections_dir.mkdir(exist_ok=True)
         
+        # Set up visual QC error tracking directory
+        if self.manim_generator.visual_qc:
+            self.manim_generator.visual_qc.set_errors_dir(str(job_dir))
+            self.manim_generator.visual_qc.clear_error_frames()  # Clear from any previous runs
+        
         try:
             # Step 1: Generate the script
             if progress_callback:
@@ -306,7 +311,18 @@ class VideoGenerator:
             if progress_callback:
                 progress_callback({"stage": "combining", "progress": 100, "message": "Video complete!"})
             
-            # Step 4: Cleanup intermediate files (but KEEP scene .py files)
+            # Step 4: Print Visual QC error summary (for debugging)
+            if self.manim_generator.visual_qc:
+                self.manim_generator.visual_qc.print_error_summary()
+            
+            # Step 5: Print cost summary
+            print("\n")
+            self.manim_generator.print_cost_summary()
+            
+            # Get cost data for return
+            cost_summary = self.manim_generator.get_cost_summary()
+            
+            # Step 6: Cleanup intermediate files (but KEEP scene .py files)
             await self._cleanup_intermediate_files(sections_dir)
             
             return {
@@ -315,6 +331,7 @@ class VideoGenerator:
                 "script": script,
                 "chapters": chapters,
                 "total_duration": current_time,
+                "cost_summary": cost_summary,
                 "status": "completed"
             }
             
@@ -704,35 +721,14 @@ class VideoGenerator:
         
         print(f"Section {section_index}: Merging video ({video_duration_actual:.1f}s) with audio ({audio_duration_actual:.1f}s)")
         
-        if video_duration_actual >= audio_duration_actual:
-            # Video is longer - pad audio with silence to match video duration
-            silence_duration = video_duration_actual - audio_duration_actual
-            print(f"Section {section_index}: Adding {silence_duration:.1f}s silence to match video")
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", video_path,
-                "-i", str(section_audio_path),
-                "-filter_complex", f"[1:a]apad=pad_dur={silence_duration}[a]",
-                "-map", "0:v:0",
-                "-map", "[a]",
-                "-c:v", "libx264",
-                "-c:a", "aac",
-                "-t", str(video_duration_actual),
-                str(merged_path)
-            ]
-        else:
-            # Extend video to match audio by slowing it down or looping last frame
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", video_path,
-                "-i", str(section_audio_path),
-                "-filter_complex", f"[0:v]tpad=stop_mode=clone:stop_duration={audio_duration_actual - video_duration_actual}[v]",
-                "-map", "[v]",
-                "-map", "1:a:0",
-                "-c:v", "libx264",
-                "-c:a", "aac",
-                str(merged_path)
-            ]
+        # Never trim: retime video to match audio duration
+        cmd = self._build_retime_merge_cmd(
+            video_path=video_path,
+            audio_path=str(section_audio_path),
+            video_duration=video_duration_actual,
+            audio_duration=audio_duration_actual,
+            output_path=str(merged_path)
+        )
         
         try:
             process = await asyncio.create_subprocess_exec(
@@ -770,32 +766,13 @@ class VideoGenerator:
         audio_duration = await self._get_media_duration(audio_path)
         video_duration = await self._get_media_duration(video_path)
         
-        if video_duration >= audio_duration:
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", video_path,
-                "-i", audio_path,
-                "-c:v", "libx264",
-                "-c:a", "aac",
-                "-map", "0:v:0",
-                "-map", "1:a:0",
-                "-shortest",
-                str(merged_path)
-            ]
-        else:
-            # Extend video to match audio
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", video_path,
-                "-i", audio_path,
-                "-filter_complex", f"[0:v]tpad=stop=-1:stop_mode=clone,setpts=PTS-STARTPTS[v]",
-                "-map", "[v]",
-                "-map", "1:a:0",
-                "-c:v", "libx264",
-                "-c:a", "aac",
-                "-t", str(audio_duration),
-                str(merged_path)
-            ]
+        cmd = self._build_retime_merge_cmd(
+            video_path=video_path,
+            audio_path=audio_path,
+            video_duration=video_duration,
+            audio_duration=audio_duration,
+            output_path=str(merged_path)
+        )
         
         try:
             await asyncio.to_thread(
@@ -876,8 +853,6 @@ class VideoGenerator:
         section_index: int
     ) -> Dict[str, Any]:
         """Merge multiple segments into a single section video
-        
-        Each segment has matched audio+video, so we:
         1. Merge each segment's audio+video
         2. Concatenate all merged clips
         """
@@ -885,38 +860,20 @@ class VideoGenerator:
         
         for seg in segment_results:
             seg_idx = seg["segment_index"]
-            video_path = seg["video_path"]
-            audio_path = seg["audio_path"]
+            video_path = seg.get("video_path")
+            audio_path = seg.get("audio_path")
             merged_path = output_dir / f"merged_seg_{seg_idx}.mp4"
             
             audio_duration = await self._get_media_duration(audio_path)
             video_duration = await self._get_media_duration(video_path)
             
-            if video_duration >= audio_duration:
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-i", video_path,
-                    "-i", audio_path,
-                    "-c:v", "libx264",
-                    "-c:a", "aac",
-                    "-map", "0:v:0",
-                    "-map", "1:a:0",
-                    "-shortest",
-                    str(merged_path)
-                ]
-            else:
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-i", video_path,
-                    "-i", audio_path,
-                    "-filter_complex", f"[0:v]tpad=stop=-1:stop_mode=clone,setpts=PTS-STARTPTS[v]",
-                    "-map", "[v]",
-                    "-map", "1:a:0",
-                    "-c:v", "libx264",
-                    "-c:a", "aac",
-                    "-t", str(audio_duration),
-                    str(merged_path)
-                ]
+            cmd = self._build_retime_merge_cmd(
+                video_path=video_path,
+                audio_path=audio_path,
+                video_duration=video_duration,
+                audio_duration=audio_duration,
+                output_path=str(merged_path)
+            )
             
             try:
                 result = await asyncio.to_thread(
@@ -1132,33 +1089,13 @@ class VideoGenerator:
             audio_duration = await self._get_media_duration(audio_path)
             video_duration = await self._get_media_duration(video_path)
             
-            if video_duration >= audio_duration:
-                # Video is long enough
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-i", video_path,
-                    "-i", audio_path,
-                    "-c:v", "libx264",
-                    "-c:a", "aac",
-                    "-map", "0:v:0",
-                    "-map", "1:a:0",
-                    "-shortest",
-                    str(merged_path)
-                ]
-            else:
-                # Extend video to match audio
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-i", video_path,
-                    "-i", audio_path,
-                    "-filter_complex", f"[0:v]tpad=stop=-1:stop_mode=clone,setpts=PTS-STARTPTS[v]",
-                    "-map", "[v]",
-                    "-map", "1:a:0",
-                    "-c:v", "libx264",
-                    "-c:a", "aac",
-                    "-t", str(audio_duration),
-                    str(merged_path)
-                ]
+            cmd = self._build_retime_merge_cmd(
+                video_path=video_path,
+                audio_path=audio_path,
+                video_duration=video_duration,
+                audio_duration=audio_duration,
+                output_path=str(merged_path)
+            )
             
             try:
                 result = await asyncio.to_thread(
@@ -1281,6 +1218,85 @@ class VideoGenerator:
         except Exception as e:
             print(f"Silence generation failed: {e}")
             raise
+
+    async def _pad_audio_with_silence(
+        self,
+        audio_path: str,
+        target_duration: float,
+        output_path: str
+    ) -> str:
+        """Pad audio with silence to reach target duration (no trimming)."""
+        try:
+            current_duration = await self._get_media_duration(audio_path)
+        except Exception:
+            current_duration = 0.0
+
+        if current_duration >= target_duration - 0.05:
+            return audio_path
+
+        silence_duration = max(0.0, target_duration - current_duration)
+        silence_path = str(Path(output_path).with_suffix(".silence.mp3"))
+
+        try:
+            await self._generate_silence(silence_path, silence_duration)
+            success = await self._concatenate_audio_files(
+                [audio_path, silence_path],
+                output_path
+            )
+            if success and Path(output_path).exists():
+                return output_path
+        finally:
+            if Path(silence_path).exists():
+                Path(silence_path).unlink()
+
+        return audio_path
+
+    def _build_retime_merge_cmd(
+        self,
+        video_path: str,
+        audio_path: str,
+        video_duration: float,
+        audio_duration: float,
+        output_path: str
+    ) -> List[str]:
+        """Build ffmpeg command to retime video to audio length without trimming."""
+        if not video_duration or not audio_duration:
+            return [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", audio_path,
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                output_path
+            ]
+
+        duration_diff = abs(video_duration - audio_duration)
+        if duration_diff < 0.1:
+            return [
+                "ffmpeg", "-y",
+                "-i", video_path,
+                "-i", audio_path,
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-c:v", "libx264",
+                "-c:a", "aac",
+                output_path
+            ]
+
+        speed_factor = audio_duration / video_duration
+        return [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", audio_path,
+            "-filter_complex", f"[0:v]setpts=PTS*{speed_factor}[v]",
+            "-map", "[v]",
+            "-map", "1:a:0",
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            output_path
+        ]
     
     async def _combine_sections(
         self,
@@ -1290,9 +1306,8 @@ class VideoGenerator:
         sections_dir: str
     ):
         """Combine video sections with their audio
-        
-        IMPORTANT: Video is extended to match audio duration if shorter.
-        We freeze the last frame of video to fill any gap.
+    
+    IMPORTANT: Never trim video. Retiming is used to match audio length.
         """
         
         # First, merge each video with its audio
@@ -1313,37 +1328,14 @@ class VideoGenerator:
             
             print(f"Section {i}: Video={video_duration:.1f}s, Audio={audio_duration:.1f}s")
             
-            if video_duration >= audio_duration:
-                # Video is longer - pad audio with silence to match video duration
-                silence_duration = video_duration - audio_duration
-                print(f"Section {i}: Adding {silence_duration:.1f}s silence to match video")
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-i", video,
-                    "-i", audio,
-                    "-filter_complex", f"[1:a]apad=pad_dur={silence_duration}[a]",
-                    "-map", "0:v:0",
-                    "-map", "[a]",
-                    "-c:v", "libx264",
-                    "-c:a", "aac",
-                    "-t", str(video_duration),
-                    str(merged_path)
-                ]
-            else:
-                # Video is shorter than audio - extend video with tpad filter (freeze last frame)
-                print(f"Section {i}: Extending video by {audio_duration - video_duration:.1f}s to match audio")
-                cmd = [
-                    "ffmpeg", "-y",
-                    "-i", video,
-                    "-i", audio,
-                    "-filter_complex", f"[0:v]tpad=stop=-1:stop_mode=clone,setpts=PTS-STARTPTS[v]",
-                    "-map", "[v]",
-                    "-map", "1:a:0",
-                    "-c:v", "libx264",
-                    "-c:a", "aac",
-                    "-t", str(audio_duration),  # Cut to audio duration
-                    str(merged_path)
-                ]
+            # CRITICAL: Never trim video. Retiming is used to match audio length.
+            cmd = self._build_retime_merge_cmd(
+                video_path=video,
+                audio_path=audio,
+                video_duration=video_duration,
+                audio_duration=audio_duration,
+                output_path=str(merged_path)
+            )
             
             try:
                 result = await asyncio.to_thread(

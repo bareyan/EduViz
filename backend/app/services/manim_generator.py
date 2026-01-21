@@ -30,15 +30,38 @@ except ImportError:
 class ManimGenerator:
     """Generates Manim animations using Gemini AI"""
     
-    MODEL = "gemini-3-flash-preview"  # Stable flash model for generation
-    CORRECTION_MODEL = "gemini-3-flash-preview"  # Fast model for corrections
-    STRONG_MODEL = "gemini-3-pro-preview"  # Stronger model for final fix attempt
+    MODEL = "gemini-3-flash-preview"  # Main generation - Flash for speed and cost
+    CORRECTION_MODEL = "gemini-2.5-flash"  # Cheap model for corrections
+    STRONG_MODEL = "gemini-3-pro-preview"  # Strong fallback model for visual fixes
     MAX_CORRECTION_ATTEMPTS = 3  # Maximum number of auto-correction attempts
     
     # Visual QC settings
     ENABLE_VISUAL_QC = True  # Enable visual quality control
-    QC_MODEL = "fastest"  # Visual QC model tier (fastest/balanced/capable/best)
-    MAX_QC_ITERATIONS = 2  # Maximum times to retry fixing visual issues
+    QC_MODEL = "gemini-2.0-flash-lite"  # Vision model for QC (video mode, 480p @ 1fps)
+    MAX_QC_ITERATIONS = 2  # Try to fix visual issues up to 2 times
+    QC_SECONDS_PER_FRAME = 7.5  # Deprecated - using video mode now
+    QC_SKIP_FIRST_FRAME = True  # Deprecated - using video mode now
+    
+    # Gemini pricing (per 1M tokens) - as of Jan 2026
+    # See: https://ai.google.dev/pricing
+    PRICING = {
+        "gemini-3-pro-preview": {
+            "input": 2.0,    # $2.00 per 1M input tokens (<=200K context)
+            "output": 12.0   # $12.00 per 1M output tokens (<=200K context)
+        },
+        "gemini-3-flash-preview": {
+            "input": 0.5,   # $0.5 per 1M input tokens
+            "output": 3    # $3 per 1M output tokens
+        },
+        "gemini-flash-lite-latest": {
+            "input": 0.075,  # $0.075 per 1M input tokens (similar to 2.0-flash)
+            "output": 0.30,  # $0.30 per 1M output tokens
+        },
+        "gemini-2.0-flash-lite": {
+            "input": 0.075,  # $0.075 per 1M input tokens (video converted to tokens)
+            "output": 0.30,  # $0.30 per 1M output tokens
+        }
+    }
     
     # Base Manim template
     BASE_TEMPLATE = '''"""Auto-generated Manim scene"""
@@ -58,6 +81,14 @@ class Section{section_id}(Scene):
         else:
             raise ValueError("GEMINI_API_KEY environment variable is required")
         
+        # Token usage tracking
+        self.token_usage = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_cost": 0.0,
+            "by_model": {}
+        }
+        
         # Initialize visual QC controller
         self.visual_qc = None
         if VISUAL_QC_AVAILABLE and self.ENABLE_VISUAL_QC:
@@ -67,6 +98,120 @@ class Section{section_id}(Scene):
             except Exception as e:
                 print(f"[ManimGenerator] Failed to initialize Visual QC: {e}")
                 self.visual_qc = None
+    
+    def _track_token_usage(self, response, model_name: str):
+        """Track token usage and calculate cost from Gemini response
+        
+        Args:
+            response: Gemini API response object
+            model_name: Name of the model used
+        """
+        try:
+            # Handle None response
+            if not response:
+                return
+            
+            # Extract usage metadata from response
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                usage = response.usage_metadata
+                input_tokens = getattr(usage, 'prompt_token_count', 0) or 0
+                output_tokens = getattr(usage, 'candidates_token_count', 0) or 0
+            else:
+                # Fallback for different response formats
+                input_tokens = 0
+                output_tokens = 0
+            
+            # Update totals
+            self.token_usage["input_tokens"] += input_tokens
+            self.token_usage["output_tokens"] += output_tokens
+            
+            # Track by model
+            if model_name not in self.token_usage["by_model"]:
+                self.token_usage["by_model"][model_name] = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cost": 0.0
+                }
+            
+            self.token_usage["by_model"][model_name]["input_tokens"] += input_tokens
+            self.token_usage["by_model"][model_name]["output_tokens"] += output_tokens
+            
+            # Calculate cost for this call
+            if model_name in self.PRICING:
+                pricing = self.PRICING[model_name]
+                input_cost = (input_tokens / 1_000_000) * pricing["input"]
+                output_cost = (output_tokens / 1_000_000) * pricing["output"]
+                call_cost = input_cost + output_cost
+                
+                self.token_usage["by_model"][model_name]["cost"] += call_cost
+                self.token_usage["total_cost"] += call_cost
+        
+        except Exception as e:
+            print(f"[ManimGenerator] Warning: Could not track token usage: {e}")
+    
+    def get_cost_summary(self) -> Dict[str, Any]:
+        """Get a summary of token usage and costs
+        
+        Returns:
+            Dict with token counts, costs, and breakdown by model
+        """
+        summary = {
+            "total_input_tokens": self.token_usage["input_tokens"],
+            "total_output_tokens": self.token_usage["output_tokens"],
+            "total_tokens": self.token_usage["input_tokens"] + self.token_usage["output_tokens"],
+            "total_cost_usd": round(self.token_usage["total_cost"], 4),
+            "by_model": {
+                model: {
+                    "input_tokens": data["input_tokens"],
+                    "output_tokens": data["output_tokens"],
+                    "total_tokens": data["input_tokens"] + data["output_tokens"],
+                    "cost_usd": round(data["cost"], 4)
+                }
+                for model, data in self.token_usage["by_model"].items()
+            }
+        }
+        
+        # Add Visual QC stats if available
+        if self.visual_qc:
+            qc_stats = self.visual_qc.get_usage_stats()
+            summary["visual_qc"] = qc_stats
+            # Add QC cost to total (convert to same precision)
+            summary["total_cost_usd"] = round(summary["total_cost_usd"] + qc_stats["total_cost_usd"], 4)
+        
+        return summary
+    
+    def print_cost_summary(self):
+        """Print a formatted cost summary to console"""
+        summary = self.get_cost_summary()
+        
+        print("\n" + "=" * 60)
+        print("💰 GEMINI API COST SUMMARY")
+        print("=" * 60)
+        print(f"Total Input Tokens:  {summary['total_input_tokens']:,}")
+        print(f"Total Output Tokens: {summary['total_output_tokens']:,}")
+        print(f"Total Tokens:        {summary['total_tokens']:,}")
+        
+        if summary['by_model']:
+            print("\nBreakdown by Model:")
+            print("-" * 60)
+            for model, data in summary['by_model'].items():
+                print(f"\n{model}:")
+                print(f"  Input:  {data['input_tokens']:,} tokens")
+                print(f"  Output: {data['output_tokens']:,} tokens")
+                print(f"  Cost:   ${data['cost_usd']:.4f}")
+        
+        # Display Visual QC stats
+        if 'visual_qc' in summary:
+            qc = summary['visual_qc']
+            print("\nVisual QC (gemini-2.0-flash-lite - video mode):")
+            print("-" * 60)
+            print(f"  Input:  {qc['input_tokens']:,} tokens")
+            print(f"  Output: {qc['output_tokens']:,} tokens")
+            print(f"  Videos: {qc['videos_processed']} segments analyzed")
+            print(f"  Cost:   ${qc['total_cost_usd']:.4f}")
+        
+        print(f"\n💵 Total Cost:        ${summary['total_cost_usd']:.4f}")
+        print("=" * 60 + "\n")
     
     async def generate_section_video(
         self,
@@ -302,14 +447,21 @@ class Section{section_id}(Scene):
         
         # Count pause markers in narration to estimate natural break points
         narration = section.get('narration', '')
-        pause_count = narration.count('...') + narration.count('[PAUSE]') * 2
         
-        # Distribute wait time: animations should be shorter, waits fill the rest
-        total_animation_time = audio_duration * 0.35
-        total_wait_time = audio_duration * 0.65
-        
-        # Calculate a padding wait at the end to ensure we fill the full duration
-        end_wait = max(2.0, audio_duration * 0.1)
+        # Build subsection timing breakdown from narration_segments
+        narration_segments = section.get('narration_segments', [])
+        subsection_timing_lines = []
+        cumulative_time = 0.0
+        for seg in narration_segments:
+            seg_duration = seg.get('estimated_duration', 7.0)
+            start_time = cumulative_time
+            end_time = cumulative_time + seg_duration
+            seg_text = seg.get('text', '')[:80]
+            subsection_timing_lines.append(
+                f"  Segment {seg.get('segment_index', 0) + 1}: [{start_time:.1f}s - {end_time:.1f}s] ({seg_duration:.1f}s) \"{seg_text}...\""
+            )
+            cumulative_time = end_time
+        subsection_timing_str = "\n".join(subsection_timing_lines) if subsection_timing_lines else "No subsection timing available"
         
         # Get style and language settings
         style = section.get('style', '3b1b')
@@ -404,321 +556,84 @@ VISUAL STYLE: NORD (ARCTIC COOL)
         }
         type_guidance = animation_guidance.get(animation_type, animation_guidance['text'])
         
-        # Special handling for static scenes
-        is_static = animation_type in ['static', 'mixed']
-        static_instructions = ""
-        if is_static:
-            static_instructions = """
-═══════════════════════════════════════════════════════════════════════════════
-STATIC/MIXED SCENE GUIDANCE
-═══════════════════════════════════════════════════════════════════════════════
-For STATIC scenes, the visual serves as a backdrop while the narrator explains:
-- Use simple FadeIn/Write for initial display
-- Then use long self.wait() calls (4-8 seconds each)
-- Keep elements on screen - don't animate everything
-- The NARRATION carries the content, not the animation
-- Think of it like a slide presentation with voice-over
-
-Example static scene:
-        title = Text("Key Definition", font_size=42)
-        title.to_edge(UP)
-        self.play(FadeIn(title), run_time=1)
-        
-        points = VGroup(
-            Text("• First point", font_size=32),
-            Text("• Second point", font_size=32),
-            Text("• Third point", font_size=32)
-        ).arrange(DOWN, aligned_edge=LEFT, buff=0.4)
-        points.next_to(title, DOWN, buff=0.8)
-        
-        for point in points:
-            self.play(FadeIn(point), run_time=0.5)
-            self.wait(3)  # Let narrator explain each point
-        
-        self.wait(5)  # Final wait while narrator wraps up
-"""
-        
-        # Check if this is a UNIFIED SECTION (NEW: single video for entire section with timing cues)
+        # Build timing context - combine segment info into one clear section
         is_unified_section = section.get('is_unified_section', False)
-        unified_context = ""
-        if is_unified_section:
-            num_segments = section.get('num_segments', 1)
-            segment_timing = section.get('segment_timing', [])
-            total_duration = section.get('total_duration', audio_duration)
-            
-            # Build detailed timing breakdown
-            timing_lines = []
-            for seg in segment_timing:
-                timing_lines.append(
-                    f"  - [{seg['start_time']:.1f}s - {seg['end_time']:.1f}s] ({seg['duration']:.1f}s): \"{seg['text'][:80]}...\""
-                )
-            timing_breakdown = "\n".join(timing_lines) if timing_lines else "No timing info"
-            
-            unified_context = f"""
-═══════════════════════════════════════════════════════════════════════════════
-UNIFIED SECTION: {num_segments} NARRATION SEGMENTS - ONE CONTINUOUS VIDEO
-═══════════════════════════════════════════════════════════════════════════════
-Create ONE smooth, continuous animation for the ENTIRE section.
-The timestamps below help you sync your animations with the narration.
-
-TOTAL DURATION: {total_duration:.1f} seconds
-
-SEGMENT TIMING (use as sync points, NOT as separate scenes):
-{timing_breakdown}
-
-IMPORTANT - UNIFIED ANIMATION GUIDELINES:
-1. Create ONE continuous flow of animations - no "scene changes" between segments
-2. Use the timing info to sync key visual elements with narration milestones
-3. Elements can persist across segment boundaries - don't clear everything
-4. Transitions should be smooth within the section
-5. Think of segments as "chapters" of one story, not separate videos
-6. If one segment introduces a concept, the next can build on it visually
-
-TIMING SYNC APPROACH:
-- At t=0.0s: Start your opening animations
-- For each segment start time: Have relevant visual ready by that time
-- Use self.wait() to pad timing between key moments
-- Example: If segment 2 starts at 12.5s and discusses a formula,
-  make sure the formula appears around t=12.5s
-"""
-        
-        # Check if this is a segment (OLD: per-segment video approach - legacy support)
         is_segment = section.get('is_segment', False)
-        segment_context = ""
-        if is_segment:
+        
+        timing_context = ""
+        if is_unified_section:
+            # Unified section with multiple segments
+            segment_timing = section.get('segment_timing', [])
+            timing_lines = [f"  [{s['start_time']:.1f}s-{s['end_time']:.1f}s] \"{s['text'][:60]}...\"" for s in segment_timing]
+            timing_context = "\n".join(timing_lines) if timing_lines else subsection_timing_str
+        elif is_segment:
+            # Individual segment
             seg_idx = section.get('segment_index', 0)
             total_segs = section.get('total_segments', 1)
-            seg_duration = section.get('segment_duration', audio_duration)
-            seg_start = section.get('segment_start_time', 0)
-            seg_end = section.get('segment_end_time', seg_duration)
-            section_total = section.get('section_total_duration', seg_duration)
-            
-            # Get context about other segments
-            all_texts = section.get('all_segment_texts', [])
-            all_durations = section.get('all_segment_durations', [])
-            
-            # Build context string showing timing of all segments
-            timing_context = []
-            for i, (txt, dur) in enumerate(zip(all_texts, all_durations)):
-                marker = ">>> " if i == seg_idx else "    "
-                timing_context.append(f"{marker}Seg {i+1}: {dur:.1f}s - \"{txt[:60]}...\"")
-            timing_str = "\n".join(timing_context) if timing_context else "No timing info"
-            
-            segment_context = f"""
-═══════════════════════════════════════════════════════════════════════════════
-SEGMENT TIMING CONTEXT: Segment {seg_idx + 1} of {total_segs}
-═══════════════════════════════════════════════════════════════════════════════
-- This segment: {seg_duration:.1f}s (from {seg_start:.1f}s to {seg_end:.1f}s in section)
-- Section total: {section_total:.1f}s
-- All segments in this section:
-{timing_str}
-
-CONTINUITY GUIDELINES:
-- {"START with title/intro since this is the first segment" if seg_idx == 0 else "NO intro - this continues from previous segment"}
-- {"END with conclusion/cleanup since this is the last segment" if seg_idx == total_segs - 1 else "NO conclusion - next segment continues the content"}
-- Keep visual style consistent across segments
-- Create animations that EXACTLY fill {seg_duration:.1f} seconds
-"""
+            is_first = seg_idx == 0
+            is_last = seg_idx == total_segs - 1
+            timing_context = f"Segment {seg_idx + 1}/{total_segs}. {'Include title.' if is_first else 'No intro.'} {'Add conclusion.' if is_last else 'Continues to next.'}"
+        else:
+            timing_context = subsection_timing_str
         
-        # Check if this is a subsection (OLD: legacy approach)
-        is_subsection = section.get('is_subsection', False)
-        subsection_context = ""
-        if is_subsection and not is_segment:
-            sub_idx = section.get('subsection_index', 0)
-            total_subs = section.get('total_subsections', 1)
-            subsection_context = f"""
-═══════════════════════════════════════════════════════════════════════════════
-SUBSECTION CONTEXT: This is part {sub_idx + 1} of {total_subs} in a larger section
-═══════════════════════════════════════════════════════════════════════════════
-- This clip will be merged with other subsections
-- Focus on THIS part of the narration only
-- Keep visual style consistent (same colors, fonts)
-- Don't add intro title if not part 1
-- Make transitions smooth - content will continue
-"""
-        
-        # Combine context strings - prioritize unified section over segment
-        context_str = unified_context or segment_context or subsection_context
-        
-        prompt = f"""Generate Manim code for an educational animation. Code goes inside construct(self).
+        prompt = f"""Generate Manim code for construct(self). Output ONLY Python code.
 
 SECTION: {section.get('title', 'Untitled')}
-NARRATION: {narration}
+DURATION: {audio_duration:.1f}s (STRICT - animations + waits must sum to this)
+TYPE: {animation_type} - {type_guidance}
+
+NARRATION (sync visuals to this):
+{narration}
+
+TIMING BREAKDOWN:
+{timing_context}
+
 KEY CONCEPTS: {key_concepts}
-DURATION: {audio_duration:.1f} seconds exactly
+
 {language_instructions}
-{context_str}
 {style_instructions}
 
-════════════════════════════════════════════════════════════════════════════════
-CORE RULE: PREVENT OVERLAPS
-════════════════════════════════════════════════════════════════════════════════
+LAYOUT GUIDELINES (CRITICAL - AVOID OVERLAPS):
+1. **Vertical Stacking**: When placing elements below others, use `buff=0.7` or larger. `buff=0.2` is too small.
+   - Good: `text2.next_to(text1, DOWN, buff=0.8)`
+2. **Buffer Zones**: Keep away from screen edges.
+   - Good: `.to_edge(UP, buff=1.0)`
+3. **Clear Before New**: Don't let text accumulate. Use `ReplacementTransform` or `FadeOut` old content before showing new content unless it's a list.
+4. **Scale Control**: If equations are long, use `.scale(0.85)` immediately.
 
-Screen layout - use these zones:
-    TITLE (top):    .to_edge(UP, buff=0.5)
-    CONTENT (middle): .move_to(ORIGIN) or position with .next_to()
-    FOOTER (bottom): .to_edge(DOWN, buff=0.5)
+SIZES: title font_size=36, body=28, labels=24, equations .scale(0.85)
 
-To avoid overlaps:
-- Position elements BEFORE animating them
-- Use VGroup(...).arrange() for multiple items
-- FadeOut old content before adding new content in same area
-- Or use ReplacementTransform(old, new) to swap
+COMMON PATTERNS:
+- Text list: VGroup(Text("• Item 1"), Text("• Item 2")).arrange(DOWN, buff=0.5, aligned_edge=LEFT)
+- Equations: MathTex(r"x = 3").scale(0.85), use ReplacementTransform for step-by-step
+- Graph: Axes(x_range, y_range, x_length=6, y_length=4), then axes.plot(lambda x: ...)
+- Highlight: obj.animate.set_color(YELLOW)
 
-════════════════════════════════════════════════════════════════════════════════
-SIZE GUIDELINES
-════════════════════════════════════════════════════════════════════════════════
+SYNTAX:
+- 8 spaces indent inside construct(), +4 for each nested block
+- MathTex uses raw strings: r"\\frac{{a}}{{b}}"
+- Double braces in f-strings: axis_config={{"include_tip": True}}
 
-Text: font_size=36 (titles), font_size=28 (body), font_size=24 (labels)
-Equations: .scale(0.85)
-Axes/Plots: scale to fit - typically width=6, height=4
-Spacing: buff=0.5 between elements
-
-════════════════════════════════════════════════════════════════════════════════
-PATTERNS - Choose based on content type
-════════════════════════════════════════════════════════════════════════════════
-
-TEXT/LIST - Title with bullet points:
-        title = Text("Topic", font_size=36).to_edge(UP, buff=0.5)
-        items = VGroup(
-            Text("• First point", font_size=28),
-            Text("• Second point", font_size=28),
-        ).arrange(DOWN, buff=0.4, aligned_edge=LEFT)
-        items.next_to(title, DOWN, buff=0.8)
-        
-        self.play(Write(title))
-        for item in items:
-            self.play(FadeIn(item), run_time=0.5)
-            self.wait(2)
-
-EQUATIONS - Step by step (replace in place):
-        eq1 = MathTex(r"2x + 4 = 10").scale(0.85).move_to(ORIGIN)
-        self.play(Write(eq1))
-        self.wait(2)
-        
-        eq2 = MathTex(r"x = 3").scale(0.85).move_to(ORIGIN)
-        self.play(ReplacementTransform(eq1, eq2))
-        self.wait(2)
-
-GRAPH/PLOT - Function visualization:
-        axes = Axes(
-            x_range=[-3, 3, 1], y_range=[-2, 8, 2],
-            x_length=6, y_length=4,
-            axis_config={{"include_tip": True}}
-        ).move_to(ORIGIN)
-        
-        graph = axes.plot(lambda x: x**2, color=BLUE)
-        label = axes.get_graph_label(graph, label="f(x)=x^2", x_val=2)
-        
-        self.play(Create(axes), run_time=1)
-        self.play(Create(graph), run_time=2)
-        self.play(Write(label))
-        self.wait(3)
-
-COMPARISON - Side by side:
-        left_title = Text("Option A", font_size=28)
-        right_title = Text("Option B", font_size=28)
-        
-        left_content = VGroup(
-            Text("• Feature 1", font_size=24),
-            Text("• Feature 2", font_size=24),
-        ).arrange(DOWN, buff=0.3, aligned_edge=LEFT)
-        
-        right_content = VGroup(
-            Text("• Feature 1", font_size=24),
-            Text("• Feature 2", font_size=24),
-        ).arrange(DOWN, buff=0.3, aligned_edge=LEFT)
-        
-        left_group = VGroup(left_title, left_content).arrange(DOWN, buff=0.5)
-        right_group = VGroup(right_title, right_content).arrange(DOWN, buff=0.5)
-        
-        comparison = VGroup(left_group, right_group).arrange(RIGHT, buff=1.5)
-        comparison.move_to(ORIGIN)
-        
-        self.play(FadeIn(left_group))
-        self.wait(2)
-        self.play(FadeIn(right_group))
-        self.wait(3)
-
-DIAGRAM - Shapes with labels:
-        circle = Circle(radius=1.5, color=BLUE)
-        label = Text("r=1.5", font_size=24).next_to(circle, DOWN, buff=0.3)
-        diagram = VGroup(circle, label).move_to(ORIGIN)
-        
-        self.play(Create(circle), run_time=1.5)
-        self.play(Write(label))
-        self.wait(3)
-
-PROCESS/FLOW - Sequential steps with arrows:
-        step1 = Text("Input", font_size=28)
-        step2 = Text("Process", font_size=28)
-        step3 = Text("Output", font_size=28)
-        
-        steps = VGroup(step1, step2, step3).arrange(RIGHT, buff=1.5)
-        arrows = VGroup(
-            Arrow(step1.get_right(), step2.get_left(), buff=0.1),
-            Arrow(step2.get_right(), step3.get_left(), buff=0.1),
-        )
-        flow = VGroup(steps, arrows).move_to(ORIGIN)
-        
-        self.play(Write(step1))
-        self.play(GrowArrow(arrows[0]), Write(step2))
-        self.play(GrowArrow(arrows[1]), Write(step3))
-        self.wait(3)
-
-HIGHLIGHT/TRANSFORM - Emphasize parts:
-        eq = MathTex(r"E", r"=", r"m", r"c^2").scale(0.9).move_to(ORIGIN)
-        self.play(Write(eq))
-        self.wait(1)
-        self.play(eq[2:].animate.set_color(YELLOW))  # Highlight mc²
-        self.wait(2)
-
-════════════════════════════════════════════════════════════════════════════════
-TIMING: {audio_duration:.1f} SECONDS TOTAL
-════════════════════════════════════════════════════════════════════════════════
-
-- Animations: run_time=0.5 to 2 seconds
-- Waits: self.wait(2) to self.wait(5) for narration
-- End with: self.wait({end_wait:.1f})
-
-════════════════════════════════════════════════════════════════════════════════
-SYNTAX AND INDENTATION (CRITICAL)
-════════════════════════════════════════════════════════════════════════════════
-
-INDENTATION RULES:
-- Use SPACES only, NEVER tabs
-- Base level (inside construct): 8 spaces
-- Inside for/while loops: 12 spaces
-- Inside if/else: 12 spaces  
-- Nested blocks: add 4 more spaces each level
-
-Example with correct indentation:
-        title = Text("Hello", font_size=48)  # 8 spaces - base level
-        self.play(Write(title))
-        
-        for i in range(3):
-            item = Text(f"Item {{i}}", font_size=32)  # 12 spaces - inside loop
-            item.next_to(title, DOWN, buff=0.5)
-            if i > 0:
-                self.play(FadeOut(prev_item))  # 16 spaces - inside if inside loop
-            self.play(FadeIn(item))
-            prev_item = item
-
-OTHER SYNTAX:
-- MathTex(r"\\frac{{a}}{{b}}") - raw string, double braces
-- Axes config uses double braces: axis_config={{...}}
-
-OUTPUT: Python code only. No markdown. No explanations. Ensure proper indentation."""
+OUTPUT: Python code only. No markdown. No explanations."""
 
         try:
             response = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.client.models.generate_content,
                     model=self.MODEL,
-                    contents=prompt
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.7,  # Balanced creativity for code generation
+                        top_p=0.95,
+                        top_k=40
+                    )
                 ),
                 timeout=300  # 5 minute timeout for Gemini API
             )
+            
+            # Track token usage
+            self._track_token_usage(response, self.MODEL)
+            
         except asyncio.TimeoutError:
             print(f"[ManimGenerator] Gemini API timed out for section code generation")
             # Return minimal fallback code
@@ -1001,12 +916,14 @@ class Scene{class_name}(Scene):
             )
             
             if result.returncode != 0:
-                print(f"Manim error for section {section_index} (attempt {attempt + 1}):")
-                print(result.stderr)
+                qc_note = f" (QC iteration {qc_iteration})" if qc_iteration > 0 else ""
+                print(f"[ManimGenerator] Render error for section {section_index}{qc_note} (attempt {attempt + 1}):")
+                # Print last 1500 chars of error to avoid flooding
+                print(result.stderr[-1500:] if len(result.stderr) > 1500 else result.stderr)
                 
                 # Try auto-correction if we haven't exceeded max attempts
                 if attempt < self.MAX_CORRECTION_ATTEMPTS and section:
-                    print(f"Attempting auto-correction (attempt {attempt + 1}/{self.MAX_CORRECTION_ATTEMPTS})...")
+                    print(f"[ManimGenerator] Attempting auto-correction (attempt {attempt + 1}/{self.MAX_CORRECTION_ATTEMPTS})...")
                     corrected_code = await self._correct_manim_code(
                         content, 
                         result.stderr, 
@@ -1031,6 +948,7 @@ class Scene{class_name}(Scene):
                         )
                 
                 # Fall back to simple scene if all corrections failed
+                print(f"[ManimGenerator] All correction attempts failed, using fallback scene")
                 return await self._render_fallback_scene(section_index, output_dir, code_file.parent)
             
             # Find the actual output file
@@ -1065,58 +983,54 @@ class Scene{class_name}(Scene):
                     if not await self.visual_qc.check_model_available():
                         print("[ManimGenerator] Visual QC model not available, skipping QC")
                     else:
-                        # Run visual quality check
+                        # Run visual quality check with video-based analysis
                         qc_result = await self.visual_qc.check_video_quality(
                             rendered_video,
                             section,
-                            num_frames=5
+                            qc_iteration=qc_iteration
                         )
                         
-                        # Clean up frames after analysis
-                        if qc_result.get("frame_paths"):
-                            self.visual_qc.cleanup_frames(qc_result["frame_paths"])
+                        # Clean up temporary video after analysis
+                        if qc_result.get("temp_video_path"):
+                            self.visual_qc.cleanup_frames(temp_video_path=qc_result["temp_video_path"])
                         
                         # Check if issues were found
-                        if qc_result.get("status") == "issues" and qc_result.get("issues"):
-                            critical_issues = [
-                                issue for issue in qc_result["issues"]
-                                if issue.get("severity") == "critical"
-                            ]
+                        if qc_result.get("status") == "issues" and qc_result.get("error_report"):
+                            error_report = qc_result.get("error_report")
+                            print(f"[ManimGenerator] Found visual issues:")
+                            for line in error_report.split('\n'):
+                                print(f"[ManimGenerator]   {line}")
                             
-                            if critical_issues:
-                                print(f"[ManimGenerator] Found {len(critical_issues)} critical visual issue(s)")
-                                print(f"[ManimGenerator] QC Description: {qc_result.get('description')}")
+                            # Generate fixed code using Gemini - pass section for context
+                            print(f"[ManimGenerator] Generating visual fix...")
+                            fixed_code = await self._generate_visual_fix(
+                                content,
+                                error_report,
+                                section=section
+                            )
+                            
+                            if fixed_code:
+                                print(f"[ManimGenerator] Applying visual QC fix and re-rendering...")
                                 
-                                # Generate fixed code using Gemini (not local model)
-                                fixed_code = await self._generate_visual_fix(
-                                    content,
+                                # Save the fixed code
+                                with open(code_file, "w") as f:
+                                    f.write(fixed_code)
+                                
+                                # Re-render with fixed code
+                                # attempt=0 allows syntax error correction if needed
+                                return await self._render_scene(
+                                    code_file,
+                                    scene_name,
+                                    output_dir,
+                                    section_index,
                                     section,
-                                    qc_result
+                                    attempt=0,  # Reset - allows syntax error correction
+                                    qc_iteration=qc_iteration + 1  # Increment QC iteration
                                 )
-                                
-                                if fixed_code:
-                                    print(f"[ManimGenerator] Applying visual QC fixes...")
-                                    
-                                    # Save the fixed code
-                                    with open(code_file, "w") as f:
-                                        f.write(fixed_code)
-                                    
-                                    # Re-render with fixed code
-                                    return await self._render_scene(
-                                        code_file,
-                                        scene_name,
-                                        output_dir,
-                                        section_index,
-                                        section,
-                                        attempt=0,  # Reset syntax error attempts
-                                        qc_iteration=qc_iteration + 1  # Increment QC iteration
-                                    )
-                                else:
-                                    print("[ManimGenerator] Failed to generate fix, using current video")
                             else:
-                                print(f"[ManimGenerator] Found {len(qc_result.get('issues', []))} moderate issue(s), acceptable")
+                                print("[ManimGenerator] Failed to generate visual fix, using current video")
                         else:
-                            print(f"[ManimGenerator] Visual QC passed: {qc_result.get('description')}")
+                            print(f"[ManimGenerator] ✅ Visual QC passed")
                 
                 except Exception as qc_error:
                     print(f"[ManimGenerator] Visual QC error (non-fatal): {qc_error}")
@@ -1150,7 +1064,80 @@ class Scene{class_name}(Scene):
         if is_last_attempt:
             print(f"[ManimGenerator] Using stronger model ({self.STRONG_MODEL}) for final fix attempt")
         
-        prompt = f"""You are an expert Manim (Community Edition) programmer. The following Manim code has an error that needs to be fixed.
+        # Build timing context for fix
+        timing_context = ""
+        if section.get('is_unified_section', False):
+            segment_timing = section.get('segment_timing', [])
+            timing_lines = [f"  [{s['start_time']:.1f}s-{s['end_time']:.1f}s] \"{s['text'][:60]}...\"" for s in segment_timing]
+            if timing_lines:
+                timing_context = "\nTIMING INSTRUCTIONS (sync visuals to audio):\n" + "\n".join(timing_lines)
+        
+        # System instruction with Manim CE reference
+        system_instruction = """You are an expert Manim Community Edition (manim) programmer and debugger.
+Your task is to fix Python code errors in Manim animations.
+
+MANIM CE QUICK REFERENCE:
+
+DIRECTION CONSTANTS (use these, NOT "BOTTOM"):
+- UP, DOWN, LEFT, RIGHT (unit vectors)
+- UL, UR, DL, DR (diagonals: upper-left, upper-right, etc.)
+- ORIGIN (center point)
+- IN, OUT (for 3D scenes only)
+NOTE: There is NO "BOTTOM" constant! Use DOWN instead.
+
+COLOR CONSTANTS (uppercase):
+- RED, GREEN, BLUE, YELLOW, ORANGE, PURPLE, PINK, WHITE, BLACK, GRAY/GREY
+- Variants: LIGHT_GRAY, DARK_GRAY, BLUE_A, BLUE_B, BLUE_C, BLUE_D, BLUE_E
+- TEAL, MAROON, GOLD, etc.
+
+POSITIONING METHODS:
+- .to_edge(UP/DOWN/LEFT/RIGHT, buff=0.5) - move to screen edge
+- .to_corner(UL/UR/DL/DR, buff=0.5) - move to corner
+- .next_to(obj, UP/DOWN/LEFT/RIGHT, buff=0.25) - position relative to another object
+- .move_to(point or obj) - move center to position
+- .shift(direction * amount) - relative movement
+- .align_to(obj, direction) - align edges
+
+COMMON MOBJECTS:
+- Text("string", font_size=48) - regular text
+- MathTex(r"\\frac{a}{b}") - LaTeX math (double backslashes!)
+- Tex(r"Text with $math$") - mixed text and math
+- Circle(), Square(), Rectangle(), Triangle(), Polygon()
+- Line(start, end), Arrow(start, end), DashedLine()
+- Dot(), NumberLine(), Axes(), NumberPlane()
+- VGroup(*mobjects) - group multiple objects
+- SurroundingRectangle(obj), Brace(obj, direction)
+
+ANIMATIONS:
+- Create(mobject), Write(mobject), FadeIn(mobject), FadeOut(mobject)
+- Transform(source, target), ReplacementTransform(source, target)
+- Indicate(mobject), Circumscribe(mobject), Flash(mobject)
+- GrowFromCenter(mobject), GrowArrow(arrow)
+- self.play(animation, run_time=1) - play animation
+- self.wait(seconds) - pause
+- self.add(mobject) - add without animation
+- self.remove(mobject) - remove without animation
+
+ANIMATE SYNTAX (for property changes):
+- obj.animate.shift(UP)
+- obj.animate.scale(2)
+- obj.animate.set_color(RED)
+- obj.animate.move_to(ORIGIN)
+- Can chain: obj.animate.shift(UP).scale(0.5)
+
+COMMON ERRORS TO FIX:
+1. "BOTTOM" is not defined → Use DOWN instead
+2. "TOP" is not defined → Use UP instead  
+3. IndentationError → Use 8 spaces inside construct()
+4. NameError for colors → Use uppercase: BLUE not blue
+5. MathTex needs double backslashes: r"\\frac{a}{b}"
+6. VGroup elements must be Mobjects, not strings
+7. self.play() needs animations, not raw Mobjects
+8. Objects must be added before FadeOut
+
+OUTPUT: Return ONLY the complete fixed Python code. No markdown, no explanations."""
+
+        prompt = f"""Fix the following Manim code error:
 
 ORIGINAL CODE:
 ```python
@@ -1162,58 +1149,37 @@ ERROR MESSAGE:
 {error_message[-2000:]}
 ```
 
-SECTION INFO:
+SECTION CONTEXT:
 - Title: {section.get('title', 'Untitled')}
-- Visual Description: {section.get('visual_description', '')}
+- Visual: {section.get('visual_description', '')[:300]}
+{timing_context}
 
-CRITICAL - FIX THE CODE following these guidelines:
-
-INDENTATION IS CRITICAL (most common error):
-- Use EXACTLY 4 spaces for each indentation level
-- Class body: 4 spaces
-- Method body (def construct): 8 spaces  
-- Inside loops/conditionals: 12 spaces, 16 spaces, etc.
-- NEVER use tabs, NEVER mix tabs and spaces
-- Every line inside construct() must start with at least 8 spaces
-
-FIXING GUIDELINES:
-1. Analyze the error message carefully
-2. If error mentions IndentationError, TabError, or unexpected indent:
-   - Replace ALL tabs with 4 spaces
-   - Ensure consistent spacing throughout
-   - Check that all method bodies use 8-space indentation
-3. Fix ONLY the issue causing the error
-4. Keep the same visual intent and animations
-5. Use modern Manim CE syntax (from manim import *)
-6. Common syntax fixes:
-   - Use MathTex for math, Text for regular text
-   - Double backslashes in LaTeX strings (e.g., "\\\\frac" not "\\frac")
-   - Colors should be uppercase: BLUE, RED, GREEN, etc.
-   - Use .animate for chained animations (e.g., obj.animate.shift(UP))
-   - VGroup elements must be Mobjects, not strings
-   - Ensure all objects are created before being animated
-   - self.play() requires animation objects, not Mobjects directly
-   - IMPORTANT: Before removing/fading out objects, ensure they were added to the scene
-   - Use self.add() or self.play(Create/Write/FadeIn) before self.play(FadeOut)
-   - Clear objects properly: self.remove() or FadeOut before reusing variable names
-7. LAYOUT FIXES (if elements overlap or are off-screen):
-   - Use .next_to(obj, DOWN, buff=0.5) with buffer spacing
-   - Scale down large equations: .scale(0.7)
-   - Use .arrange(DOWN, buff=0.4) for VGroups
-   - Position titles with .to_edge(UP, buff=0.5)
-8. If the error is too complex, simplify the scene while keeping the core message
-
-Return ONLY the complete corrected Python code (the full file with imports and class definition).
-No markdown, no explanations, just the code.
-ENSURE ALL INDENTATION USES SPACES, NOT TABS."""
+Analyze the error and fix the code. Return ONLY the complete corrected Python file."""
 
         try:
             # Use stronger model on last attempt, lighter model otherwise
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=model_to_use,
-                contents=prompt
+                contents=[
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=prompt)]
+                    )
+                ],
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.1,  # Low temperature for reliable fixes
+                    max_output_tokens=8192
+                )
             )
+            
+            # Track token usage
+            self._track_token_usage(response, model_to_use)
+            
+            if not response or not response.text:
+                print("[ManimGenerator] Empty response from correction model")
+                return None
             
             corrected = response.text.strip()
             
@@ -1237,115 +1203,360 @@ ENSURE ALL INDENTATION USES SPACES, NOT TABS."""
     async def _generate_visual_fix(
         self,
         original_code: str,
-        section: Dict[str, Any],
-        qc_result: Dict[str, Any]
+        error_report: str,
+        section: Dict[str, Any] = None
     ) -> Optional[str]:
-        """Generate fixed Manim code based on visual QC issues using Gemini
+        """Generate fixed Manim code based on visual QC error report using Gemini
+        
+        This method generates a fix for visual layout issues. The returned code
+        will be validated through the normal render pipeline which handles
+        syntax errors automatically.
         
         Args:
             original_code: The original Manim code that has visual issues
-            section: Section metadata
-            qc_result: Visual QC analysis result with detected issues
+            error_report: Concatenated error descriptions with timestamps
+            section: Section info for context
         
         Returns:
             Fixed Manim code, or None if fix generation failed
         """
-        issues = qc_result.get("issues", [])
-        if not issues:
+        if not error_report:
             return None
         
-        # Build description of issues with timestamps
-        issues_description = "\n".join([
-            f"- [{issue.get('severity', 'unknown').upper()}] {issue.get('type', 'unknown')} at {', '.join(str(t)+'s' for t in issue.get('timestamps', []))}: {issue.get('description', '')}\n  Suggestion: {issue.get('suggestion', 'N/A')}"
-            for issue in issues
-        ])
+        # Extract section context
+        section_title = section.get('title', 'Untitled') if section else 'Untitled'
+        duration = section.get('duration_seconds', section.get('duration', 30)) if section else 30
+        narration = section.get('narration', section.get('tts_narration', ''))[:500] if section else ''
         
-        prompt = f"""You are an expert Manim (Community Edition) programmer fixing VISUAL QUALITY issues.
+        # Build timing context for fix
+        timing_context = ""
+        if section and section.get('is_unified_section', False):
+            segment_timing = section.get('segment_timing', [])
+            timing_lines = [f"  [{s['start_time']:.1f}s-{s['end_time']:.1f}s] \"{s['text'][:60]}...\"" for s in segment_timing]
+            if timing_lines:
+                timing_context = "\nTIMING BREAKDOWN (sync visuals to audio):\n" + "\n".join(timing_lines)
+        elif section and section.get('narration_segments'):
+            segments = section.get('narration_segments', [])
+            cumulative = 0.0
+            timing_lines = []
+            for seg in segments:
+                seg_dur = seg.get('estimated_duration', seg.get('duration', 5))
+                seg_text = seg.get('text', seg.get('tts_text', ''))[:60]
+                timing_lines.append(f"  [{cumulative:.1f}s-{cumulative + seg_dur:.1f}s] \"{seg_text}...\"")
+                cumulative += seg_dur
+            if timing_lines:
+                timing_context = "\nTIMING BREAKDOWN (sync visuals to audio):\n" + "\n".join(timing_lines)
 
-ORIGINAL MANIM CODE:
+        prompt = f"""You are an expert Manim (Community Edition) programmer. Your task is to fix VISUAL LAYOUT ERRORS in the code below.
+
+SECTION: {section_title}
+TARGET DURATION: {duration} seconds
+
+NARRATION (for context):
+{narration}
+{timing_context}
+
+ORIGINAL MANIM CODE WITH VISUAL ISSUES:
 ```python
 {original_code}
 ```
 
-VISUAL QUALITY ISSUES DETECTED (by analyzing video frames):
-{issues_description}
+VISUAL ERRORS DETECTED BY QC SYSTEM:
+{error_report}
 
-SECTION INFO:
-- Title: {section.get('title', '')}
-- Visual Description: {section.get('visual_description', '')}
-- Target Duration: {section.get('target_duration', 30)} seconds
+YOUR TASK: Fix ONLY the visual layout errors while preserving:
+1. The same educational content
+2. The same animations and transitions  
+3. The same total duration (~{duration}s)
+4. The same code structure
 
-YOUR TASK:
-Fix the Manim code to address ALL the identified visual issues while maintaining the educational intent.
+SPECIFIC FIXES TO APPLY:
 
-COMMON FIXES FOR VISUAL ISSUES:
+**FOR OVERLAPS:**
+- Increase vertical spacing: `.next_to(obj, DOWN, buff=0.8)` instead of default
+- Use `.arrange(DOWN, buff=0.6, aligned_edge=LEFT)` for VGroups
+- Clear old content: `self.play(FadeOut(old_stuff))` before adding new content
+- Use `ReplacementTransform` instead of `Transform` when replacing content
 
-1. **Text Overlap:**
-   - Use `.next_to()` with proper buffer: `text2.next_to(text1, DOWN, buff=0.5)`
-   - Use `.arrange()` for groups: `VGroup(text1, text2).arrange(DOWN, buff=0.5)`
-   - Scale down if needed: `text.scale(0.8)`
+**FOR OVERFLOW/CLIPPING:**
+- Scale down large elements: `.scale(0.8)` or `.scale(0.7)`
+- Use safe margins: `.to_edge(LEFT, buff=1.0)` not `buff=0.5`
+- Break long text into multiple lines with VGroup
+- Center properly: `.move_to(ORIGIN)` or `.to_edge(UP, buff=0.8)`
 
-2. **Off-screen Elements:**
-   - Use `.to_edge()`: `text.to_edge(UP)`
-   - Use `.shift()`: `equation.shift(UP * 2)`
-   - Center with `.move_to(ORIGIN)` or `.center()`
-
-3. **Unreadable Text:**
-   - Increase font_size: `Text("Title", font_size=48)`
-   - Use high-contrast colors: `Text("Text", color=WHITE)` on dark bg
-   - Avoid tiny text: minimum font_size=24
-
-4. **Crowded Layout:**
-   - Show fewer elements at once
-   - Use FadeOut to remove old content before adding new
-   - Spread elements: `.arrange(RIGHT, buff=1.0)`
-
-5. **Element Collision:**
-   - Check positions with `.get_center()`, `.get_top()`, etc.
-   - Use `.next_to()` relative positioning
-   - Clear the scene: `self.play(FadeOut(VGroup(*self.mobjects)))`
-
-6. **Poor Positioning:**
-   - Align to edges: `.to_edge(LEFT)`, `.to_corner(UL)`
-   - Use standard positions: `UP`, `DOWN`, `LEFT`, `RIGHT`
-   - Balance layout: place related items together
+**FOR LAYOUT ISSUES:**
+- Ensure proper spacing between all elements
+- Check that nothing goes off-screen (frame is roughly -7 to +7 horizontal, -4 to +4 vertical)
 
 CRITICAL REQUIREMENTS:
-- Keep the same educational content and message
-- Maintain timing (target duration: {section.get('target_duration', 30)}s)
-- Use modern Manim CE syntax (from manim import *)
-- Ensure proper indentation (spaces, not tabs)
-- All objects must be created before being animated
+- Output ONLY valid Python code - no markdown, no explanations
+- Include all imports: `from manim import *`
+- Keep the same class name and structure
+- Use 8-space indentation inside `construct()`
+- The code must compile and run without errors
 
-Return ONLY the complete, working Python code with the fixes applied.
-Start with imports, include the full class definition.
-Do NOT include explanations or markdown - just the code."""
+OUTPUT: Complete fixed Python file only."""
 
         try:
-            # Use the flash model for fast fix generation
+            # Use STRONG_MODEL for visual fixes
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
-                model=self.CORRECTION_MODEL,  # Use gemini-3-flash-preview
-                contents=prompt
+                model=self.STRONG_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,  # Lower temperature for more reliable fixes
+                    max_output_tokens=8192  # Allow for longer code
+                )
             )
+            
+            # Track token usage (with error handling)
+            try:
+                self._track_token_usage(response, self.STRONG_MODEL)
+            except Exception as track_err:
+                print(f"[ManimGenerator] Warning: Could not track token usage: {track_err}")
+            
+            # Check if response has text
+            if not response or not response.text:
+                print(f"[ManimGenerator] Visual fix: Empty response from Gemini")
+                # Check for safety/block reasons
+                if hasattr(response, 'candidates') and response.candidates:
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'finish_reason'):
+                        print(f"[ManimGenerator] Finish reason: {candidate.finish_reason}")
+                return None
             
             fixed_code = response.text.strip()
             
-            # Remove markdown if present
+            if not fixed_code:
+                print(f"[ManimGenerator] Visual fix: Response text is empty")
+                return None
+            
+            # Remove markdown code blocks if present
             if fixed_code.startswith("```"):
                 lines = fixed_code.split("\n")
-                lines = [l for l in lines if not l.strip().startswith("```")]
+                # Remove first line if it's ```python or ```
+                if lines[0].strip().startswith("```"):
+                    lines = lines[1:]
+                # Remove last line if it's ```
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
                 fixed_code = "\n".join(lines)
             
-            # Validate the fixed code has basic structure
-            if "from manim import" in fixed_code and "class " in fixed_code and "def construct" in fixed_code:
-                return fixed_code
-            else:
-                print("[ManimGenerator] Fixed code missing required structure")
+            # Basic validation - must have required structure
+            if "from manim import" not in fixed_code:
+                fixed_code = "from manim import *\n\n" + fixed_code
+            
+            if "class " not in fixed_code or "def construct" not in fixed_code:
+                print("[ManimGenerator] Visual fix missing required structure")
                 return None
+            
+            # Ensure proper line endings
+            fixed_code = fixed_code.replace('\r\n', '\n')
+            
+            # Test-render the visual fix and correct errors if needed
+            fixed_code = await self._validate_and_fix_code(fixed_code, section)
+            
+            return fixed_code
         
         except Exception as e:
             print(f"[ManimGenerator] Error generating visual fix: {e}")
+            return None
+    
+    async def _validate_and_fix_code(
+        self,
+        code: str,
+        section: Dict[str, Any] = None,
+        max_attempts: int = 3
+    ) -> Optional[str]:
+        """Test-render code and fix any errors (syntax or runtime)
+        
+        Args:
+            code: The Manim code to validate
+            section: Section info for context in error fixing
+            max_attempts: Maximum correction attempts
+            
+        Returns:
+            Working code or None if unfixable
+        """
+        import tempfile
+        import re
+        
+        for attempt in range(max_attempts):
+            # Extract class name
+            match = re.search(r"class (\w+)\(Scene\)", code)
+            if not match:
+                print(f"[ManimGenerator] No Scene class found in visual fix code")
+                return None
+            scene_name = match.group(1)
+            
+            # Create temp file for test render
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+                f.write(code)
+                temp_file = f.name
+            
+            # Create temp output dir
+            temp_output = tempfile.mkdtemp(prefix='manim_test_')
+            
+            try:
+                # Try to render
+                cmd = [
+                    "manim",
+                    "-ql",  # Low quality for speed
+                    "--format=mp4",
+                    f"--media_dir={temp_output}",
+                    temp_file,
+                    scene_name
+                ]
+                
+                result = await asyncio.to_thread(
+                    subprocess.run,
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=120  # 2 minute timeout for test render
+                )
+                
+                if result.returncode == 0:
+                    print(f"[ManimGenerator] ✓ Visual fix validated via test render (attempt {attempt + 1})")
+                    # Clean up temp files
+                    try:
+                        os.unlink(temp_file)
+                        import shutil
+                        shutil.rmtree(temp_output, ignore_errors=True)
+                    except:
+                        pass
+                    return code
+                
+                # Render failed - extract error and try to fix
+                error_msg = result.stderr[-2000:] if len(result.stderr) > 2000 else result.stderr
+                print(f"[ManimGenerator] Visual fix render error (attempt {attempt + 1}/{max_attempts}):")
+                # Print condensed error
+                error_lines = [l for l in error_msg.split('\n') if l.strip() and not l.strip().startswith('─')]
+                print('\n'.join(error_lines[-10:]))  # Last 10 meaningful lines
+                
+                if attempt < max_attempts - 1:
+                    print(f"[ManimGenerator] Attempting to fix render error...")
+                    fixed_code = await self._fix_render_error(code, error_msg, section)
+                    
+                    if fixed_code:
+                        code = fixed_code
+                    else:
+                        print(f"[ManimGenerator] Could not generate fix, aborting")
+                        break
+                
+            except subprocess.TimeoutExpired:
+                print(f"[ManimGenerator] Test render timed out")
+                break
+            except Exception as e:
+                print(f"[ManimGenerator] Test render error: {e}")
+                break
+            finally:
+                # Clean up temp files
+                try:
+                    os.unlink(temp_file)
+                    import shutil
+                    shutil.rmtree(temp_output, ignore_errors=True)
+                except:
+                    pass
+        
+        print(f"[ManimGenerator] ⚠️ Could not validate visual fix after {max_attempts} attempts")
+        return None
+    
+    async def _fix_render_error(
+        self,
+        code: str,
+        error_message: str,
+        section: Dict[str, Any] = None
+    ) -> Optional[str]:
+        """Fix a render error (syntax or runtime) in the code using Gemini"""
+        
+        # System instruction with Manim CE reference
+        system_instruction = """You are an expert Manim Community Edition debugger.
+Fix the error in the provided Manim code.
+
+MANIM CE QUICK REFERENCE:
+
+DIRECTION CONSTANTS (use these, NOT "BOTTOM" or "TOP"):
+- UP, DOWN, LEFT, RIGHT (unit vectors)
+- UL, UR, DL, DR (diagonals)
+- ORIGIN (center)
+NOTE: "BOTTOM" and "TOP" do NOT exist! Use DOWN and UP instead.
+
+COLOR CONSTANTS: RED, GREEN, BLUE, YELLOW, WHITE, BLACK, GRAY, etc. (uppercase)
+
+POSITIONING:
+- .to_edge(UP/DOWN/LEFT/RIGHT, buff=0.5)
+- .next_to(obj, direction, buff=0.25)
+- .move_to(point), .shift(direction * amount)
+
+COMMON FIXES:
+1. BOTTOM → DOWN, TOP → UP
+2. Colors must be uppercase
+3. MathTex needs double backslashes: r"\\frac{a}{b}"
+4. 8 spaces indentation inside construct()
+5. Objects must be added before FadeOut
+
+OUTPUT: Return ONLY the complete fixed Python code. No markdown."""
+
+        prompt = f"""Fix this Manim code error:
+
+CODE:
+```python
+{code}
+```
+
+ERROR:
+```
+{error_message[-1500:]}
+```
+
+Return the complete fixed Python file only."""
+
+        try:
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=self.CORRECTION_MODEL,
+                contents=[
+                    types.Content(
+                        role="user",
+                        parts=[types.Part.from_text(text=prompt)]
+                    )
+                ],
+                config=types.GenerateContentConfig(
+                    system_instruction=system_instruction,
+                    temperature=0.1,
+                    max_output_tokens=8192
+                )
+            )
+            
+            # Track token usage
+            try:
+                self._track_token_usage(response, self.CORRECTION_MODEL)
+            except Exception:
+                pass
+            
+            if not response or not response.text:
+                return None
+            
+            fixed_code = response.text.strip()
+            
+            # Remove markdown code blocks if present
+            if fixed_code.startswith("```"):
+                lines = fixed_code.split("\n")
+                if lines[0].strip().startswith("```"):
+                    lines = lines[1:]
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]
+                fixed_code = "\n".join(lines)
+            
+            # Ensure proper structure
+            if "from manim import" not in fixed_code:
+                fixed_code = "from manim import *\n\n" + fixed_code
+            
+            return fixed_code
+        
+        except Exception as e:
+            print(f"[ManimGenerator] Error fixing render error: {e}")
             return None
 
     async def _render_fallback_scene(

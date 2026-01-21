@@ -307,13 +307,19 @@ OUTPUT (same format, translated):
         Returns:
             Manim code with translated Text() strings
         """
+        print(f"[TranslationService] translate_manim_code called: source={source_language}, target={target_language}")
+        print(f"[TranslationService] Code length: {len(manim_code) if manim_code else 0}")
+        
         if not manim_code:
+            print("[TranslationService] No manim_code provided, returning empty")
             return manim_code
         
         is_non_latin = target_language in self.NON_LATIN_LANGUAGES
+        print(f"[TranslationService] is_non_latin={is_non_latin} (target={target_language}, NON_LATIN_LANGUAGES={self.NON_LATIN_LANGUAGES})")
         
         # For non-Latin languages, first handle Tex() with mixed content
         if is_non_latin:
+            print(f"[TranslationService] Running _convert_tex_for_non_latin for {target_language}")
             manim_code = await self._convert_tex_for_non_latin(manim_code, target_language, source_language)
         
         # Extract all Text("...") strings with their positions
@@ -321,6 +327,7 @@ OUTPUT (same format, translated):
         text_pattern = r'(Text)\s*\(\s*(["\'])((?:(?!\2)[^\\]|\\.)*)\2'
         
         matches = list(re.finditer(text_pattern, manim_code))
+        print(f"[TranslationService] Found {len(matches)} Text() matches")
         
         if not matches:
             print("[TranslationService] No Text() strings found in Manim code")

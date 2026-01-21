@@ -6,6 +6,7 @@ Tests the basic functionality without requiring full pipeline
 
 import asyncio
 import sys
+import os
 from pathlib import Path
 
 # Add backend to path
@@ -15,31 +16,35 @@ try:
     from services.visual_qc import VisualQualityController, check_section_video
 except ImportError as e:
     print(f"Error importing visual_qc: {e}")
-    print("Make sure ollama is installed: pip install ollama")
+    print("Make sure google-genai and Pillow are installed:")
+    print("  pip install google-genai Pillow")
     sys.exit(1)
+
+# Default model for testing
+TEST_MODEL = "gemini-2.0-flash-lite"
 
 
 async def test_model_availability():
-    """Test if vision model is available"""
+    """Test if Gemini API is accessible"""
     print("=" * 60)
-    print("TEST 1: Model Availability Check")
+    print("TEST 1: API Availability Check")
     print("=" * 60)
     
-    models_to_test = ["fastest", "balanced", "capable"]
+    if not os.getenv("GEMINI_API_KEY"):
+        print("✗ GEMINI_API_KEY environment variable not set")
+        return
     
-    for model_tier in models_to_test:
-        print(f"\nTesting '{model_tier}' tier...")
-        try:
-            qc = VisualQualityController(model=model_tier)
-            is_available = await qc.check_model_available()
-            
-            if is_available:
-                print(f"✓ Model {qc.model} is available")
-            else:
-                print(f"✗ Model {qc.model} not found")
-                print(f"  Install with: ollama pull {qc.model}")
-        except Exception as e:
-            print(f"✗ Error: {e}")
+    print(f"\nTesting Gemini API with model: {TEST_MODEL}...")
+    try:
+        qc = VisualQualityController(model=TEST_MODEL)
+        is_available = await qc.check_model_available()
+        
+        if is_available:
+            print(f"✓ Gemini API is accessible")
+        else:
+            print(f"✗ Gemini API not available")
+    except Exception as e:
+        print(f"✗ Error: {e}")
     
     print()
 
@@ -64,7 +69,7 @@ async def test_frame_extraction():
     print(f"\nUsing test video: {test_video}")
     
     try:
-        qc = VisualQualityController(model="balanced")
+        qc = VisualQualityController(model=TEST_MODEL)
         
         # Extract frames
         frame_paths, timestamps = qc.extract_keyframes(test_video, num_frames=3)
@@ -110,29 +115,26 @@ async def test_full_qc():
     }
     
     try:
-        # Check if model is available first
-        qc = VisualQualityController(model="balanced")
+        # Check if API is available first
+        qc = VisualQualityController(model=TEST_MODEL)
         
         if not await qc.check_model_available():
-            print(f"✗ Model not available. Install with: ollama pull {qc.model}")
+            print(f"✗ Gemini API not available")
             return
         
         print("\nRunning quality check...")
         result = await check_section_video(
             test_video,
             section_info,
-            model="balanced"
+            model=TEST_MODEL
         )
         
         print(f"\n✓ Analysis complete")
         print(f"  Status: {result['status']}")
-        print(f"  Description: {result['description']}")
         
-        if result.get('issues'):
-            print(f"  Found {len(result['issues'])} issue(s):")
-            for i, issue in enumerate(result['issues'], 1):
-                print(f"    {i}. [{issue.get('severity', 'unknown').upper()}] "
-                      f"{issue.get('type', 'unknown')}: {issue.get('description', 'N/A')}")
+        if result.get('error_report'):
+            print(f"  Errors found:")
+            print(f"  {result['error_report']}")
         else:
             print("  No issues found!")
     
@@ -164,36 +166,19 @@ class TestSection(Scene):
         self.wait(2)
 '''
     
-    section_info = {
-        "title": "Test Section",
-        "narration": "Testing fix generation",
-        "visual_description": "Title and subtitle",
-        "target_duration": 30
-    }
-    
-    # Simulated QC result
-    qc_result = {
-        "status": "issues",
-        "description": "Text overlap detected",
-        "issues": [
-            {
-                "severity": "critical",
-                "type": "overlap",
-                "description": "Title and subtitle text overlapping at same position",
-                "suggestion": "Use .next_to() to position subtitle below title with spacing"
-            }
-        ]
-    }
+    # Simulated error report
+    error_report = """At 1.5s: Title text overlaps with subtitle text
+At 3.0s: Both texts at same position causing readability issues"""
     
     try:
-        qc = VisualQualityController(model="balanced")
+        qc = VisualQualityController(model=TEST_MODEL)
         
         if not await qc.check_model_available():
-            print(f"✗ Model not available")
+            print(f"✗ Gemini API not available")
             return
         
         print("\nGenerating fix for overlapping text...")
-        fixed_code = await qc.generate_fix(bad_code, section_info, qc_result)
+        fixed_code = await qc.generate_fix(bad_code, error_report)
         
         if fixed_code:
             print("✓ Fix generated successfully")

@@ -192,12 +192,13 @@ LANGUAGE CODE:"""
             section_duration = "30-60 seconds each"
             teaching_style = "brief"
         else:
-            # COMPREHENSIVE MODE: Much longer, more thorough videos for teaching
-            # More generous estimation: ~200 chars per minute of video (slower, more explanatory)
-            suggested_duration = max(45, estimated_duration * 2, content_length // 200)
-            # Cap at reasonable max for very long documents
-            suggested_duration = min(suggested_duration, 90)
-            section_count = "as many sections as needed to cover ALL material thoroughly"
+            # COMPREHENSIVE MODE: Full lecture-style videos that REPLACE reading the document
+            # No artificial duration limits - video should be as long as needed
+            # Estimate: ~100 chars per minute for thorough explanation with pauses
+            suggested_duration = max(60, content_length // 100)
+            section_count = "as many sections as needed - create a section for EVERY topic, theorem, proof, example"
+            section_duration = "60-300 seconds each (complex proofs/derivations need more time)"
+            teaching_style = "comprehensive"
             section_duration = "60-180 seconds each (adjust based on content complexity)"
             teaching_style = "comprehensive"
         
@@ -209,66 +210,71 @@ LANGUAGE CODE:"""
         # Build teaching-style specific instructions
         if teaching_style == "comprehensive":
             teaching_instructions = f"""
-=== ADAPTIVE LECTURE STYLE ===
+=== COMPREHENSIVE LECTURE MODE ===
 
-First, ANALYZE the document to determine the best teaching approach:
+YOUR GOAL: Create a video that COMPLETELY REPLACES the need to read the source document.
+A viewer who watches this video should understand EVERYTHING in the document without ever reading it.
 
-DOCUMENT ANALYSIS (do this first):
-1. What TYPE of content is this?
-   - Theoretical concepts (proofs, theorems, abstract ideas)
-   - Practical/procedural (how-to, algorithms, techniques)
-   - Factual/descriptive (definitions, properties, classifications)
-   - Problem-solving (worked examples, case studies)
-   - Conceptual overview (survey, introduction to a field)
+CRITICAL REQUIREMENTS:
+
+1. INCLUDE EVERYTHING from the source document:
+   - Every theorem, lemma, proposition, and corollary
+   - FULL proofs and derivations (step by step, not summarized)
+   - All examples and worked problems
+   - All definitions and key concepts
+   - Edge cases, exceptions, and special conditions
+
+2. DO NOT ASSUME PRIOR KNOWLEDGE:
+   - Define all terms before using them
+   - Explain mathematical notation as you introduce it
+   - Build concepts from fundamentals
+   - A motivated student with basic background should follow everything
+
+3. DETECT CONTENT CONTEXT (CRITICAL):
+   First, determine if this is:
+   A) STANDALONE CONTENT (e.g., a research paper, independent article, or single topic)
+      → Explain ALL referenced methods/concepts that aren't common knowledge
+      → If the paper mentions "we use MLE" - explain what MLE is and why
+      → Don't assume viewers know specialized techniques
    
-2. What is the COMPLEXITY level?
-   - Introductory (new concepts, needs extensive motivation)
-   - Intermediate (builds on prior knowledge)
-   - Advanced (assumes background, focus on nuances)
-
-3. What TEACHING APPROACH fits best?
-   Choose ONE or combine as appropriate:
+   B) PART OF A SERIES (e.g., chapter 5 of a textbook, lecture notes building on prior lectures)
+      → You can assume prior chapters/lectures have been covered
+      → Technical terms from the same course can be used without re-explaining
+      → Focus on NEW material, referencing prior concepts briefly
    
-   A) CONCEPT-FIRST: For abstract/theoretical content
-      - Start with the big idea and intuition
-      - Build to formal definitions
-      - Use analogies heavily
-      
-   B) EXAMPLE-DRIVEN: For procedural/problem-solving content
-      - Lead with concrete examples
-      - Extract patterns and rules from examples
-      - "Here's what we want to do... let me show you how"
-      
-   C) COMPARISON-BASED: For content with alternatives/trade-offs
-      - Side-by-side analysis
-      - Pros/cons, when to use what
-      - "On one hand... on the other hand..."
-      
-   D) STORY/JOURNEY: For historical or evolution-type content
-      - Narrative arc with progression
-      - "This led to... which made people realize..."
-      
-   E) PROBLEM-SOLUTION: For applied content
-      - Start with the problem/need
-      - Show why naive approaches fail
-      - Present the solution and why it works
+   Signs it's STANDALONE: Paper/article format, self-contained, cites external works, 
+   introduces topic from scratch, aimed at general audience
+   
+   Signs it's PART OF SERIES: Chapter numbering, references to "last lecture", 
+   builds directly on prior material, uses notation from earlier without definition,
+   course/textbook structure, assumes specific prior knowledge
 
-CORE TEACHING PRINCIPLES (apply regardless of approach):
+4. EXPLAIN THE "WHY":
+   - Why do we care about this?
+   - Why does this proof work?
+   - Why this approach instead of another?
+   - What's the intuition behind each step?
 
-1. MOTIVATE: Why should the viewer care? What can they DO with this?
-2. INTUITION: Before formulas, explain the IDEA in plain language
-3. DEPTH: Take time to explain - don't rush through complex material
-4. EXAMPLES: Concrete illustrations make abstract ideas click
-5. CONNECTIONS: Show how ideas relate to each other
+4. PROOFS AND DERIVATIONS:
+   - Present proofs COMPLETELY, not "the proof follows similarly"
+   - Explain each step: what we're doing and why
+   - Highlight key insights and clever tricks
+   - Take time - a complex proof might need 3-5 minutes
 
-STRUCTURE YOUR LECTURE:
-- Opening hook that captures interest
-- Logical flow that builds understanding
-- Each section should have a clear teaching goal
-- Pace based on complexity - harder topics get more time
+5. EXAMPLES:
+   - Work through examples FULLY
+   - Show all intermediate steps
+   - Explain the reasoning at each step
 
-TARGET: {suggested_duration}+ minutes. This is a FLOOR, not a ceiling.
-Take as much time as the material genuinely needs.
+TEACHING APPROACH: Analyze the document and choose the best style:
+- CONCEPT-FIRST: For abstract/theoretical - start with intuition, then formalize
+- EXAMPLE-DRIVEN: For procedural - lead with examples, extract patterns
+- PROOF-FOCUSED: For theorem-heavy - careful proof presentation with motivation
+- PROBLEM-SOLUTION: For applied - start with the problem, develop the solution
+
+TARGET DURATION: {suggested_duration}+ minutes - this is a MINIMUM, not a limit.
+Take as much time as the material genuinely requires.
+Better to be thorough than to rush.
 """
         else:
             teaching_instructions = """
@@ -307,6 +313,10 @@ Respond with ONLY valid JSON:
 {{
     "document_analysis": {{
         "content_type": "[theoretical|practical|factual|problem-solving|conceptual-overview]",
+        "content_context": "[standalone|part-of-series]",
+        "context_rationale": "[Why you classified it as standalone or part of series - what clues?]",
+        "concepts_to_explain": ["List any specialized methods/concepts that need explanation for standalone content"],
+        "assumed_prior_knowledge": ["List what prior knowledge is assumed if part of series"],
         "complexity_level": "[introductory|intermediate|advanced]",
         "chosen_approach": "[concept-first|example-driven|comparison-based|story-journey|problem-solution]",
         "approach_rationale": "[Why this approach fits this document]"
@@ -433,42 +443,67 @@ UNIVERSAL PRINCIPLES:
         else:
             phase2_teaching = "Write concise narration covering key points."
         
-        phase2_prompt = f"""You are a script writer for educational videos. You have an OUTLINE and need to write the FULL SCRIPT.{language_instruction}
+        # Extract content context from outline analysis
+        doc_analysis = outline.get("document_analysis", {})
+        content_context = doc_analysis.get("content_context", "standalone")
+        concepts_to_explain = doc_analysis.get("concepts_to_explain", [])
+        
+        # Build context-aware instructions
+        if content_context == "standalone" and concepts_to_explain:
+            context_instruction = f"""
+CONTENT CONTEXT: This is STANDALONE content (not part of a series).
+METHODS/CONCEPTS TO EXPLAIN: The following specialized methods or concepts are mentioned 
+but may not be familiar to viewers. You MUST explain them when first used:
+{chr(10).join(f"- {c}" for c in concepts_to_explain)}
+
+For each of these, provide:
+- A brief definition/explanation
+- Why it's relevant to the current topic
+- Intuition for how it works
+"""
+        elif content_context == "part-of-series":
+            assumed_knowledge = doc_analysis.get("assumed_prior_knowledge", [])
+            context_instruction = f"""
+CONTENT CONTEXT: This is PART OF A SERIES (builds on prior material).
+You can assume the viewer has prior knowledge of: {', '.join(assumed_knowledge) if assumed_knowledge else 'earlier course material'}.
+Focus on the NEW material while briefly referencing prior concepts when needed.
+"""
+        else:
+            context_instruction = ""
+        
+        phase2_prompt = f"""You are creating a COMPLETE educational video script. The goal is to FULLY REPLACE reading the source document.{language_instruction}
 {phase2_teaching}
+{context_instruction}
+
+CRITICAL INSTRUCTION: Include EVERYTHING from the source material:
+- ALL theorems, lemmas, definitions - with complete explanations
+- ALL proofs - step by step, not summarized
+- ALL examples - fully worked out
+- ALL derivations - show every step
+- DO NOT skip, summarize, or gloss over ANY content
+- A viewer should learn everything WITHOUT reading the document
 
 VIDEO OUTLINE:
 {sections_outline_str}
 
-ORIGINAL SOURCE MATERIAL (for reference - include ALL of this in your narration):
-{content[:40000]}
+SOURCE MATERIAL (INCLUDE ALL OF THIS - nothing should be left out):
+{content[:50000]}
 
 OUTPUT LANGUAGE: {language_name}
-ALL NARRATION MUST BE IN {language_name.upper()}.
 
-For each section in the outline, write:
-1. Full narration text in {language_name} - cover ALL content from source plus explanations
-2. TTS-friendly version in {language_name} (no symbols, spelled out)
-3. Visual description (what appears on screen)
+For each section, write:
+1. COMPLETE narration - thorough, detailed, nothing skipped
+2. TTS-friendly version (symbols spelled out)
+3. Visual description
 4. Animation type
 
-VISUAL TYPES - IMPORTANT:
-- For "static" sections: Describe TEXT/IMAGES that appear on screen while narrator explains
-- For "animated" sections: Describe step-by-step ANIMATIONS that build up
-- For "mixed" sections: Combine both approaches
-
-STATIC SCENE EXAMPLES:
-- "Display title 'Key Definition' with bullet points appearing one by one"
-- "Show a diagram of [X] that stays on screen while narrator explains"
-- "Display the formula [Y] centered on screen"
-
-ANIMATED SCENE EXAMPLES:
-- "Animate the equation transforming step by step"
-- "Build the graph point by point, drawing the curve"
-- "Show the algorithm executing with highlighted steps"
-
-TTS-FRIENDLY NARRATION:
-- narration: Display version with symbols (x², O(n), α)
-- tts_narration: Spoken version ("x squared", "O of n", "alpha")
+NARRATION GUIDELINES:
+- Explain each step of every proof/derivation
+- Define terms before using them
+- Don't assume the viewer knows anything not explained in prior sections
+- Take your time - complex topics need thorough explanation
+- Include motivation: "Why do we care? Here's why..."
+- Include intuition: "What's really happening here is..."
 
 Respond with ONLY valid JSON:
 {{
@@ -479,9 +514,9 @@ Respond with ONLY valid JSON:
         {{
             "id": "[from outline]",
             "title": "[from outline]",
-            "duration_seconds": [realistic duration based on narration length],
-            "narration": "[Complete narration covering all source content plus explanations]",
-            "tts_narration": "[TTS-friendly version - same content, symbols spelled out]",
+            "duration_seconds": [realistic - complex sections need 120-300s],
+            "narration": "[COMPLETE narration - thorough explanation of all content]",
+            "tts_narration": "[TTS-friendly version]",
             "visual_description": "[Detailed visual description]",
             "key_concepts": ["concept1", "concept2"],
             "animation_type": "[static|animated|mixed]",
