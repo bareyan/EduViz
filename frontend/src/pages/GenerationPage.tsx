@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Loader2, Palette, ChevronRight, ArrowLeft, Clock, Zap, Globe } from 'lucide-react'
+import { Loader2, Palette, ChevronRight, ArrowLeft, Clock, Zap, Globe, BookOpen, GraduationCap, FileText, Link2, Layers, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { generateVideos, getVoices, Voice, Language, AnalysisResult } from '../api'
 
@@ -11,10 +11,16 @@ export default function GenerationPage() {
   const [languages, setLanguages] = useState<Language[]>([])
   const [selectedLanguage, setSelectedLanguage] = useState('auto')  // Auto-detect from document
   const [voices, setVoices] = useState<Voice[]>([])
-  const [selectedVoice, setSelectedVoice] = useState('en-US-GuyNeural')
+  const [selectedVoice, setSelectedVoice] = useState('')  // Will be set from API default
   const [style, setStyle] = useState('3b1b')
   const [videoMode, setVideoMode] = useState<'comprehensive' | 'overview'>('comprehensive')
+  const [contentFocus, setContentFocus] = useState<'practice' | 'theory' | 'as_document'>('as_document')
+  const [documentContext, setDocumentContext] = useState<'standalone' | 'series' | 'auto'>('auto')
   const [isGenerating, setIsGenerating] = useState(false)
+  
+  // Check if we're resuming a previous job
+  const resumeJobId = sessionStorage.getItem('resumeJobId')
+  const isResuming = !!resumeJobId
 
   // Retrieve stored data
   const selectedTopics: number[] = JSON.parse(sessionStorage.getItem('selectedTopics') || '[]')
@@ -28,8 +34,10 @@ export default function GenerationPage() {
         const data = await getVoices(selectedLanguage)
         setVoices(data.voices)
         setLanguages(data.languages)
-        // Set default voice for the language
-        if (data.voices.length > 0) {
+        // Set default voice for the language (from API)
+        if (data.default_voice) {
+          setSelectedVoice(data.default_voice)
+        } else if (data.voices.length > 0) {
           setSelectedVoice(data.voices[0].id)
         }
       } catch (error) {
@@ -48,6 +56,9 @@ export default function GenerationPage() {
     setIsGenerating(true)
 
     try {
+      // Check if we're resuming a previous job
+      const resumeJobId = sessionStorage.getItem('resumeJobId')
+      
       const result = await generateVideos({
         file_id: analysis.file_id,
         analysis_id: analysis.analysis_id,
@@ -56,9 +67,15 @@ export default function GenerationPage() {
         voice: selectedVoice,
         video_mode: videoMode,
         language: selectedLanguage,
+        content_focus: contentFocus,
+        document_context: documentContext,
+        resume_job_id: resumeJobId || undefined,
       })
+      
+      // Clear resume job ID after use
+      sessionStorage.removeItem('resumeJobId')
 
-      toast.success('Video generation started!')
+      toast.success(resumeJobId ? 'Resuming video generation!' : 'Video generation started!')
       navigate(`/results/${result.job_id}`)
     } catch (error) {
       console.error('Generation failed:', error)
@@ -181,6 +198,144 @@ export default function GenerationPage() {
           </div>
         </div>
 
+        {/* Content Focus Selection */}
+        <div className="p-6 bg-gray-900/50 rounded-xl border border-gray-800">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-math-orange/20 rounded-lg">
+              <BookOpen className="w-5 h-5 text-math-orange" />
+            </div>
+            <h2 className="text-lg font-semibold">Content Focus</h2>
+          </div>
+          <p className="text-sm text-gray-400 mb-4">
+            Choose how the video should balance examples and theory
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <button
+              onClick={() => setContentFocus('as_document')}
+              className={`
+                p-4 rounded-lg text-left transition-all
+                ${contentFocus === 'as_document' 
+                  ? 'bg-math-orange/20 border-math-orange border-2' 
+                  : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <FileText className="w-5 h-5" />
+                <p className="font-semibold">As Document</p>
+              </div>
+              <p className="text-sm text-gray-400">
+                Follow the document's natural structure and balance
+              </p>
+            </button>
+            <button
+              onClick={() => setContentFocus('practice')}
+              className={`
+                p-4 rounded-lg text-left transition-all
+                ${contentFocus === 'practice' 
+                  ? 'bg-math-green/20 border-math-green border-2' 
+                  : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <GraduationCap className="w-5 h-5" />
+                <p className="font-semibold">Practice</p>
+              </div>
+              <p className="text-sm text-gray-400">
+                More examples, worked problems, and applications
+              </p>
+            </button>
+            <button
+              onClick={() => setContentFocus('theory')}
+              className={`
+                p-4 rounded-lg text-left transition-all
+                ${contentFocus === 'theory' 
+                  ? 'bg-math-purple/20 border-math-purple border-2' 
+                  : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <BookOpen className="w-5 h-5" />
+                <p className="font-semibold">Theory</p>
+              </div>
+              <p className="text-sm text-gray-400">
+                More proofs, derivations, and conceptual depth
+              </p>
+            </button>
+          </div>
+        </div>
+
+        {/* Document Context Selection */}
+        <div className="p-6 bg-gray-900/50 rounded-xl border border-gray-800">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-teal-500/20 rounded-lg">
+              <Layers className="w-5 h-5 text-teal-400" />
+            </div>
+            <h2 className="text-lg font-semibold">Document Context</h2>
+          </div>
+          <p className="text-sm text-gray-400 mb-4">
+            Is this document standalone or part of a series (like a textbook chapter)?
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <button
+              onClick={() => setDocumentContext('auto')}
+              className={`
+                p-4 rounded-lg text-left transition-all
+                ${documentContext === 'auto' 
+                  ? 'bg-teal-500/20 border-teal-400 border-2' 
+                  : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Zap className="w-5 h-5" />
+                <p className="font-semibold">Auto-detect</p>
+              </div>
+              <p className="text-sm text-gray-400">
+                AI will analyze the document and decide
+              </p>
+            </button>
+            <button
+              onClick={() => setDocumentContext('standalone')}
+              className={`
+                p-4 rounded-lg text-left transition-all
+                ${documentContext === 'standalone' 
+                  ? 'bg-math-blue/20 border-math-blue border-2' 
+                  : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <FileText className="w-5 h-5" />
+                <p className="font-semibold">Standalone</p>
+              </div>
+              <p className="text-sm text-gray-400">
+                Explain all concepts - assume no prior knowledge
+              </p>
+            </button>
+            <button
+              onClick={() => setDocumentContext('series')}
+              className={`
+                p-4 rounded-lg text-left transition-all
+                ${documentContext === 'series' 
+                  ? 'bg-math-purple/20 border-math-purple border-2' 
+                  : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                }
+              `}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Link2 className="w-5 h-5" />
+                <p className="font-semibold">Part of Series</p>
+              </div>
+              <p className="text-sm text-gray-400">
+                Prior concepts from the series can be assumed known
+              </p>
+            </button>
+          </div>
+        </div>
+
         {/* Language & Voice Selection */}
         <div className="p-6 bg-gray-900/50 rounded-xl border border-gray-800">
           <div className="flex items-center gap-3 mb-4">
@@ -288,19 +443,43 @@ export default function GenerationPage() {
         </div>
       </div>
 
+      {/* Resume Banner */}
+      {isResuming && (
+        <div className="bg-gradient-to-r from-math-green/20 to-teal-500/20 border border-math-green/50 rounded-xl p-4">
+          <div className="flex items-center gap-3">
+            <RotateCcw className="w-5 h-5 text-math-green" />
+            <div>
+              <p className="font-medium text-math-green">Resuming Previous Generation</p>
+              <p className="text-sm text-gray-400">
+                Your previous generation will continue from where it stopped. Completed sections will be reused.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Generate Button */}
       <div className="flex justify-end">
         <button
           onClick={handleGenerate}
           disabled={isGenerating}
-          className="flex items-center gap-2 px-8 py-4 bg-gradient-to-r from-math-blue to-math-purple 
+          className={`flex items-center gap-2 px-8 py-4 
+                     ${isResuming 
+                       ? 'bg-gradient-to-r from-math-green to-teal-500' 
+                       : 'bg-gradient-to-r from-math-blue to-math-purple'
+                     }
                      text-white rounded-xl font-semibold text-lg hover:opacity-90 transition-opacity
-                     disabled:opacity-50 disabled:cursor-not-allowed"
+                     disabled:opacity-50 disabled:cursor-not-allowed`}
         >
           {isGenerating ? (
             <>
               <Loader2 className="w-5 h-5 animate-spin" />
-              Starting Generation...
+              {isResuming ? 'Resuming...' : 'Starting Generation...'}
+            </>
+          ) : isResuming ? (
+            <>
+              <RotateCcw className="w-5 h-5" />
+              Resume Generation
             </>
           ) : (
             <>

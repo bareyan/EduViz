@@ -1,0 +1,45 @@
+{
+  "id": "8ea50233-d22f-4b7a-9878-936a8ff0613c",
+  "status": "completed",
+  "progress": 100,
+  "message": "Generated 1 video(s) successfully!",
+  "result": [
+    {
+      "video_id": "8ea50233-d22f-4b7a-9878-936a8ff0613c",
+      "title": "Fondements : Mesure de Lebesgue, Int\u00e9gration et Lois de Probabilit\u00e9",
+      "duration": 342.168,
+      "chapters": [
+        {
+          "title": "La Mesure de Lebesgue : D\u00e9finition et Construction",
+          "start_time": 0,
+          "duration": 89.304
+        },
+        {
+          "title": "L'Int\u00e9grale de Lebesgue : Une Nouvelle Th\u00e9orie de l'Int\u00e9gration",
+          "start_time": 89.304,
+          "duration": 61.344
+        },
+        {
+          "title": "Classification des Lois de Probabilit\u00e9",
+          "start_time": 150.648,
+          "duration": 63.72
+        },
+        {
+          "title": "La Formule de Transfert : Le Pont Th\u00e9orique",
+          "start_time": 214.368,
+          "duration": 55.007999999999996
+        },
+        {
+          "title": "Applications : Esp\u00e9rance, Variance et Fonction Muette",
+          "start_time": 269.376,
+          "duration": 72.792
+        }
+      ],
+      "download_url": "/outputs/8ea50233-d22f-4b7a-9878-936a8ff0613c/final_video.mp4",
+      "thumbnail_url": null
+    }
+  ],
+  "error": null,
+  "created_at": "2026-01-22T02:37:30.481760",
+  "updated_at": "2026-01-22T02:41:47.839982"
+}

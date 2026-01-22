@@ -167,3 +167,15 @@ class JobManager:
     def list_all_jobs(self) -> List[Dict[str, Any]]:
         """List all jobs as dictionaries (for API responses)"""
         return [job.to_dict() for job in self._jobs.values()]
+
+
+# Singleton instance - ensures all routes share the same job manager
+_job_manager_instance: Optional[JobManager] = None
+
+
+def get_job_manager() -> JobManager:
+    """Get the shared JobManager instance (singleton pattern)"""
+    global _job_manager_instance
+    if _job_manager_instance is None:
+        _job_manager_instance = JobManager()
+    return _job_manager_instance

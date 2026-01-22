@@ -75,6 +75,7 @@ export interface VoicesResponse {
   voices: Voice[]
   languages: Language[]
   current_language: string
+  default_voice: string
 }
 
 // API Functions
@@ -104,6 +105,9 @@ export async function generateVideos(params: {
   voice?: string
   video_mode?: 'comprehensive' | 'overview'
   language?: string
+  content_focus?: 'practice' | 'theory' | 'as_document'
+  document_context?: 'standalone' | 'series' | 'auto'
+  resume_job_id?: string  // If provided, resume this job instead of creating a new one
 }): Promise<JobResponse> {
   const response = await api.post('/generate', params)
   return response.data
@@ -111,6 +115,21 @@ export async function generateVideos(params: {
 
 export async function getJobStatus(jobId: string): Promise<JobResponse> {
   const response = await api.get(`/job/${jobId}`)
+  return response.data
+}
+
+// Resume info for a job
+export interface ResumeInfo {
+  job_id: string
+  has_script: boolean
+  total_sections: number
+  completed_sections: number
+  has_final_video: boolean
+  can_resume: boolean
+}
+
+export async function getResumeInfo(jobId: string): Promise<ResumeInfo> {
+  const response = await api.get(`/job/${jobId}/resume-info`)
   return response.data
 }
 
@@ -244,16 +263,11 @@ export const AVAILABLE_LANGUAGES = [
   { code: 'nl', name: 'Dutch' },
 ]
 
-// Multilingual voices for translation
+// Multilingual voices for translation (simplified)
 export const MULTILINGUAL_VOICES = [
-  { id: 'en-US-AvaMultilingualNeural', name: 'Ava (Multilingual)', gender: 'female' },
-  { id: 'en-US-AndrewMultilingualNeural', name: 'Andrew (Multilingual)', gender: 'male' },
-  { id: 'en-US-BrianMultilingualNeural', name: 'Brian (Multilingual)', gender: 'male' },
   { id: 'en-US-EmmaMultilingualNeural', name: 'Emma (Multilingual)', gender: 'female' },
-  { id: 'de-DE-FlorianMultilingualNeural', name: 'Florian (Multilingual DE)', gender: 'male' },
-  { id: 'de-DE-SeraphinaMultilingualNeural', name: 'Seraphina (Multilingual DE)', gender: 'female' },
-  { id: 'fr-FR-RemyMultilingualNeural', name: 'Rémy (Multilingual FR)', gender: 'male' },
-  { id: 'fr-FR-VivienneMultilingualNeural', name: 'Vivienne (Multilingual FR)', gender: 'female' },
+  { id: 'fr-FR-VivienneMultilingualNeural', name: 'Vivienne (Multilingual)', gender: 'female' },
+  { id: 'en-US-BrianMultilingualNeural', name: 'Brian (Multilingual)', gender: 'male' },
 ]
 
 export default api

@@ -34,13 +34,13 @@ class VisualQualityController:
     """
     
     # Gemini Flash Lite for fast, cheap vision analysis
-    DEFAULT_MODEL = "gemini-2.0-flash-lite"
+    DEFAULT_MODEL = "gemini-flash-lite-latest"
     
     # Video processing settings
     TARGET_HEIGHT = 480  # 480p
     TARGET_FPS = 1  # 1 frame per second for analysis
     
-    MAX_QC_ITERATIONS = 2  # Maximum times to retry fixing visual issues
+    MAX_QC_ITERATIONS = 3  # Maximum times to retry fixing visual issues
     
     # Pricing for gemini-2.0-flash-lite (per 1M tokens)
     PRICING = {
@@ -53,53 +53,69 @@ class VisualQualityController:
 
 Your task is to analyze videos and detect CRITICAL VISUAL RENDERING ERRORS that affect readability and understanding.
 
-## ERRORS TO DETECT (Be STRICT and THOROUGH):
+## CRITICAL: ANIMATION-AWARE ANALYSIS
+
+Manim videos contain ANIMATIONS. Objects fade in/out, move, transform, and transition constantly.
+You MUST distinguish between:
+
+1. **TRANSIENT issues** (animation artifacts - IGNORE THESE):
+   - Issues visible for only 1-2 frames during a transition
+   - Partial overlaps that immediately resolve as animation continues
+   - Elements briefly at screen edge during movement
+   - Temporary visual states during morphing/transforming animations
+   
+2. **PERSISTENT issues** (real problems - REPORT THESE):
+   - Issues that remain visible for 2+ seconds in a STATIC state
+   - Overlaps or overflow that persist AFTER an animation completes
+   - Elements that stay in a broken state (not mid-animation)
+   - Problems visible when the scene is "settled" (nothing actively animating)
+
+## ERRORS TO DETECT (Only if PERSISTENT for 2+ seconds):
 
 ### 1. TEXT/EQUATION OVERFLOW (CRITICAL)
 - Text or equations extending beyond the visible frame edges (left, right, top, bottom)
 - Content cut off or partially hidden at screen boundaries
 - Elements positioned too close to edges with risk of clipping
+- **Only report if the overflow persists after animation settles**
 
 ### 2. ELEMENT OVERLAPS (CRITICAL)
 - Text overlapping other text (making content unreadable)
 - Equations overlapping explanatory text
 - Shapes or diagrams covering text content
-- Bounding boxes or highlights overlapping unrelated content
-- Multiple elements stacked in a confusing manner
+- **Only report if overlap persists in a static state, not during transitions**
 
 ### 3. RENDERING FAILURES
 - Missing LaTeX symbols (showing as boxes or question marks)
 - Corrupted or glitched visual elements
 - Text not properly rendered (boxes instead of characters)
-- Broken or malformed mathematical notation
+- **These are usually persistent - report if visible at any point**
 
 ### 4. LAYOUT ISSUES
-- Text too close together (inadequate spacing)
-- Elements not properly aligned when they should be
-- Inconsistent margins or spacing
-- Wrong bounding boxes (highlighting wrong elements)
-- Boxes not properly containing their target content
+- Text too close together (inadequate spacing) in the final position
+- Elements not properly aligned in their final positions
+- **Only report if visible after animation completes**
 
 ### 5. READABILITY PROBLEMS
 - Text too small to read clearly
-- Poor contrast (light text on light background or vice versa)
-- Overlapping animations creating visual confusion
+- Poor contrast in the final rendered state
 
 ## WHAT TO IGNORE (NOT ERRORS):
 - Smooth animations and transitions (fading, morphing, moving)
 - Elements animating in/out (partial opacity during transition)
+- Temporary overlaps during animation that resolve immediately
+- Brief edge proximity during movement animations
 - Dark/black backgrounds (this is the standard Manim style)
 - Empty frames at the very start or end
 - Motion blur during fast animations
 - Artistic style choices (colors, fonts)
+- **Any issue that appears for only 1 frame then disappears**
 
 ## ANALYSIS APPROACH:
 1. Watch the entire video carefully
-2. Note the timestamp (in seconds) when each error occurs
-3. Describe the error location specifically (e.g., "top-right corner", "center of screen")
-4. Provide a concrete, actionable description of what's wrong
-5. Be STRICT - if something looks wrong, report it
-6. Be SPECIFIC - vague descriptions are not helpful"""
+2. For each potential issue, check if it PERSISTS for at least 2 seconds
+3. If an issue appears during animation but resolves when animation ends, IGNORE IT
+4. Only report issues that remain visible in a "settled" state
+5. Include the duration the issue is visible (start_second to end_second)"""
 
     def __init__(self, model: str = None):
         """Initialize the visual QC service
@@ -145,18 +161,30 @@ Your task is to analyze videos and detect CRITICAL VISUAL RENDERING ERRORS that 
                 properties={
                     "errors_detected": genai.types.Schema(
                         type=genai.types.Type.BOOLEAN,
-                        description="True if any visual errors were detected, False if video is clean"
+                        description="True if any PERSISTENT visual errors were detected (lasting 2+ seconds in static state), False if video is clean or only has transient animation artifacts"
                     ),
                     "error_descriptions": genai.types.Schema(
                         type=genai.types.Type.ARRAY,
-                        description="List of detected errors with timestamps and descriptions",
+                        description="List of PERSISTENT errors only (ignore transient animation artifacts)",
                         items=genai.types.Schema(
                             type=genai.types.Type.OBJECT,
-                            required=["second", "location", "error_type", "description"],
+                            required=["start_second", "end_second", "duration_seconds", "is_during_animation", "location", "error_type", "description"],
                             properties={
-                                "second": genai.types.Schema(
+                                "start_second": genai.types.Schema(
                                     type=genai.types.Type.NUMBER,
-                                    description="Timestamp in seconds when the error is visible"
+                                    description="Timestamp in seconds when the error FIRST becomes visible"
+                                ),
+                                "end_second": genai.types.Schema(
+                                    type=genai.types.Type.NUMBER,
+                                    description="Timestamp in seconds when the error is no longer visible (or video ends)"
+                                ),
+                                "duration_seconds": genai.types.Schema(
+                                    type=genai.types.Type.NUMBER,
+                                    description="How long the error persists (end_second - start_second). Must be >= 2 seconds to be reported."
+                                ),
+                                "is_during_animation": genai.types.Schema(
+                                    type=genai.types.Type.BOOLEAN,
+                                    description="True if this issue only appears during active animation/transition and resolves when animation ends. Such issues should NOT be reported."
                                 ),
                                 "location": genai.types.Schema(
                                     type=genai.types.Type.STRING,
@@ -168,7 +196,7 @@ Your task is to analyze videos and detect CRITICAL VISUAL RENDERING ERRORS that 
                                 ),
                                 "description": genai.types.Schema(
                                     type=genai.types.Type.STRING,
-                                    description="Specific, concrete description of the error and what element is affected"
+                                    description="Specific, concrete description of the PERSISTENT error. Mention that it persists in a static state."
                                 )
                             }
                         )
@@ -458,7 +486,7 @@ Your task is to analyze videos and detect CRITICAL VISUAL RENDERING ERRORS that 
             segment_context = "\n".join(segment_lines)
         
         # Build the analysis prompt
-        user_prompt = f"""Analyze this Manim educational animation video for VISUAL ERRORS.
+        user_prompt = f"""Analyze this Manim educational animation video for PERSISTENT VISUAL ERRORS.
 
 VIDEO CONTEXT:
 - Section Title: "{section_title}"
@@ -468,18 +496,36 @@ VIDEO CONTEXT:
 NARRATION TIMELINE (what should be shown when):
 {segment_context if segment_context else full_narration[:500]}
 
-ANALYSIS INSTRUCTIONS:
-1. Watch the ENTIRE video carefully from start to finish
-2. Look for ANY visual rendering errors throughout the video
-3. Note the EXACT timestamp (in seconds) when each error is visible
-4. Describe the SPECIFIC location on screen and what element is affected
-5. Be STRICT - report anything that looks wrong
-6. Be THOROUGH - check every frame transition
+## CRITICAL: ANIMATION-AWARE ANALYSIS
 
-REMEMBER:
-- Animations (fading, morphing, moving) are NOT errors
-- Dark/black backgrounds are the standard style
-- Focus on overlaps, overflow, rendering failures, and layout issues"""
+This is an ANIMATED video. Objects constantly fade in/out, move, transform, and transition.
+
+**ONLY REPORT ERRORS THAT:**
+1. Persist for AT LEAST 2 SECONDS in a STATIC state (not during animation)
+2. Remain visible AFTER the animation/transition completes
+3. Represent a final rendered state that is broken
+
+**DO NOT REPORT:**
+- Issues visible for only 1 frame during a transition
+- Temporary overlaps that resolve as animation continues
+- Brief edge proximity during movement
+- Any issue that disappears when the animation settles
+
+## ANALYSIS INSTRUCTIONS:
+1. Watch the ENTIRE video carefully
+2. When you see a potential issue, WAIT to see if it persists
+3. If the issue resolves within 1-2 seconds (during animation), IGNORE IT
+4. If the issue remains for 2+ seconds in a STATIC state, REPORT IT
+5. Note BOTH the start_second AND end_second for each error
+6. Set is_during_animation=true for any issue that only appears during transitions (these should NOT be in your final list)
+
+## EXAMPLES:
+- Text overlaps another element during FadeIn but separates when animation ends → IGNORE (transient)
+- Text overlaps another element and stays overlapped for 5 seconds → REPORT (persistent)
+- Equation briefly touches screen edge during Transform animation → IGNORE (transient)  
+- Equation is cut off at screen edge for the rest of the video → REPORT (persistent)
+
+REMEMBER: When in doubt, check if the issue persists in a "settled" state. Only report PERSISTENT issues."""
 
         try:
             # Read video file as bytes
@@ -546,37 +592,69 @@ REMEMBER:
             
             if errors_detected and error_descriptions:
                 error_reports = []
+                filtered_count = 0
                 
                 # Get the original video path for frame extraction
                 original_video = section_info.get("_original_video_path", video_path)
                 
+                # Minimum duration threshold for persistent errors (in seconds)
+                MIN_PERSISTENT_DURATION = 1.5  # Slightly under 2s to account for frame timing
+                
                 for error in error_descriptions:
-                    timestamp = error.get("second", 0)
+                    # Get timing information from new schema
+                    start_second = error.get("start_second", error.get("second", 0))
+                    end_second = error.get("end_second", start_second + 1)
+                    duration = error.get("duration_seconds", end_second - start_second)
+                    is_during_animation = error.get("is_during_animation", False)
+                    
                     location = error.get("location", "unknown")
                     error_type = error.get("error_type", "unknown")
                     description = error.get("description", "No description")
                     
-                    error_str = f"At {timestamp:.1f}s [{location}] ({error_type}): {description}"
+                    # Filter out transient/animation issues
+                    if is_during_animation:
+                        print(f"[VisualQC] Filtered (animation): {description[:60]}...")
+                        filtered_count += 1
+                        continue
+                    
+                    if duration < MIN_PERSISTENT_DURATION:
+                        print(f"[VisualQC] Filtered (transient, {duration:.1f}s < {MIN_PERSISTENT_DURATION}s): {description[:60]}...")
+                        filtered_count += 1
+                        continue
+                    
+                    # This is a persistent error - report it
+                    error_str = f"At {start_second:.1f}s-{end_second:.1f}s ({duration:.1f}s) [{location}] ({error_type}): {description}"
                     error_reports.append(error_str)
                     
-                    # Extract and save error frame for debugging
+                    # Extract and save error frame for debugging (at midpoint of error)
+                    frame_timestamp = (start_second + end_second) / 2
                     self._extract_error_frame(
                         original_video,
-                        timestamp,
+                        frame_timestamp,
                         section_title,
                         f"[{location}] {error_type}: {description}",
                         qc_iteration
                     )
                 
-                full_report = "\n".join(error_reports)
-                print(f"[VisualQC] ⚠️  Found {len(error_reports)} issue(s):")
-                for report in error_reports:
-                    print(f"[VisualQC]    {report}")
+                if filtered_count > 0:
+                    print(f"[VisualQC] Filtered out {filtered_count} transient/animation issue(s)")
                 
-                return {
-                    "status": "issues",
-                    "error_report": full_report
-                }
+                if error_reports:
+                    full_report = "\n".join(error_reports)
+                    print(f"[VisualQC] ⚠️  Found {len(error_reports)} PERSISTENT issue(s):")
+                    for report in error_reports:
+                        print(f"[VisualQC]    {report}")
+                    
+                    return {
+                        "status": "issues",
+                        "error_report": full_report
+                    }
+                else:
+                    print(f"[VisualQC] ✅ QC PASSED - All detected issues were transient (animation artifacts)")
+                    return {
+                        "status": "ok",
+                        "error_report": ""
+                    }
             else:
                 print(f"[VisualQC] ✅ QC PASSED - No visual errors detected")
                 return {

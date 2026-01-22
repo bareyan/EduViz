@@ -1,0 +1,45 @@
+{
+  "id": "c1555a35-405f-4f25-9298-e6a3a9c61453",
+  "status": "completed",
+  "progress": 100,
+  "message": "Video generation complete!",
+  "result": [
+    {
+      "video_id": "c1555a35-405f-4f25-9298-e6a3a9c61453",
+      "title": "Introduction aux Fonctions Caract\u00e9ristiques : D\u00e9finitions et Propri\u00e9t\u00e9s Fondamentales",
+      "duration": 850,
+      "chapters": [
+        {
+          "title": "D\u00e9finition et Intuition",
+          "start_time": 0,
+          "duration": 150
+        },
+        {
+          "title": "Les 4 Propri\u00e9t\u00e9s Fondamentales",
+          "start_time": 150,
+          "duration": 180
+        },
+        {
+          "title": "Transformations Affines",
+          "start_time": 330,
+          "duration": 100
+        },
+        {
+          "title": "Exemples et Cas de la Loi Normale",
+          "start_time": 430,
+          "duration": 220
+        },
+        {
+          "title": "Th\u00e9or\u00e8me d'Injectivit\u00e9 et Conclusion",
+          "start_time": 650,
+          "duration": 200
+        }
+      ],
+      "download_url": "/outputs/c1555a35-405f-4f25-9298-e6a3a9c61453/final_video.mp4",
+      "thumbnail_url": null
+    }
+  ],
+  "error": null,
+  "created_at": "2026-01-22T03:12:56.945583",
+  "updated_at": "2026-01-22T03:17:20.385783"
+}

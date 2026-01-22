@@ -73,7 +73,7 @@ STRONG_MODEL = "gemini-3-flash-preview"
 # Visual QC settings
 QC_NUM_FRAMES = 3  # Number of frames to extract
 QC_FRAME_STRATEGY = "middle_heavy"  # or "even" for uniform distribution
-MAX_QC_ITERATIONS = 1  # How many times to retry QC fixes
+MAX_QC_ITERATIONS = 3  # How many times to retry QC fixes (increased for reliability)
 ```
 
 ### To Reduce Costs Further:
@@ -83,7 +83,7 @@ MAX_QC_ITERATIONS = 1  # How many times to retry QC fixes
 
 ### To Increase Quality:
 - Set `QC_NUM_FRAMES = 5` with `strategy="even"` (back to original)
-- Set `MAX_QC_ITERATIONS = 2` (catch more edge cases)
+- Set `MAX_QC_ITERATIONS = 4` (catch more edge cases, higher cost)
 - Use `gemini-3-pro-preview` for strong fallback (expensive but powerful)
 
 ## Best Practices

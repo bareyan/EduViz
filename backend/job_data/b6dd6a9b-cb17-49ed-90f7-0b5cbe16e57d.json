@@ -1,0 +1,45 @@
+{
+  "id": "b6dd6a9b-cb17-49ed-90f7-0b5cbe16e57d",
+  "status": "completed",
+  "progress": 100,
+  "message": "Generated 1 video(s) successfully!",
+  "result": [
+    {
+      "video_id": "b6dd6a9b-cb17-49ed-90f7-0b5cbe16e57d",
+      "title": "De la Mesure de Lebesgue aux Calculs de Densit\u00e9 : Guide Pratique",
+      "duration": 363.072,
+      "chapters": [
+        {
+          "title": "La Mesure de Lebesgue : Mesurer le R\u00e9el",
+          "start_time": 0,
+          "duration": 86.448
+        },
+        {
+          "title": "La Loi Uniforme sur [0,1]",
+          "start_time": 86.448,
+          "duration": 54.264
+        },
+        {
+          "title": "Lois \u00e0 Densit\u00e9 et Classification",
+          "start_time": 140.712,
+          "duration": 78.264
+        },
+        {
+          "title": "L'Int\u00e9grale de Lebesgue et la Formule de Transfert",
+          "start_time": 218.976,
+          "duration": 78.144
+        },
+        {
+          "title": "Pratique : La M\u00e9thode de la Fonction Muette",
+          "start_time": 297.12,
+          "duration": 65.952
+        }
+      ],
+      "download_url": "/outputs/b6dd6a9b-cb17-49ed-90f7-0b5cbe16e57d/final_video.mp4",
+      "thumbnail_url": null
+    }
+  ],
+  "error": null,
+  "created_at": "2026-01-22T01:25:48.743140",
+  "updated_at": "2026-01-22T01:30:50.740840"
+}

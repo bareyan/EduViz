@@ -1,0 +1,10 @@
+{
+  "id": "3b77d0fb-9b53-4e3f-b21a-92a62ee0f3df",
+  "status": "creating_animations",
+  "progress": 10.0,
+  "message": "Processing 17 sections in parallel (max 8 concurrent)...",
+  "result": null,
+  "error": null,
+  "created_at": "2026-01-22T04:14:34.734963",
+  "updated_at": "2026-01-22T04:23:46.292408"
+}

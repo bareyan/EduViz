@@ -10,7 +10,8 @@ import {
   RefreshCw,
   Globe,
   Languages,
-  Plus
+  Plus,
+  RotateCcw
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { 
@@ -23,7 +24,9 @@ import {
   createTranslation,
   TranslationsResponse,
   AVAILABLE_LANGUAGES,
-  MULTILINGUAL_VOICES
+  MULTILINGUAL_VOICES,
+  getResumeInfo,
+  ResumeInfo
 } from '../api'
 
 export default function ResultsPage() {
@@ -40,6 +43,10 @@ export default function ResultsPage() {
   const [selectedLanguage, setSelectedLanguage] = useState('')
   const [selectedVoice, setSelectedVoice] = useState(MULTILINGUAL_VOICES[0].id)
   const [isTranslating, setIsTranslating] = useState(false)
+  
+  // Resume state
+  const [resumeInfo, setResumeInfo] = useState<ResumeInfo | null>(null)
+  const [isResuming, setIsResuming] = useState(false)
 
   useEffect(() => {
     if (!jobId) return
@@ -60,6 +67,11 @@ export default function ResultsPage() {
           setSelectedVideo(status.result[0])
           // Fetch translations when job is complete
           fetchTranslations()
+        }
+        
+        // Fetch resume info when job fails
+        if (status.status === 'failed') {
+          fetchResumeInfo()
         }
 
         // Continue polling if not completed or failed
@@ -82,6 +94,17 @@ export default function ResultsPage() {
         }
       } catch (err) {
         console.error('Failed to fetch translations:', err)
+      }
+    }
+    
+    const fetchResumeInfo = async () => {
+      try {
+        const info = await getResumeInfo(jobId)
+        if (isMounted) {
+          setResumeInfo(info)
+        }
+      } catch (err) {
+        console.error('Failed to fetch resume info:', err)
       }
     }
 
@@ -247,6 +270,35 @@ export default function ResultsPage() {
 
   // Failed View
   if (job.status === 'failed') {
+    // Handle resume
+    const handleResume = async () => {
+      if (!jobId) return
+      
+      setIsResuming(true)
+      try {
+        // We need the original generation params - for now, navigate to a resume flow
+        // or store them in the job data. For simplicity, we'll pass via URL
+        const analysis = JSON.parse(sessionStorage.getItem('analysis') || 'null')
+        const selectedTopics = JSON.parse(sessionStorage.getItem('selectedTopics') || '[]')
+        
+        if (!analysis || selectedTopics.length === 0) {
+          // If we don't have the original analysis, we can't resume properly
+          // Show a message and offer to go to gallery
+          toast.error('Original generation data not found. Please start a new generation from the Gallery.')
+          return
+        }
+        
+        // Store the resume job ID and navigate to generation page
+        sessionStorage.setItem('resumeJobId', jobId)
+        navigate(`/generate/${analysis.analysis_id}`)
+      } catch (err) {
+        console.error('Failed to resume:', err)
+        toast.error('Failed to resume generation')
+      } finally {
+        setIsResuming(false)
+      }
+    }
+    
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
         <XCircle className="w-16 h-16 text-red-500" />
@@ -254,6 +306,21 @@ export default function ResultsPage() {
           <h2 className="text-2xl font-bold mb-2">Generation Failed</h2>
           <p className="text-gray-400">{job.message}</p>
         </div>
+        
+        {/* Resume Info - show progress if available */}
+        {resumeInfo && resumeInfo.can_resume && (
+          <div className="bg-gray-900/50 border border-gray-800 rounded-xl p-4 text-center max-w-md">
+            <p className="text-sm text-gray-300 mb-2">
+              <span className="text-math-blue font-medium">Progress saved!</span> You can resume from where it stopped.
+            </p>
+            <div className="text-xs text-gray-500 space-y-1">
+              <p>✓ Script generated ({resumeInfo.total_sections} sections)</p>
+              <p>✓ Completed {resumeInfo.completed_sections}/{resumeInfo.total_sections} sections</p>
+              <p>○ {resumeInfo.total_sections - resumeInfo.completed_sections} sections remaining</p>
+            </div>
+          </div>
+        )}
+        
         <div className="flex gap-4">
           <button
             onClick={() => navigate('/')}
@@ -263,14 +330,31 @@ export default function ResultsPage() {
             <Home className="w-5 h-5" />
             Go Home
           </button>
-          <button
-            onClick={() => window.location.reload()}
-            className="flex items-center gap-2 px-6 py-3 bg-math-blue text-white rounded-lg 
-                       hover:bg-math-blue/80 transition-colors"
-          >
-            <RefreshCw className="w-5 h-5" />
-            Try Again
-          </button>
+          
+          {resumeInfo?.can_resume ? (
+            <button
+              onClick={handleResume}
+              disabled={isResuming}
+              className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-math-green to-teal-500 
+                         text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+              {isResuming ? (
+                <Loader2 className="w-5 h-5 animate-spin" />
+              ) : (
+                <RotateCcw className="w-5 h-5" />
+              )}
+              Resume ({resumeInfo.total_sections - resumeInfo.completed_sections} sections left)
+            </button>
+          ) : (
+            <button
+              onClick={() => window.location.reload()}
+              className="flex items-center gap-2 px-6 py-3 bg-math-blue text-white rounded-lg 
+                         hover:bg-math-blue/80 transition-colors"
+            >
+              <RefreshCw className="w-5 h-5" />
+              Try Again
+            </button>
+          )}
         </div>
       </div>
     )

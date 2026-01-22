@@ -15,58 +15,44 @@ except ImportError:
 class TTSEngine:
     """Text-to-Speech engine using Microsoft Edge TTS"""
     
-    # Available voices organized by language
+    # Simplified voice selection - only the best voices for each language
     VOICES_BY_LANGUAGE = {
         "en": {
             "name": "English",
             "voices": {
-                "en-US-GuyNeural": {"name": "Guy (US)", "gender": "male"},
-                "en-US-JennyNeural": {"name": "Jenny (US)", "gender": "female"},
                 "en-GB-RyanNeural": {"name": "Ryan (UK)", "gender": "male"},
                 "en-GB-SoniaNeural": {"name": "Sonia (UK)", "gender": "female"},
-                "en-AU-WilliamNeural": {"name": "William (AU)", "gender": "male"},
-                "en-AU-NatashaNeural": {"name": "Natasha (AU)", "gender": "female"},
-                "en-IN-PrabhatNeural": {"name": "Prabhat (India)", "gender": "male"},
-                "en-IN-NeerjaNeural": {"name": "Neerja (India)", "gender": "female"},
-            }
+            },
+            "default": "en-GB-RyanNeural"
         },
         "fr": {
             "name": "French",
             "voices": {
-                "fr-FR-HenriNeural": {"name": "Henri (France)", "gender": "male"},
-                "fr-FR-DeniseNeural": {"name": "Denise (France)", "gender": "female"},
-                "fr-CA-AntoineNeural": {"name": "Antoine (Canada)", "gender": "male"},
-                "fr-CA-SylvieNeural": {"name": "Sylvie (Canada)", "gender": "female"},
-                "fr-BE-GerardNeural": {"name": "Gérard (Belgium)", "gender": "male"},
                 "fr-CH-FabriceNeural": {"name": "Fabrice (Swiss)", "gender": "male"},
-            }
+                "fr-FR-DeniseNeural": {"name": "Denise (France)", "gender": "female"},
+            },
+            "default": "fr-CH-FabriceNeural"
         },
-        # Armenian - Edge TTS doesn't have native Armenian voices
-        # Using multilingual voice as fallback (can read Armenian script)
+        # Armenian - Using multilingual voices
         "hy": {
             "name": "Armenian",
             "voices": {
-                # Using multilingual voices that can attempt Armenian text
-                "en-US-AvaMultilingualNeural": {"name": "Ava (Multilingual)", "gender": "female"},
-                "en-US-AndrewMultilingualNeural": {"name": "Andrew (Multilingual)", "gender": "male"},
-                "en-US-BrianMultilingualNeural": {"name": "Brian (Multilingual)", "gender": "male"},
                 "en-US-EmmaMultilingualNeural": {"name": "Emma (Multilingual)", "gender": "female"},
+                "fr-FR-VivienneMultilingualNeural": {"name": "Vivienne (Multilingual)", "gender": "female"},
+                "en-US-BrianMultilingualNeural": {"name": "Brian (Multilingual)", "gender": "male"},
             },
+            "default": "en-US-EmmaMultilingualNeural",
             "note": "Armenian not natively supported - using multilingual voices"
         },
-        # Multilingual voices - for auto language detection or mixed content
+        # Multilingual voices - for auto language detection or any other languages
         "auto": {
             "name": "Multilingual (Auto-detect)",
             "voices": {
-                "en-US-AvaMultilingualNeural": {"name": "Ava (Multilingual)", "gender": "female"},
-                "en-US-AndrewMultilingualNeural": {"name": "Andrew (Multilingual)", "gender": "male"},
-                "en-US-BrianMultilingualNeural": {"name": "Brian (Multilingual)", "gender": "male"},
                 "en-US-EmmaMultilingualNeural": {"name": "Emma (Multilingual)", "gender": "female"},
-                "de-DE-FlorianMultilingualNeural": {"name": "Florian (Multilingual DE)", "gender": "male"},
-                "de-DE-SeraphinaMultilingualNeural": {"name": "Seraphina (Multilingual DE)", "gender": "female"},
-                "fr-FR-RemyMultilingualNeural": {"name": "Rémy (Multilingual FR)", "gender": "male"},
-                "fr-FR-VivienneMultilingualNeural": {"name": "Vivienne (Multilingual FR)", "gender": "female"},
+                "fr-FR-VivienneMultilingualNeural": {"name": "Vivienne (Multilingual)", "gender": "female"},
+                "en-US-BrianMultilingualNeural": {"name": "Brian (Multilingual)", "gender": "male"},
             },
+            "default": "en-US-EmmaMultilingualNeural",
             "note": "Multilingual voices that can speak multiple languages naturally"
         }
     }
@@ -78,8 +64,17 @@ class TTSEngine:
         for voice_id, info in lang_data["voices"].items()
     }
     
-    DEFAULT_VOICE = "en-US-GuyNeural"
+    DEFAULT_VOICE = "en-GB-RyanNeural"
     DEFAULT_LANGUAGE = "en"
+    
+    @classmethod
+    def get_default_voice_for_language(cls, language: str) -> str:
+        """Get the default voice for a specific language"""
+        lang_data = cls.VOICES_BY_LANGUAGE.get(language)
+        if lang_data and "default" in lang_data:
+            return lang_data["default"]
+        # Fallback to multilingual for unknown languages
+        return cls.VOICES_BY_LANGUAGE["auto"]["default"]
     
     def __init__(self):
         if not edge_tts:

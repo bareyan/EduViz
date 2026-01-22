@@ -1,15 +1,14 @@
 """
-Material Analyzer - Analyzes PDFs and images for math content
-Uses AI to extract structure, equations, and suggest video topics
+Material Analyzer V2 - Uses Gemini to analyze PDFs and images for math content
+Generates structured video topic suggestions
 """
 
 import os
-import re
 import json
 import base64
-from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
 import asyncio
+from typing import List, Dict, Any, Optional
+from pathlib import Path
 
 # PDF processing
 try:
@@ -23,7 +22,7 @@ try:
 except ImportError:
     Image = None
 
-# Gemini for analysis (optional, falls back to rule-based)
+# Gemini
 try:
     from google import genai
     from google.genai import types
@@ -32,382 +31,336 @@ except ImportError:
     types = None
 
 
-@dataclass
-class MathElement:
-    """Represents a detected mathematical element"""
-    type: str  # equation, theorem, definition, proof, example
-    content: str
-    page: int
-    confidence: float
-
-
-@dataclass 
-class TopicSuggestion:
-    """Suggested video topic"""
-    index: int
-    title: str
-    description: str
-    estimated_duration: int  # minutes
-    complexity: str
-    subtopics: List[str]
-    content_refs: List[int]  # Page numbers
-
-
 class MaterialAnalyzer:
-    """Analyzes educational materials and suggests video topics"""
+    """Analyzes educational materials using Gemini AI"""
+    
+    MODEL = "gemini-flash-lite-latest"  # Fast lite model for analysis
+    
+    # Threshold for "massive" documents that warrant multiple videos
+    MASSIVE_DOC_PAGES = 15
+    MASSIVE_DOC_CHAPTERS = 5
     
     def __init__(self):
-        self.gemini_client = None
-        if genai and os.getenv("GEMINI_API_KEY"):
-            self.gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        self.client = None
+        api_key = os.getenv("GEMINI_API_KEY")
+        if genai and api_key:
+            self.client = genai.Client(api_key=api_key)
+        else:
+            raise ValueError("GEMINI_API_KEY environment variable is required")
     
     async def analyze(self, file_path: str, file_id: str) -> Dict[str, Any]:
         """Main analysis entry point"""
-        
         file_ext = os.path.splitext(file_path)[1].lower()
         
         if file_ext == ".pdf":
             return await self._analyze_pdf(file_path, file_id)
-        elif file_ext in [".png", ".jpg", ".jpeg", ".webp"]:
+        elif file_ext in [".png", ".jpg", ".jpeg", ".webp", ".gif"]:
             return await self._analyze_image(file_path, file_id)
+        elif file_ext in [".tex", ".txt"]:
+            return await self._analyze_text(file_path, file_id)
         else:
             raise ValueError(f"Unsupported file type: {file_ext}")
     
     async def _analyze_pdf(self, file_path: str, file_id: str) -> Dict[str, Any]:
-        """Analyze a PDF document"""
-        
+        """Analyze a PDF document using Gemini"""
         if not fitz:
             raise ImportError("PyMuPDF (fitz) is required for PDF analysis")
         
+        # Extract text from PDF
         doc = fitz.open(file_path)
         total_pages = len(doc)
         
-        # Extract text and images from each page
         all_text = []
-        math_elements = []
-        
         for page_num in range(total_pages):
             page = doc[page_num]
             text = page.get_text()
-            all_text.append(text)
-            
-            # Detect math elements using patterns
-            elements = self._detect_math_elements(text, page_num + 1)
-            math_elements.extend(elements)
+            all_text.append(f"=== Page {page_num + 1} ===\n{text}")
         
         doc.close()
-        
-        # Combine all text for analysis
         full_text = "\n\n".join(all_text)
         
-        # Generate topic suggestions
-        topics = await self._generate_topic_suggestions(
-            full_text, 
-            math_elements,
-            total_pages,
-            "pdf"
-        )
-        
-        # Calculate estimated videos needed
-        total_duration = sum(t["estimated_duration"] for t in topics)
-        estimated_videos = max(1, (total_duration + 19) // 20)  # 20 min per video
+        # Use Gemini to analyze the content
+        analysis = await self._gemini_analyze(full_text, total_pages)
         
         return {
             "analysis_id": f"analysis_{file_id}",
             "file_id": file_id,
             "material_type": "pdf",
             "total_content_pages": total_pages,
-            "detected_math_elements": len(math_elements),
-            "suggested_topics": topics,
-            "estimated_total_videos": estimated_videos,
-            "summary": self._generate_summary(full_text, math_elements)
+            **analysis
+        }
+    
+    async def _analyze_text(self, file_path: str, file_id: str) -> Dict[str, Any]:
+        """Analyze a text file (.tex or .txt) using Gemini"""
+        
+        # Read the text file
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            full_text = f.read()
+        
+        # Estimate "pages" based on content length (roughly 3000 chars per page)
+        estimated_pages = max(1, len(full_text) // 3000)
+        
+        # Use Gemini to analyze the content
+        analysis = await self._gemini_analyze(full_text, estimated_pages)
+        
+        return {
+            "analysis_id": f"analysis_{file_id}",
+            "file_id": file_id,
+            "material_type": "text",
+            "total_content_pages": estimated_pages,
+            **analysis
         }
     
     async def _analyze_image(self, file_path: str, file_id: str) -> Dict[str, Any]:
-        """Analyze an image (single page of math content)"""
+        """Analyze an image using Gemini Vision"""
         
-        # For images, we'll use OCR or vision AI
-        extracted_text = await self._extract_text_from_image(file_path)
-        math_elements = self._detect_math_elements(extracted_text, 1)
+        # Read and encode image
+        with open(file_path, "rb") as f:
+            image_data = f.read()
         
-        topics = await self._generate_topic_suggestions(
-            extracted_text,
-            math_elements,
-            1,
-            "image"
-        )
+        # Use Gemini to analyze with vision
+        analysis = await self._gemini_analyze_image(image_data, file_path)
         
         return {
             "analysis_id": f"analysis_{file_id}",
             "file_id": file_id,
             "material_type": "image",
             "total_content_pages": 1,
-            "detected_math_elements": len(math_elements),
-            "suggested_topics": topics,
-            "estimated_total_videos": 1,
-            "summary": self._generate_summary(extracted_text, math_elements)
+            **analysis
         }
     
-    def _detect_math_elements(self, text: str, page: int) -> List[MathElement]:
-        """Detect mathematical elements in text using pattern matching"""
+    async def _gemini_analyze(self, text: str, total_pages: int) -> Dict[str, Any]:
+        """Use Gemini to analyze text content and suggest video topics"""
         
-        elements = []
+        # Determine if document is massive (warrants multiple videos)
+        is_massive = total_pages >= self.MASSIVE_DOC_PAGES
         
-        # Patterns for common math elements
-        patterns = {
-            "equation": [
-                r"(?:equation|formula)[\s:]+(.+?)(?:\n|$)",
-                r"(\$\$.+?\$\$)",
-                r"(\\\[.+?\\\])",
-                r"([a-zA-Z]\s*=\s*[^,\n]+)",
-            ],
-            "theorem": [
-                r"(?:theorem|lemma|proposition)[\s\d.]*[:\s]+(.+?)(?:\n\n|$)",
-            ],
-            "definition": [
-                r"(?:definition|def\.?)[\s\d.]*[:\s]+(.+?)(?:\n\n|$)",
-            ],
-            "proof": [
-                r"(?:proof)[:\s]+(.+?)(?:□|QED|\n\n|$)",
-            ],
-            "example": [
-                r"(?:example|ex\.?)[\s\d.]*[:\s]+(.+?)(?:\n\n|$)",
-            ],
-        }
-        
-        for elem_type, pattern_list in patterns.items():
-            for pattern in pattern_list:
-                matches = re.finditer(pattern, text, re.IGNORECASE | re.DOTALL)
-                for match in matches:
-                    elements.append(MathElement(
-                        type=elem_type,
-                        content=match.group(1) if match.lastindex else match.group(0),
-                        page=page,
-                        confidence=0.7
-                    ))
-        
-        return elements
-    
-    async def _extract_text_from_image(self, file_path: str) -> str:
-        """Extract text from an image using OCR or Vision AI"""
-        
-        # Try Gemini Vision if available
-        if self.gemini_client:
-            try:
-                import PIL.Image
-                image = PIL.Image.open(file_path)
-                
-                response = await asyncio.to_thread(
-                    self.gemini_client.models.generate_content,
-                    model="gemini-flash-lite-latest",
-                    contents=[
-                        "Extract all text and mathematical content from this image. Format equations in LaTeX where possible.",
-                        image
-                    ]
-                )
-                return response.text
-            except Exception as e:
-                print(f"Gemini Vision API failed: {e}")
-        
-        # Fallback: return placeholder
-        return "Mathematical content detected in image. Manual transcription may be needed."
-    
-    async def _generate_topic_suggestions(
-        self,
-        text: str,
-        math_elements: List[MathElement],
-        total_pages: int,
-        material_type: str
-    ) -> List[Dict[str, Any]]:
-        """Generate video topic suggestions based on content"""
-        
-        # Try AI-powered suggestion first
-        if self.gemini_client:
-            try:
-                return await self._ai_generate_topics(text, math_elements)
-            except Exception as e:
-                print(f"AI topic generation failed: {e}")
-        
-        # Fallback: rule-based topic generation
-        return self._rule_based_topics(text, math_elements, total_pages)
-    
-    async def _ai_generate_topics(
-        self,
-        text: str,
-        math_elements: List[MathElement]
-    ) -> List[Dict[str, Any]]:
-        """Use AI to generate topic suggestions"""
-        
-        # Prepare context about detected elements
-        elements_summary = "\n".join([
-            f"- {e.type}: {e.content[:100]}..." 
-            for e in math_elements[:20]
-        ])
-        
-        prompt = f"""Analyze this educational math material and suggest video topics.
-Each video should be max 20 minutes. Create a 3Blue1Brown style breakdown.
+        prompt = f"""You are an expert educator preparing comprehensive educational video content with animated visuals.
 
-Material excerpt (first 3000 chars):
-{text[:3000]}
+Analyze this content and determine the best video structure.
+IMPORTANT: Detect the SUBJECT AREA (math, computer science, physics, economics, biology, engineering, general) from the content.
 
-Detected math elements:
-{elements_summary}
+DOCUMENT INFO:
+- Total pages: {total_pages}
+- {"This is a LARGE document - consider splitting into logical chapter-based videos" if is_massive else "This is a standard-sized document - create ONE comprehensive video"}
 
-Return a JSON array of topics with this structure:
-[
-  {{
-    "index": 0,
-    "title": "Topic title",
-    "description": "Brief description of what the video will cover",
-    "estimated_duration": 10,  // minutes
-    "complexity": "beginner|intermediate|advanced",
-    "subtopics": ["subtopic1", "subtopic2"]
-  }}
-]
+CONTENT:
+{text[:20000]}
 
-Generate 2-5 focused topics. Make them engaging and educational.
-Return ONLY valid JSON, no markdown formatting."""
+{"LARGE DOCUMENT INSTRUCTIONS:" if is_massive else "STANDARD DOCUMENT INSTRUCTIONS:"}
+{'''Since this is a large document with multiple distinct chapters/sections:
+- Create separate video topics ONLY if there are clearly distinct chapters
+- Each video should cover ONE complete chapter thoroughly
+- Maximum 3-4 videos even for large documents
+- Each video should be 15-25 minutes (comprehensive)''' if is_massive else '''Create ONE comprehensive video that covers ALL the material:
+- The video should be thorough enough to REPLACE reading the document
+- Include all key concepts, proofs/algorithms, and examples
+- Target duration: 15-25 minutes for complete coverage
+- Show step-by-step explanations visually'''}
+
+VIDEO PHILOSOPHY:
+1. The video should show concepts VISUALLY - not just narrate them
+2. Sometimes let the content "speak for itself" without constant narration
+3. For derivations/algorithms: show step-by-step work
+4. Include visual demonstration sections
+5. Balance: 60% narrated content, 40% visual demonstrations
+
+CONTENT ADAPTATION (analyze and identify):
+- MATHEMATICS: Focus on equations, proofs, theorems, derivations
+- COMPUTER SCIENCE: Focus on algorithms, data structures, code, complexity
+- PHYSICS: Focus on phenomena, equations, experiments, applications
+- ECONOMICS: Focus on models, graphs, market dynamics, policies
+- BIOLOGY/CHEMISTRY: Focus on processes, structures, reactions
+- ENGINEERING: Focus on systems, designs, trade-offs
+- GENERAL: Focus on concepts, examples, analogies
+
+Respond with ONLY valid JSON (no markdown, no code blocks):
+{{
+    "summary": "Comprehensive summary of the material",
+    "main_subject": "The primary topic",
+    "subject_area": "math|cs|physics|economics|biology|engineering|general",
+    "key_concepts": ["all", "major", "concepts", "covered"],
+    "detected_math_elements": {total_pages * 3},
+    "document_structure": "single_topic|multi_chapter",
+    "suggested_topics": [
+        {{
+            "index": 0,
+            "title": "[Descriptive Topic Name]",
+            "description": "Comprehensive video covering all material. Includes all key concepts, explanations, and examples.",
+            "estimated_duration": 20,
+            "complexity": "comprehensive",
+            "subject_area": "math|cs|physics|economics|biology|engineering|general",
+            "subtopics": ["all", "major", "sections"],
+            "prerequisites": ["required background"],
+            "visual_ideas": ["step-by-step explanations", "visualizations", "worked examples"]
+        }}
+    ],
+    "estimated_total_videos": 1
+}}
+
+{"If the document has 5+ clearly distinct chapters, you may suggest up to 3 separate videos. Otherwise, create ONE comprehensive video." if is_massive else "Create exactly ONE comprehensive video covering everything."}
+The goal is THOROUGH coverage - the video should contain ALL information from the source."""
 
         response = await asyncio.to_thread(
-            self.gemini_client.models.generate_content,
-            model="gemini-3-flash-preview",
+            self.client.models.generate_content,
+            model=self.MODEL,
             contents=prompt
         )
         
-        # Parse JSON from response
-        response_text = response.text.strip()
-        # Remove markdown code blocks if present
-        if response_text.startswith("```"):
-            response_text = re.sub(r'^```\w*\n?', '', response_text)
-            response_text = re.sub(r'\n?```$', '', response_text)
-        
-        result = json.loads(response_text)
-        topics = result.get("topics", result) if isinstance(result, dict) else result
-        
-        # Ensure proper format
-        formatted_topics = []
-        for i, topic in enumerate(topics):
-            formatted_topics.append({
-                "index": i,
-                "title": topic.get("title", f"Topic {i+1}"),
-                "description": topic.get("description", ""),
-                "estimated_duration": topic.get("estimated_duration", 10),
-                "complexity": topic.get("complexity", "intermediate"),
-                "subtopics": topic.get("subtopics", [])
-            })
-        
-        return formatted_topics
+        return self._parse_json_response(response.text)
     
-    def _rule_based_topics(
-        self,
-        text: str,
-        math_elements: List[MathElement],
-        total_pages: int
-    ) -> List[Dict[str, Any]]:
-        """Generate topics using rule-based analysis"""
+    async def _gemini_analyze_image(self, image_data: bytes, file_path: str) -> Dict[str, Any]:
+        """Use Gemini Vision to analyze an image"""
         
-        topics = []
+        # Determine mime type
+        ext = Path(file_path).suffix.lower()
+        mime_types = {
+            ".png": "image/png",
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".webp": "image/webp",
+            ".gif": "image/gif"
+        }
+        mime_type = mime_types.get(ext, "image/png")
         
-        # Group elements by type
-        theorems = [e for e in math_elements if e.type == "theorem"]
-        definitions = [e for e in math_elements if e.type == "definition"]
-        equations = [e for e in math_elements if e.type == "equation"]
-        
-        # Detect main subject from text
-        subject = self._detect_subject(text)
-        
-        # Generate overview topic
-        topics.append({
+        prompt = """You are an expert educator preparing COMPREHENSIVE educational video content.
+
+Analyze this content from the image. Extract all text, equations, diagrams, concepts, code, or information visible.
+IMPORTANT: Detect the SUBJECT AREA (math, computer science, physics, economics, biology, engineering, general).
+
+Create ONE comprehensive video that covers ALL the content in this image:
+- The video should REPLACE reading/studying this image entirely
+- Include all concepts, explanations, and examples visible
+- Show step-by-step explanations visually
+
+Respond with ONLY valid JSON (no markdown, no code blocks):
+{
+    "summary": "Comprehensive summary of ALL content in this image",
+    "main_subject": "The primary topic",
+    "subject_area": "math|cs|physics|economics|biology|engineering|general",
+    "key_concepts": ["all", "concepts", "visible", "in", "image"],
+    "detected_math_elements": 5,
+    "extracted_content": ["key content items"],
+    "suggested_topics": [
+        {
             "index": 0,
-            "title": f"Introduction to {subject}",
-            "description": f"A visual overview of the key concepts in {subject}, setting the foundation for deeper understanding.",
-            "estimated_duration": min(15, total_pages * 2),
-            "complexity": "beginner",
-            "subtopics": ["Core intuition", "Key definitions", "Why this matters"]
-        })
+            "title": "[Descriptive Topic Name]",
+            "description": "Comprehensive video covering EVERYTHING in this image.",
+            "estimated_duration": 20,
+            "complexity": "comprehensive",
+            "subject_area": "math|cs|physics|economics|biology|engineering|general",
+            "subtopics": ["every", "concept", "visible"],
+            "prerequisites": ["required background"],
+            "visual_ideas": ["step-by-step explanations", "visualizations"]
+        }
+    ],
+    "estimated_total_videos": 1
+}
+
+CRITICAL: Create exactly ONE comprehensive video covering everything."""
+
+        # Create image part for Gemini
+        image_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
         
-        # Generate topics based on detected content
-        if definitions:
-            topics.append({
-                "index": 1,
-                "title": f"Key Definitions in {subject}",
-                "description": "Deep dive into the fundamental definitions with visual intuition.",
-                "estimated_duration": min(12, len(definitions) * 3),
-                "complexity": "beginner",
-                "subtopics": [d.content[:50] for d in definitions[:3]]
-            })
+        response = await asyncio.to_thread(
+            self.client.models.generate_content,
+            model=self.MODEL,
+            contents=[prompt, image_part]
+        )
         
-        if theorems:
-            topics.append({
-                "index": len(topics),
-                "title": "Theorems and Proofs Visualized",
-                "description": "Understanding the key theorems through animated proofs.",
-                "estimated_duration": min(18, len(theorems) * 5),
-                "complexity": "intermediate",
-                "subtopics": [t.content[:50] for t in theorems[:3]]
-            })
-        
-        if equations:
-            topics.append({
-                "index": len(topics),
-                "title": "Equations That Make It Click",
-                "description": "Breaking down the important equations with step-by-step animations.",
-                "estimated_duration": min(15, len(equations) * 2),
-                "complexity": "intermediate",
-                "subtopics": ["Derivation walkthrough", "Geometric interpretation", "Applications"]
-            })
-        
-        # Add advanced topic if content is substantial
-        if total_pages > 5 or len(math_elements) > 10:
-            topics.append({
-                "index": len(topics),
-                "title": f"Advanced {subject}: Putting It All Together",
-                "description": "Connecting all concepts with challenging examples and applications.",
-                "estimated_duration": 18,
-                "complexity": "advanced",
-                "subtopics": ["Complex examples", "Real-world applications", "Further exploration"]
-            })
-        
-        return topics
+        return self._parse_json_response(response.text)
     
-    def _detect_subject(self, text: str) -> str:
-        """Detect the mathematical subject from text"""
+    def _fix_json_escapes(self, text: str) -> str:
+        """Fix common JSON escape sequence issues from LLM responses"""
+        import re
         
-        subjects = {
-            "calculus": ["derivative", "integral", "limit", "differentiation", "integration"],
-            "linear algebra": ["matrix", "vector", "eigenvalue", "determinant", "linear transformation"],
-            "probability": ["probability", "random", "distribution", "expected value", "variance"],
-            "statistics": ["mean", "median", "standard deviation", "hypothesis", "regression"],
-            "number theory": ["prime", "divisibility", "modular", "congruence"],
-            "geometry": ["triangle", "circle", "polygon", "angle", "area", "volume"],
-            "topology": ["topology", "continuous", "homeomorphism", "manifold"],
-            "algebra": ["group", "ring", "field", "polynomial", "equation"],
-            "analysis": ["convergence", "series", "sequence", "continuity", "metric"],
+        # Fix invalid escape sequences by escaping lone backslashes
+        # Valid JSON escapes: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
+        
+        # First, temporarily replace valid escapes
+        valid_escapes = {
+            '\\"': '<<QUOTE>>',
+            '\\\\': '<<BACKSLASH>>',
+            '\\/': '<<SLASH>>',
+            '\\b': '<<BACKSPACE>>',
+            '\\f': '<<FORMFEED>>',
+            '\\n': '<<NEWLINE>>',
+            '\\r': '<<RETURN>>',
+            '\\t': '<<TAB>>',
         }
         
-        text_lower = text.lower()
-        scores = {}
+        for old, new in valid_escapes.items():
+            text = text.replace(old, new)
         
-        for subject, keywords in subjects.items():
-            score = sum(1 for kw in keywords if kw in text_lower)
-            if score > 0:
-                scores[subject] = score
+        # Handle unicode escapes \uXXXX
+        text = re.sub(r'\\u([0-9a-fA-F]{4})', r'<<UNICODE_\1>>', text)
         
-        if scores:
-            return max(scores, key=scores.get).title()
+        # Now escape any remaining backslashes (invalid escapes)
+        text = text.replace('\\', '\\\\')
         
-        return "Mathematics"
+        # Restore valid escapes
+        for old, new in valid_escapes.items():
+            text = text.replace(new, old)
+        
+        # Restore unicode escapes
+        text = re.sub(r'<<UNICODE_([0-9a-fA-F]{4})>>', r'\\u\1', text)
+        
+        return text
     
-    def _generate_summary(self, text: str, math_elements: List[MathElement]) -> str:
-        """Generate a brief summary of the material"""
+    def _parse_json_response(self, text: str) -> Dict[str, Any]:
+        """Parse JSON from Gemini response, handling markdown code blocks and escape issues"""
+        import re
         
-        subject = self._detect_subject(text)
-        num_elements = len(math_elements)
+        text = text.strip()
         
-        element_types = {}
-        for e in math_elements:
-            element_types[e.type] = element_types.get(e.type, 0) + 1
+        # Remove markdown code blocks if present
+        if text.startswith("```"):
+            lines = text.split("\n")
+            # Remove first line (```json) and last line (```)
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            text = "\n".join(lines)
         
-        type_summary = ", ".join([f"{count} {etype}s" for etype, count in element_types.items()])
-        
-        return f"This material covers {subject}. Detected {num_elements} mathematical elements including {type_summary or 'various concepts'}. Ready for visualization."
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as e:
+            print(f"JSON parse error (first attempt): {e}")
+            
+            # Try fixing escape sequences
+            try:
+                fixed_text = self._fix_json_escapes(text)
+                print("Attempting parse with fixed escapes...")
+                return json.loads(fixed_text)
+            except json.JSONDecodeError as e2:
+                print(f"JSON parse error (after escape fix): {e2}")
+                
+                # Last resort: try to extract JSON using regex
+                try:
+                    match = re.search(r'\{[\s\S]*\}', text)
+                    if match:
+                        json_str = match.group(0)
+                        fixed_json = self._fix_json_escapes(json_str)
+                        return json.loads(fixed_json)
+                except Exception as e3:
+                    print(f"JSON extraction failed: {e3}")
+                
+                print(f"Response preview: {text[:500]}")
+            
+            # Return a default structure
+            return {
+                "summary": "Failed to parse analysis",
+                "main_subject": "Unknown",
+                "difficulty_level": "intermediate",
+                "key_concepts": [],
+                "detected_math_elements": 0,
+                "suggested_topics": [{
+                    "index": 0,
+                    "title": "Introduction to the Topic",
+                    "description": "An overview of the mathematical concepts",
+                    "estimated_duration": 10,
+                    "complexity": "intermediate",
+                    "subtopics": ["Overview"],
+                    "prerequisites": [],
+                    "visual_ideas": ["Basic animations"]
+                }],
+                "estimated_total_videos": 1
+            }
