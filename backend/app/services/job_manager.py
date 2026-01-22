@@ -20,6 +20,7 @@ class JobStatus(Enum):
     COMPOSING_VIDEO = "composing_video"
     COMPLETED = "completed"
     FAILED = "failed"
+    INTERRUPTED = "interrupted"
 
 
 @dataclass

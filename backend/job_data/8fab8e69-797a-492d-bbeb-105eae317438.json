@@ -1,0 +1,65 @@
+{
+  "id": "8fab8e69-797a-492d-bbeb-105eae317438",
+  "status": "completed",
+  "progress": 100,
+  "message": "Generated 1 video(s) successfully!",
+  "result": [
+    {
+      "video_id": "8fab8e69-797a-492d-bbeb-105eae317438",
+      "title": "The Binomial Option Pricing Model: Arbitrage, Risk-Neutrality, and the CRR Formula",
+      "duration": 499.512,
+      "chapters": [
+        {
+          "title": "Introduction: The Revolution of 1973",
+          "start_time": 0,
+          "duration": 63.576
+        },
+        {
+          "title": "Foundational Definitions",
+          "start_time": 63.576,
+          "duration": 47.087999999999994
+        },
+        {
+          "title": "The Binomial Model Framework",
+          "start_time": 110.66399999999999,
+          "duration": 47.064
+        },
+        {
+          "title": "Constructing the Riskless Hedging Portfolio",
+          "start_time": 157.72799999999998,
+          "duration": 57.504000000000005
+        },
+        {
+          "title": "The One-Period Pricing Formula",
+          "start_time": 215.23199999999997,
+          "duration": 48.599999999999994
+        },
+        {
+          "title": "Intuition: Valuation in a Risk-Neutral World",
+          "start_time": 263.832,
+          "duration": 52.056
+        },
+        {
+          "title": "Extending to Two and n Periods",
+          "start_time": 315.888,
+          "duration": 58.943999999999996
+        },
+        {
+          "title": "Comprehensive Numerical Walkthrough",
+          "start_time": 374.832,
+          "duration": 67.632
+        },
+        {
+          "title": "The Big Picture: Convergence to Black-Scholes",
+          "start_time": 442.464,
+          "duration": 57.048
+        }
+      ],
+      "download_url": "/outputs/8fab8e69-797a-492d-bbeb-105eae317438/final_video.mp4",
+      "thumbnail_url": null
+    }
+  ],
+  "error": null,
+  "created_at": "2026-01-22T16:01:38.856645",
+  "updated_at": "2026-01-22T16:13:49.218816"
+}

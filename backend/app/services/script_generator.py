@@ -6,7 +6,7 @@ Each script has sections with narration, timing, and visual descriptions
 import os
 import json
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # PDF processing
 try:
@@ -22,38 +22,41 @@ except ImportError:
     genai = None
     types = None
 
+# Cost tracking
+from app.services.manim_generator.cost_tracker import CostTracker
+
 
 class ScriptGenerator:
     """Generates detailed video scripts using Gemini AI
     
-    Uses a multi-phase approach for comprehensive videos:
-    Phase 1: Create detailed pedagogical outline covering ALL material
-    Phase 2: For EACH section, generate detailed narration (iterative, no content skipped)
-    Phase 3: Segment narrations for audio sync
+    Uses a TWO-PHASE approach:
+    Phase 1: Generate a detailed pedagogical outline covering ALL material
+    Phase 2: Generate the COMPLETE script in ONE call using the outline
+    
+    This ensures:
+    - Complete coverage of all content (via outline)
+    - Natural flow without repetition (single script generation)
+    - Full context throughout (model sees all previous sections)
+    - Deep explanations with intuition, motivation, and examples
     """
     
     MODEL = "gemini-3-flash-preview"  # Latest flash model for comprehensive generation
-    MODEL_OUTLINE = "gemini-3-flash-preview"  # Model for outline generation
     
     # Target segment duration for audio (in seconds) - ~10-12 seconds for good sync
     TARGET_SEGMENT_DURATION = 12
     # Speaking rate for estimation: ~150 words/min = 2.5 words/sec, ~5 chars/word = 12.5 chars/sec
     CHARS_PER_SECOND = 12.5
     
-    # Comprehensive mode settings
-    MAX_SECTIONS_PER_BATCH = 3  # Generate sections in small batches to avoid output limits
-    MIN_SECTION_DURATION = 60  # Minimum seconds per section
-    MAX_SECTION_DURATION = 300  # Maximum seconds per section (split if longer)
-    
-    def __init__(self):
+    def __init__(self, cost_tracker: Optional[CostTracker] = None):
         self.client = None
+        self.cost_tracker = cost_tracker or CostTracker()
         api_key = os.getenv("GEMINI_API_KEY")
         if genai and api_key:
             self.client = genai.Client(api_key=api_key)
         else:
             raise ValueError("GEMINI_API_KEY environment variable is required")
         
-        # Default generation config with low thinking for faster generation
+        # Generation config - no thinking for script generation (structured output)
         self.generation_config = types.GenerateContentConfig(
             thinking_config=types.ThinkingConfig(
                 thinking_level="LOW",
@@ -99,6 +102,9 @@ class ScriptGenerator:
         script["source_language"] = detected_language  # Original document language
         script["language"] = script.get("output_language", language)  # Output language
         
+        # Add cost tracking summary
+        script["cost_summary"] = self.cost_tracker.get_summary()
+        
         return script
     
     async def _detect_language(self, text_sample: str) -> str:
@@ -125,6 +131,9 @@ LANGUAGE CODE:"""
                     max_output_tokens=10,
                 )
             )
+            
+            # Track cost for language detection
+            self.cost_tracker.track_usage(response, "gemini-flash-lite-latest")
             
             detected = response.text.strip().lower()[:2]
             
@@ -169,15 +178,12 @@ LANGUAGE CODE:"""
         content_focus: str = "as_document",
         document_context: str = "auto"
     ) -> Dict[str, Any]:
-        """Use Gemini to generate a complete video script using MULTI-PHASE approach:
+        """Use Gemini to generate a complete video script using TWO-PHASE approach:
         
-        COMPREHENSIVE MODE (iterative, no content skipped):
         Phase 1: Generate detailed pedagogical outline covering ALL material
-        Phase 2: For EACH section, generate detailed narration (separate API call per section)
-        Phase 3: Segment narrations for audio sync
+        Phase 2: Generate the COMPLETE script in ONE call using the outline
         
-        OVERVIEW MODE (single-phase):
-        Generate a brief summary script in one call
+        This ensures complete coverage while maintaining natural flow.
         """
         
         # Language name mapping for prompts
@@ -196,9 +202,7 @@ LANGUAGE CODE:"""
             "hy": "Armenian",
         }
         
-        # Use detected language from caller (already detected earlier)
-        # The 'language' parameter represents the OUTPUT language
-        # If language == "auto" or matches detected, use document language
+        # Determine output language
         if language == "auto" or language == detected_language:
             output_language = detected_language
         else:
@@ -213,290 +217,173 @@ LANGUAGE CODE:"""
         else:
             language_instruction = f"\n\nGenerate all narration in {language_name} (the document's original language)."
         
-        # Estimate content length to determine appropriate video length
+        # Estimate content length
         content_length = len(content)
         estimated_duration = topic.get('estimated_duration', 20)
         
         if video_mode == "overview":
             suggested_duration = min(7, max(3, estimated_duration // 3))
-            section_count = "3-6 sections"
-            section_duration = "30-60 seconds each"
+            section_guidance = "3-6 sections, 30-60 seconds each"
             teaching_style = "brief"
         else:
-            # COMPREHENSIVE MODE: Full lecture-style videos that REPLACE reading the document
-            # No artificial duration limits - video should be as long as needed
-            # Estimate: ~80 chars per minute for VERY thorough explanation with pauses
+            # COMPREHENSIVE MODE: Full lecture-style videos
             suggested_duration = max(45, content_length // 80)
-            section_count = "as many sections as needed - create a section for EVERY topic, theorem, proof, example, definition"
-            section_duration = "60-300 seconds each (complex proofs/derivations need more time)"
+            section_guidance = "as many sections as needed - create sections for EVERY topic, theorem, proof, example"
             teaching_style = "comprehensive"
         
-        # ═══════════════════════════════════════════════════════════════════════
-        # PHASE 1: Generate overall plan/outline from document
-        # ═══════════════════════════════════════════════════════════════════════
-        print(f"[ScriptGenerator] PHASE 1: Generating overall plan in {language_name}...")
-        
-        # Build teaching-style specific instructions
-        if teaching_style == "comprehensive":
-            # Build content focus instructions
-            if content_focus == "practice":
-                focus_instructions = """
-=== CONTENT FOCUS: PRACTICE-ORIENTED ===
-EMPHASIS: More worked examples, applications, and hands-on problems.
+        # Build content focus instructions
+        if content_focus == "practice":
+            focus_instructions = """
+CONTENT FOCUS: PRACTICE-ORIENTED
 - Prioritize examples over abstract theory
-- For every concept, include at least 2-3 worked examples
+- For every concept, include 2-3 worked examples
 - Show step-by-step problem solving
-- Include practice exercises with solutions
 - Focus on "how to apply" rather than "why it works"
-- Still include necessary theory, but quickly move to applications
 """
-            elif content_focus == "theory":
-                focus_instructions = """
-=== CONTENT FOCUS: THEORY-ORIENTED ===
-EMPHASIS: More proofs, derivations, and conceptual depth.
+        elif content_focus == "theory":
+            focus_instructions = """
+CONTENT FOCUS: THEORY-ORIENTED  
 - Prioritize rigorous proofs and formal derivations
 - Explore the "why" behind every concept
-- Include historical context and motivation where relevant
 - Build deep understanding of underlying principles
-- Examples should illustrate theory, not just demonstrate procedures
-- Take time with mathematical rigor and precision
+- Take time with mathematical rigor
 """
-            else:  # as_document
-                focus_instructions = """
-=== CONTENT FOCUS: FOLLOW DOCUMENT STRUCTURE ===
-EMPHASIS: Mirror the document's natural balance of theory and practice.
-- Follow the document's structure and emphasis
+        else:  # as_document
+            focus_instructions = """
+CONTENT FOCUS: FOLLOW DOCUMENT STRUCTURE
+- Mirror the document's natural balance of theory and practice
 - If the document is example-heavy, be example-heavy
 - If the document is proof-focused, be proof-focused
-- Maintain the author's pedagogical choices
 """
-            
-            # Build document context instructions
-            if document_context == "standalone":
-                context_instructions = """
-=== DOCUMENT CONTEXT: STANDALONE CONTENT ===
-This is standalone content (like a research paper, independent article, or self-contained topic).
+        
+        # Build document context instructions
+        if document_context == "standalone":
+            context_instructions = """
+DOCUMENT CONTEXT: STANDALONE CONTENT
 - Explain ALL referenced methods/concepts that aren't common knowledge
-- If the paper mentions a technique like "MLE" or "gradient descent", explain it
-- Don't assume viewers know specialized techniques or domain-specific terms
-- Provide background context for the topic
-- Make the video self-contained and accessible to newcomers
+- Don't assume viewers know specialized techniques
+- Make the video self-contained and accessible
 """
-            elif document_context == "series":
-                context_instructions = """
-=== DOCUMENT CONTEXT: PART OF A SERIES ===
-This is part of a series (like a textbook chapter or lecture in a course).
+        elif document_context == "series":
+            context_instructions = """
+DOCUMENT CONTEXT: PART OF A SERIES
 - You CAN assume prior chapters/lectures have been covered
-- Technical terms established earlier in the series can be used without full re-explanation
-- Brief reminders of prior concepts are sufficient (e.g., "recall that...")
+- Brief reminders of prior concepts are sufficient ("recall that...")
 - Focus on NEW material introduced in this part
-- Reference prior concepts briefly but don't re-teach them
 """
-            else:  # auto
-                context_instructions = """
-=== DOCUMENT CONTEXT: AUTO-DETECT ===
-Analyze the document and determine if it's:
-A) STANDALONE CONTENT (e.g., a research paper, independent article, or single topic)
-   → Explain ALL referenced methods/concepts that aren't common knowledge
-   → Don't assume viewers know specialized techniques
-   Signs: Paper/article format, self-contained, cites external works, 
-   introduces topic from scratch, aimed at general audience
-
-B) PART OF A SERIES (e.g., chapter 5 of a textbook, lecture notes building on prior lectures)
-   → You can assume prior chapters/lectures have been covered
-   → Focus on NEW material, referencing prior concepts briefly
-   Signs: Chapter numbering, references to "last lecture", 
-   builds directly on prior material, uses notation from earlier without definition
+        else:  # auto
+            context_instructions = """
+DOCUMENT CONTEXT: AUTO-DETECT
+Analyze if this is standalone content or part of a series, and adjust accordingly.
 """
-            
-            teaching_instructions = f"""
-═══════════════════════════════════════════════════════════════════════════════
-                    COMPREHENSIVE LECTURE MODE
-═══════════════════════════════════════════════════════════════════════════════
+        
+        # ═══════════════════════════════════════════════════════════════════════
+        # PHASE 1: Generate detailed pedagogical outline
+        # ═══════════════════════════════════════════════════════════════════════
+        print(f"[ScriptGenerator] PHASE 1: Generating comprehensive outline in {language_name}...")
+        
+        phase1_prompt = f"""You are an expert university professor planning a COMPREHENSIVE lecture video that provides DEEP UNDERSTANDING.
 
-YOUR GOAL: Create a COMPLETE university-quality lecture that REPLACES reading the document.
-A student who watches this video should understand EVERYTHING without ever reading the source.
+Your goal is NOT just to cover the material, but to help viewers truly UNDERSTAND it at a profound level.
+Create a DETAILED PEDAGOGICAL OUTLINE that ensures:
+1. COMPLETE coverage of ALL source material
+2. DEEP understanding through motivation, intuition, and context
+3. SUPPLEMENTARY explanations that go BEYOND the source when needed{language_instruction}
 
 {focus_instructions}
 
 {context_instructions}
 
 ═══════════════════════════════════════════════════════════════════════════════
-                    PEDAGOGICAL STRUCTURE REQUIREMENTS
+                         DEPTH REQUIREMENTS
 ═══════════════════════════════════════════════════════════════════════════════
 
-CREATE SECTIONS FOR EACH OF THESE (as applicable):
+For EVERY concept, definition, or theorem, plan to cover:
+• MOTIVATION: WHY do we need this? What problem does it solve?
+• INTUITION: What's the underlying idea in simple terms?
+• FORMAL STATEMENT: The precise mathematical formulation
+• CONTEXT: How does this connect to what we already know?
+• IMPLICATIONS: What does this allow us to do? Why is it powerful?
 
-1. INTRODUCTION SECTION (~60-120s)
-   - Hook: Why should viewers care about this topic?
-   - Overview: What will we learn?
-   - Prerequisites: Brief reminder of what viewers should already know
-   
-2. FOR EACH DEFINITION in the document:
-   - State the definition formally
-   - Explain what it means in plain language
-   - Give the intuition: "Think of it as..."
-   - Show examples and non-examples
-   
-3. FOR EACH THEOREM/LEMMA/PROPOSITION:
-   - State the result formally
-   - Explain what it means and why we care
-   - PROVE IT COMPLETELY (separate section if proof is long):
-     * State the proof strategy: "Here's how we'll prove this..."
-     * Each step explained: what we're doing AND why
-     * Key insights highlighted: "This is the clever part..."
-     * NO skipping steps or "similarly..."
-   - Show applications/corollaries
-   
-4. FOR EACH EXAMPLE in the document:
-   - Set up the problem
-   - Work through EVERY step
-   - Explain the reasoning at each step
-   - Summarize the technique used
-   
-5. FOR EACH ALGORITHM/PROCEDURE:
-   - Explain the high-level idea
-   - Walk through step-by-step
-   - Trace through a concrete example
-   - Discuss edge cases and complexity
-   
-6. SUMMARY SECTION (~60-90s)
-   - Recap key definitions
-   - Recap key theorems
-   - Connect ideas together
-   - What comes next / how this connects to other topics
+For EVERY proof or derivation:
+• PROOF STRATEGY: What approach are we taking and why?
+• KEY INSIGHTS: What are the clever ideas that make it work?
+• STEP-BY-STEP: Break down each logical step
+• POTENTIAL PITFALLS: Common mistakes or misconceptions
 
-═══════════════════════════════════════════════════════════════════════════════
-                    COMPLETENESS REQUIREMENTS
-═══════════════════════════════════════════════════════════════════════════════
+For EXAMPLES:
+• Start with SIMPLE cases to build intuition
+• Progress to COMPLEX applications
+• Show EDGE CASES when relevant
+• Connect back to theory
 
-- EVERY theorem, lemma, proposition, corollary → dedicated coverage
-- EVERY proof → complete step-by-step explanation
-- EVERY definition → explanation with intuition
-- EVERY example → fully worked through
-- EVERY derivation → all steps shown
-- NO skipping, NO "similarly...", NO "it's easy to see..."
-- NO rushing through content
-
-═══════════════════════════════════════════════════════════════════════════════
-                    TEACHING APPROACH
-═══════════════════════════════════════════════════════════════════════════════
-
-Analyze the document and choose the best approach:
-- CONCEPT-FIRST: For abstract/theoretical → intuition before formalism
-- EXAMPLE-DRIVEN: For procedural → examples before theory
-- PROOF-FOCUSED: For theorem-heavy → careful proof presentation
-- PROBLEM-SOLUTION: For applied → problem drives the exposition
-
-TARGET DURATION: {suggested_duration}+ minutes - this is a MINIMUM, not a limit.
-Take as much time as the material genuinely requires.
-A 10-page paper might need 45-90 minutes of video.
-"""
-        else:
-            teaching_instructions = """
-OVERVIEW MODE - Quick summary focusing on key takeaways only.
-"""
-        
-        phase1_prompt = f"""You are an expert university professor planning a comprehensive lecture video.
-
-Your task: Create a DETAILED PEDAGOGICAL OUTLINE that ensures COMPLETE coverage of the source material.
-This outline will be used to generate detailed narration for each section in a subsequent step.
-
-DO NOT write the full script yet - create a thorough structure that captures EVERY piece of content.{language_instruction}
-{teaching_instructions}
+ADD SUPPLEMENTARY CONTENT when it aids understanding:
+• Historical context or motivation (if helpful)
+• Visual intuitions and geometric interpretations
+• Connections to other fields or concepts
+• Common misconceptions and how to avoid them
+• Alternative perspectives on the same concept
 
 ═══════════════════════════════════════════════════════════════════════════════
 TOPIC: {topic.get('title', 'Educational Content')}
 DESCRIPTION: {topic.get('description', '')}
 SUBJECT AREA: {topic.get('subject_area', 'general')}
-VIDEO MODE: {video_mode.upper()} - COMPLETE COVERAGE REQUIRED
-CONTENT FOCUS: {content_focus.upper()}
-DOCUMENT CONTEXT: {document_context.upper()}
-TARGET DURATION: {suggested_duration} minutes MINIMUM (longer is fine if material requires it)
+VIDEO MODE: {video_mode.upper()}
+TARGET DURATION: {suggested_duration}+ minutes (take as long as needed for deep understanding)
 OUTPUT LANGUAGE: {language_name}
 ═══════════════════════════════════════════════════════════════════════════════
 
-OUTLINE REQUIREMENTS:
-
-1. COMPLETE COVERAGE - Create sections for EVERYTHING in the document:
-   • Each definition gets coverage (can be combined with related concepts)
-   • Each theorem/lemma/proposition gets its own section OR a section for proof
-   • Each proof gets COMPLETE step-by-step coverage
-   • Each example gets fully worked through
-   • Each key concept gets explained with motivation
-
-2. GRANULARITY:
-   • Break large topics into multiple sections (60-180 seconds each)
-   • Complex proofs should be split across multiple sections if needed
-   • Better to have MORE sections than to cram content
-
-3. FOR EACH SECTION, specify:
-   • source_content_verbatim: Copy the EXACT relevant source text (definitions, theorems, proofs)
-   • teaching_goal: What the viewer will understand
-   • content_checklist: List EVERY item from source that MUST be covered
-   • subsections: For complex sections, break into numbered steps
-
-SOURCE MATERIAL (scan ALL of this - nothing should be omitted from outline):
+SOURCE MATERIAL (analyze ALL of this - nothing should be omitted):
 {content[:60000]}
 
-VISUAL TYPE OPTIONS:
-- "animated": Equations building step-by-step, graphs drawing, processes unfolding
-- "static": Definitions, statements, summary cards
-- "mixed": Animated proofs with static theorem statements
-- "diagram": Flowcharts, concept maps, hierarchies
-- "graph": Function plots, data visualization
-- "comparison": Side-by-side contrasts
+═══════════════════════════════════════════════════════════════════════════════
+
+Create an outline with sections for:
+- Introduction (hook, motivation, prerequisites, learning objectives)
+- Each major definition (motivation → intuition → formal statement → examples)
+- Each theorem/lemma/proposition (motivation → statement → proof strategy → proof → implications)
+- Worked examples (simple → complex, with connections to theory)
+- Connections and context (how concepts relate to each other)
+- Conclusion (big picture, recap, what comes next)
+
+IMPORTANT: If the source material is terse or assumes background knowledge, 
+ADD explanatory sections to fill gaps and provide context.
 
 Respond with ONLY valid JSON:
 {{
     "document_analysis": {{
         "content_type": "[theoretical|practical|factual|problem-solving|mixed]",
         "content_context": "[standalone|part-of-series]",
-        "context_rationale": "[Evidence for your classification]",
-        "concepts_to_explain": ["Specialized concepts requiring explanation"],
-        "assumed_prior_knowledge": ["Prior knowledge if part of series"],
-        "total_theorems": [count of theorems/lemmas/propositions],
-        "total_proofs": [count of proofs],
-        "total_definitions": [count of definitions],
-        "total_examples": [count of examples],
+        "total_theorems": [count],
+        "total_proofs": [count],
+        "total_definitions": [count],
+        "total_examples": [count],
         "complexity_level": "[introductory|intermediate|advanced]",
-        "chosen_approach": "[concept-first|example-driven|proof-focused|problem-solution]",
-        "approach_rationale": "[Why this approach]"
+        "gaps_to_fill": ["List of concepts that need more explanation for clarity"]
     }},
     "title": "[Engaging video title in {language_name}]",
     "subject_area": "[math|cs|physics|economics|biology|engineering|general]",
-    "total_duration_minutes": [realistic estimate based on content],
-    "overview": "[2-3 sentence hook]",
-    "content_coverage_checklist": [
-        "List of EVERY theorem/definition/example/proof that MUST be covered",
-        "Use this to verify no content is skipped"
-    ],
+    "overview": "[2-3 sentence hook describing what viewers will learn and WHY it matters]",
+    "learning_objectives": ["What viewers will understand", "What they will be able to do"],
+    "prerequisites": ["Concepts viewers should know beforehand"],
+    "total_duration_minutes": [realistic estimate - comprehensive videos can be 30-60+ min],
     "sections_outline": [
         {{
-            "id": "[unique_id like 'intro', 'def_1', 'thm_1', 'proof_1', 'example_1']",
+            "id": "[unique_id like 'intro', 'motivation_1', 'def_1', 'intuition_1', 'thm_1', 'proof_1', 'example_1']",
             "title": "[Section title in {language_name}]",
-            "section_type": "[introduction|definition|theorem|proof|example|application|summary|transition]",
-            "teaching_goal": "[What viewer will UNDERSTAND after this section]",
-            "source_content_verbatim": "[EXACT text from source document this section covers - copy it here]",
-            "content_checklist": ["Item 1 to cover", "Item 2 to cover", "Step 3 of proof", ...],
-            "key_points": ["Main point 1", "Main point 2"],
-            "teaching_method": "[How to teach this - intuition first? definition first?]",
-            "visual_type": "[animated|static|mixed|diagram|graph|comparison]",
-            "duration_seconds": [60-180 typically, up to 300 for complex proofs],
-            "prerequisites": ["section_ids this section depends on"],
-            "subsections": [
-                {{
-                    "step": 1,
-                    "description": "[e.g., 'State the theorem formally']"
-                }},
-                {{
-                    "step": 2, 
-                    "description": "[e.g., 'Explain why we care about this']"
-                }}
-            ]
+            "section_type": "[introduction|motivation|definition|intuition|theorem|proof|example|application|connection|summary]",
+            "content_to_cover": "[Detailed description of what this section must cover from source]",
+            "depth_elements": {{
+                "motivation": "[Why this matters - for definitions/theorems]",
+                "intuition": "[Simple explanation - for complex concepts]",
+                "connections": "[Links to other concepts]"
+            }},
+            "key_points": ["Point 1", "Point 2", "Point 3", "Point 4"],
+            "visual_type": "[animated|static|mixed|diagram|graph]",
+            "estimated_duration_seconds": [60-300]
         }}
     ]
-}}"""
+}}"""""
 
         try:
             phase1_response = await asyncio.wait_for(
@@ -504,452 +391,255 @@ Respond with ONLY valid JSON:
                     self.client.models.generate_content,
                     model=self.MODEL,
                     contents=phase1_prompt,
-                    config=self.generation_config
+                    config=types.GenerateContentConfig(
+                        thinking_config=types.ThinkingConfig(thinking_level="LOW"),
+                        max_output_tokens=16384,
+                    )
                 ),
-                timeout=600  # 10 minute timeout for comprehensive phase 1 outline
+                timeout=300  # 5 minute timeout for outline
             )
+            
+            # Track cost for Phase 1
+            self.cost_tracker.track_usage(phase1_response, self.MODEL)
+            
             outline = self._parse_json_response(phase1_response.text)
-            print(f"[ScriptGenerator] Phase 1 complete: {len(outline.get('sections_outline', []))} sections outlined")
+            sections_outline = outline.get('sections_outline', [])
+            print(f"[ScriptGenerator] Phase 1 complete: {len(sections_outline)} sections outlined")
         except Exception as e:
-            print(f"[ScriptGenerator] Phase 1 failed: {e}, falling back to single-phase")
-            return await self._gemini_generate_script_single_phase(content, topic, max_duration, video_mode, language)
+            print(f"[ScriptGenerator] Phase 1 failed: {e}, using fallback")
+            # Create a basic outline
+            outline = {
+                "title": topic.get('title', 'Educational Content'),
+                "subject_area": topic.get('subject_area', 'general'),
+                "overview": topic.get('description', ''),
+                "sections_outline": [
+                    {"id": "intro", "title": "Introduction", "section_type": "introduction", "content_to_cover": "Overview of the topic", "key_points": ["Introduction"], "visual_type": "static", "estimated_duration_seconds": 60},
+                    {"id": "main", "title": "Main Content", "section_type": "content", "content_to_cover": "Core material", "key_points": ["Main concepts"], "visual_type": "mixed", "estimated_duration_seconds": 300},
+                    {"id": "conclusion", "title": "Conclusion", "section_type": "summary", "content_to_cover": "Summary", "key_points": ["Recap"], "visual_type": "static", "estimated_duration_seconds": 60}
+                ]
+            }
+            sections_outline = outline.get('sections_outline', [])
         
         # ═══════════════════════════════════════════════════════════════════════
-        # PHASE 2: Generate detailed sections ITERATIVELY (one by one)
-        # This ensures NO content is skipped due to output length limits
+        # PHASE 2: Generate script SECTION BY SECTION with full context
         # ═══════════════════════════════════════════════════════════════════════
-        sections_outline = outline.get('sections_outline', [])
-        total_sections = len(sections_outline)
-        print(f"[ScriptGenerator] PHASE 2: Generating {total_sections} detailed sections ITERATIVELY in {language_name}...")
+        print(f"[ScriptGenerator] PHASE 2: Generating script section-by-section ({len(sections_outline)} sections) in {language_name}...")
         
-        # Build teaching-style specific Phase 2 instructions
-        document_analysis = outline.get('document_analysis', {})
-        chosen_approach = document_analysis.get('chosen_approach', 'concept-first')
-        content_type = document_analysis.get('content_type', 'theoretical')
+        # Get learning objectives and prerequisites if available
+        learning_objectives = outline.get('learning_objectives', [])
+        prerequisites = outline.get('prerequisites', [])
+        gaps_to_fill = outline.get('document_analysis', {}).get('gaps_to_fill', [])
         
-        # Extract content context from outline analysis
-        content_context = document_analysis.get("content_context", "standalone")
-        concepts_to_explain = document_analysis.get("concepts_to_explain", [])
+        # Generate sections one by one, passing previous sections as context
+        generated_sections = []
         
-        # Build context-aware instructions
-        if content_context == "standalone" and concepts_to_explain:
-            context_instruction = f"""
-CONTENT CONTEXT: This is STANDALONE content.
-Specialized concepts that may need explanation: {', '.join(concepts_to_explain[:10])}
-"""
-        elif content_context == "part-of-series":
-            assumed_knowledge = document_analysis.get("assumed_prior_knowledge", [])
-            context_instruction = f"CONTENT CONTEXT: Part of a series. Prior knowledge assumed: {', '.join(assumed_knowledge) if assumed_knowledge else 'earlier material'}."
-        else:
-            context_instruction = ""
-        
-        # Section type specific instructions
-        section_type_instructions = {
-            'introduction': """
-INTRODUCTION SECTION REQUIREMENTS:
-- Open with a compelling hook that grabs attention
-- Clearly state what the viewer will learn
-- Provide motivation: why is this topic important/interesting?
-- Brief roadmap of what's coming
-""",
-            'definition': """
-DEFINITION SECTION REQUIREMENTS:
-- State the formal definition precisely
-- Explain each part of the definition in plain language
-- Provide intuition: "Think of it as..." or "This captures the idea that..."
-- Give examples that satisfy the definition
-- Give non-examples that violate it
-- Connect to previously covered concepts
-""",
-            'theorem': """
-THEOREM SECTION REQUIREMENTS:
-- State the theorem formally and completely
-- Explain what the theorem says in plain language
-- Explain WHY we care about this result
-- Discuss the conditions/hypotheses and why they matter
-- If not proving in this section, preview the proof strategy
-""",
-            'proof': """
-PROOF SECTION REQUIREMENTS:
-- State what we're proving (reference the theorem)
-- Explain the proof STRATEGY before diving in: "Here's our approach..."
-- Go through EVERY step, explaining:
-  * What we're doing at each step
-  * WHY this step is valid
-  * How it brings us closer to the goal
-- Highlight key insights: "This is the clever part..."
-- NO skipping steps, NO "it's easy to verify", NO "by a similar argument"
-- Conclude by connecting back to the theorem statement
-""",
-            'example': """
-EXAMPLE SECTION REQUIREMENTS:
-- State the problem/example clearly
-- Work through EVERY step of the solution
-- Explain the reasoning at each step
-- Show intermediate calculations
-- Summarize the technique used
-- Connect back to the general concept/theorem
-""",
-            'application': """
-APPLICATION SECTION REQUIREMENTS:
-- Describe the real-world context or application
-- Show how the theory applies
-- Work through concrete calculations
-- Discuss practical implications
-""",
-            'summary': """
-SUMMARY SECTION REQUIREMENTS:
-- Recap the key definitions introduced
-- Recap the main theorems and their significance
-- Connect the ideas together: how do they relate?
-- Preview what comes next or how this connects to other topics
-"""
-        }
-        
-        # Generate each section individually
-        detailed_sections = []
-        
-        for idx, section_outline in enumerate(sections_outline):
-            section_id = section_outline.get('id', f'section_{idx}')
-            section_title = section_outline.get('title', f'Section {idx + 1}')
-            section_type = section_outline.get('section_type', 'content')
+        for section_idx, section_outline in enumerate(sections_outline):
+            print(f"[ScriptGenerator] Generating section {section_idx + 1}/{len(sections_outline)}: {section_outline.get('title', 'Untitled')}...")
             
-            print(f"[ScriptGenerator] Generating section {idx + 1}/{total_sections}: {section_title} ({section_type})")
-            
-            # Get source content for this specific section
-            source_content_for_section = section_outline.get('source_content_verbatim', '')
-            if not source_content_for_section:
-                source_content_for_section = section_outline.get('source_content', '')
-            
-            # Build the checklist for this section
-            content_checklist = section_outline.get('content_checklist', section_outline.get('key_points', []))
-            subsections = section_outline.get('subsections', [])
-            
-            # Get previous section for context/transition
-            prev_section_summary = ""
-            if idx > 0 and detailed_sections:
-                prev = detailed_sections[-1]
-                prev_section_summary = f"\nPREVIOUS SECTION: '{prev.get('title', '')}' ended with: ...{prev.get('narration', '')[-300:]}"
-            
-            # Get section-specific instructions
-            type_specific_instructions = section_type_instructions.get(
-                section_type, 
-                "\nCover all content thoroughly with clear explanations."
+            section = await self._generate_single_section(
+                section_outline=section_outline,
+                section_idx=section_idx,
+                total_sections=len(sections_outline),
+                full_outline=outline,
+                previous_sections=generated_sections,
+                content=content,
+                language_name=language_name,
+                language_instruction=language_instruction,
+                gaps_to_fill=gaps_to_fill,
             )
             
-            # Calculate target word count based on duration
-            target_duration = section_outline.get('duration_seconds', 120)
-            # ~150 words per minute = 2.5 words per second
-            target_words = int(target_duration * 2.5)
-            
-            section_prompt = f"""Generate COMPLETE, DETAILED narration for ONE section of an educational video.{language_instruction}
-
-═══════════════════════════════════════════════════════════════════════════════
-SECTION {idx + 1} OF {total_sections}: {section_title}
-═══════════════════════════════════════════════════════════════════════════════
-
-Section Type: {section_type.upper()}
-Teaching Goal: {section_outline.get('teaching_goal', 'Explain the concept thoroughly')}
-Teaching Method: {section_outline.get('teaching_method', chosen_approach)}
-Target Duration: {target_duration} seconds (~{target_words} words of narration)
-Visual Type: {section_outline.get('visual_type', 'mixed')}
-{context_instruction}
-{prev_section_summary}
-
-{type_specific_instructions}
-
-═══════════════════════════════════════════════════════════════════════════════
-CONTENT CHECKLIST (MUST cover ALL of these):
-═══════════════════════════════════════════════════════════════════════════════
-{chr(10).join(f"□ {item}" for item in content_checklist) if content_checklist else "□ Cover all concepts in the source content below"}
-
-{("SUBSECTION STRUCTURE TO FOLLOW:" + chr(10) + chr(10).join(f"Step {s.get('step', i+1)}: {s.get('description', '')}" for i, s in enumerate(subsections))) if subsections else ""}
-
-═══════════════════════════════════════════════════════════════════════════════
-SOURCE CONTENT FOR THIS SECTION:
-═══════════════════════════════════════════════════════════════════════════════
-{source_content_for_section if source_content_for_section else "(See full document context below)"}
-
-FULL DOCUMENT CONTEXT (for reference - use to understand broader context):
-{content[:25000]}
-
-═══════════════════════════════════════════════════════════════════════════════
-NARRATION REQUIREMENTS:
-═══════════════════════════════════════════════════════════════════════════════
-
-1. LENGTH: Aim for ~{target_words} words to fill {target_duration} seconds
-2. COMPLETENESS: Cover EVERY item in the content checklist above
-3. DEPTH: Explain the "why" behind every step, not just the "what"
-4. PACING: 
-   - Use "..." for brief pauses (1-2 seconds)
-   - Use "[PAUSE]" for longer pauses after key insights (3-4 seconds)
-   - Don't rush - let ideas sink in
-5. CLARITY:
-   - Define terms before using them
-   - Use analogies to make abstract ideas concrete
-   - Connect new ideas to what was covered before
-6. ENGAGEMENT:
-   - Use conversational, enthusiastic tone
-   - "Here's the key insight..."
-   - "Notice how this connects to..."
-   - "This might seem strange at first, but..."
-7. TRANSITIONS:
-   - Smooth flow from previous section (if not first)
-   - Hint at what's coming next (if not last)
-
-OUTPUT LANGUAGE: {language_name}
-
-Respond with ONLY valid JSON (no markdown code blocks):
-{{
-    "id": "{section_id}",
-    "title": "{section_title}",
-    "section_type": "{section_type}",
-    "duration_seconds": {target_duration},
-    "narration": "[COMPLETE, THOROUGH narration covering ALL checklist items. Target ~{target_words} words. Be comprehensive and pedagogical.]",
-    "tts_narration": "[TTS-friendly version - spell out ALL symbols: 'x squared' not 'x²', 'integral from a to b' not '∫', 'pi' not 'π', 'greater than or equal to' not '≥']",
-    "visual_description": "[Detailed description of what to show on screen at each moment]",
-    "key_concepts": ["list", "of", "key", "concepts", "covered"],
-    "animation_type": "{section_outline.get('visual_type', 'mixed')}",
-    "visual_elements": ["list", "of", "visual", "elements"],
-    "covered_items": ["COPY each item from the content checklist that you covered"],
-    "transition_to_next": "[1-2 sentences hinting at what comes in the next section]"
-}}"""
-            
-            try:
-                section_response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.client.models.generate_content,
-                        model=self.MODEL,
-                        contents=section_prompt,
-                        config=self.generation_config
-                    ),
-                    timeout=300  # 5 minute timeout per section
-                )
-                section_data = self._parse_json_response(section_response.text)
-                
-                # Ensure required fields
-                section_data['id'] = section_data.get('id', section_id)
-                section_data['title'] = section_data.get('title', section_title)
-                
-                detailed_sections.append(section_data)
-                print(f"[ScriptGenerator] ✓ Section {idx + 1} complete: ~{section_data.get('duration_seconds', 60)}s, {len(section_data.get('narration', ''))} chars")
-                
-            except Exception as e:
-                print(f"[ScriptGenerator] ⚠ Section {idx + 1} failed: {e}, using outline fallback")
-                # Create basic section from outline
-                fallback_section = {
-                    'id': section_id,
-                    'title': section_title,
-                    'section_type': section_outline.get('section_type', 'content'),
-                    'duration_seconds': section_outline.get('duration_seconds', 60),
-                    'narration': f"{section_title}. " + ". ".join(section_outline.get('key_points', ['Let us explore this concept.'])),
-                    'tts_narration': f"{section_title}. " + ". ".join(section_outline.get('key_points', ['Let us explore this concept.'])),
-                    'visual_description': section_outline.get('teaching_goal', 'Display relevant visuals'),
-                    'key_concepts': section_outline.get('key_points', [])[:3],
-                    'animation_type': section_outline.get('visual_type', 'mixed'),
-                    'visual_elements': []
-                }
-                detailed_sections.append(fallback_section)
+            if section:
+                generated_sections.append(section)
+            else:
+                # Fallback section if generation failed
+                generated_sections.append({
+                    "id": section_outline.get("id", f"section_{section_idx}"),
+                    "title": section_outline.get("title", f"Part {section_idx + 1}"),
+                    "narration": f"Let's explore {section_outline.get('title', 'this topic')}.",
+                    "tts_narration": f"Let's explore {section_outline.get('title', 'this topic')}.",
+                })
         
-        # Construct the final script
+        # Build final script
         script = {
-            'title': outline.get('title', topic.get('title', 'Educational Video')),
-            'subject_area': outline.get('subject_area', 'general'),
-            'overview': outline.get('overview', ''),
-            'document_analysis': document_analysis,
-            'content_coverage_checklist': outline.get('content_coverage_checklist', []),
-            'total_duration_seconds': sum(s.get('duration_seconds', 60) for s in detailed_sections),
-            'sections': detailed_sections
+            "title": outline.get('title', topic.get('title', 'Educational Content')),
+            "subject_area": outline.get('subject_area', 'general'),
+            "overview": outline.get('overview', ''),
+            "learning_objectives": learning_objectives,
+            "sections": generated_sections,
         }
         
-        print(f"[ScriptGenerator] Phase 2 complete: {len(detailed_sections)} detailed sections generated")
+        # Calculate actual durations from narration lengths
+        for section in script.get('sections', []):
+            narration_len = len(section.get('narration', ''))
+            section['duration_seconds'] = max(30, int(narration_len / self.CHARS_PER_SECOND))
         
-        # Verify content coverage
-        script = self._verify_content_coverage(outline, script)
+        script['total_duration_seconds'] = sum(s.get('duration_seconds', 60) for s in script.get('sections', []))
+        
+        print(f"[ScriptGenerator] Phase 2 complete: {len(script.get('sections', []))} sections, ~{script['total_duration_seconds'] // 60} minutes")
+        
+        # Add document analysis from phase 1
+        script['document_analysis'] = outline.get('document_analysis', {})
         
         # Validate and fix the script structure
         script = self._validate_script(script, topic)
         
-        # ═══════════════════════════════════════════════════════════════════════
-        # PHASE 3: Segment narration into ~10 second audio chunks
-        # ═══════════════════════════════════════════════════════════════════════
-        print(f"[ScriptGenerator] PHASE 3: Segmenting narration for audio sync...")
+        # Segment narration into ~10 second audio chunks for TTS
+        print(f"[ScriptGenerator] Segmenting narration for audio sync...")
         script = self._segment_narrations(script)
         
         # Add language metadata
         script["output_language"] = output_language
         script["source_language"] = detected_language
         
+        # Log cost summary
+        self.cost_tracker.print_summary()
+        
         return script
     
-    async def _gemini_generate_script_single_phase(
+    def get_cost_tracker(self) -> CostTracker:
+        """Get the cost tracker for this generator"""
+        return self.cost_tracker
+    
+    async def _generate_single_section(
         self,
+        section_outline: Dict[str, Any],
+        section_idx: int,
+        total_sections: int,
+        full_outline: Dict[str, Any],
+        previous_sections: List[Dict[str, Any]],
         content: str,
-        topic: Dict[str, Any],
-        max_duration: int,
-        video_mode: str = "comprehensive",
-        language: str = "en"
-    ) -> Dict[str, Any]:
-        """Fallback single-phase script generation"""
+        language_name: str,
+        language_instruction: str,
+        gaps_to_fill: List[str],
+    ) -> Optional[Dict[str, Any]]:
+        """Generate a single section with full context of the outline and previous sections."""
         
-        # Language name mapping for prompts
-        language_names = {
-            "en": "English",
-            "fr": "French",
-            "es": "Spanish",
-            "de": "German",
-            "it": "Italian",
-            "pt": "Portuguese",
-            "zh": "Chinese",
-            "ja": "Japanese",
-            "ko": "Korean",
-            "ar": "Arabic",
-            "ru": "Russian",
-            "hy": "Armenian",
-        }
-        language_name = language_names.get(language, "English")
-        language_instruction = f"\n\nIMPORTANT: Generate ALL narration text in {language_name}." if language != "en" else ""
+        # Build context from previous sections - keep it concise to avoid token limits
+        previous_sections_context = ""
+        if previous_sections:
+            prev_summaries = []
+            for i, prev in enumerate(previous_sections):
+                # Only include last 2 sections in detail, older ones get brief summary
+                if i >= len(previous_sections) - 2:
+                    # Recent sections: include narration ending for continuity
+                    narration = prev.get('narration', '')
+                    # Limit to last 500 chars to save tokens
+                    narration_excerpt = narration[-500:] if len(narration) > 500 else narration
+                    prev_summaries.append(f"[{i+1}] {prev.get('title', 'Untitled')}: ...{narration_excerpt}")
+                else:
+                    # Older sections: just title and key concepts
+                    concepts = prev.get('key_concepts', [])[:3]
+                    prev_summaries.append(f"[{i+1}] {prev.get('title', 'Untitled')} - covered: {', '.join(concepts)}")
+            previous_sections_context = "\n".join(prev_summaries)
         
-        content_length = len(content)
-        estimated_duration = topic.get('estimated_duration', 20)
+        # Format the full outline (very condensed)
+        outline_summary = []
+        for i, sec in enumerate(full_outline.get('sections_outline', [])):
+            marker = ">>>" if i == section_idx else ("✓" if i < section_idx else " ")
+            outline_summary.append(f"{marker} {i+1}. {sec.get('title', 'Untitled')}")
+        outline_text = "\n".join(outline_summary)
         
-        if video_mode == "overview":
-            suggested_duration = min(7, max(3, estimated_duration // 3))
-            mode_instructions = "Create a SHORT summary (3-7 minutes), 3-6 sections, 30-60 seconds each."
+        # Position-specific instructions (condensed)
+        if section_idx == 0:
+            position_note = "FIRST SECTION: Start with engaging hook, may greet viewer."
+        elif section_idx == total_sections - 1:
+            position_note = "FINAL SECTION: Summarize key insights, memorable conclusion."
         else:
-            # COMPREHENSIVE MODE: Full lecture-style coverage
-            suggested_duration = max(30, estimated_duration * 2, content_length // 250)
-            suggested_duration = min(suggested_duration, 90)
-            mode_instructions = f"""Create an ADAPTIVE LECTURE style video (target: {suggested_duration}+ minutes).
-
-FIRST, analyze the document:
-- Content type: theoretical, practical, factual, problem-solving, or overview?
-- Choose the best approach: concept-first, example-driven, comparison-based, story, or problem-solution
-
-THEN, write the script using your chosen approach:
-
-APPROACH OPTIONS:
-- CONCEPT-FIRST: Lead with big idea → intuition → formal definition
-- EXAMPLE-DRIVEN: Show examples → extract patterns → generalize
-- COMPARISON-BASED: Present alternatives → pros/cons → when to use
-- STORY/JOURNEY: Problem → evolution → solution narrative
-- PROBLEM-SOLUTION: Need → failed attempts → real solution
-
-UNIVERSAL PRINCIPLES:
-1. DEPTH: Take time to explain thoroughly - don't rush
-2. INTUITION: Before formulas, explain the IDEA in plain language
-3. ENGAGEMENT: "Think about..." / "Notice how..."
-4. PACING: Use [PAUSE] after key insights
-
-This duration is a FLOOR, not a ceiling. Take as long as needed."""
+            position_note = f"MIDDLE SECTION {section_idx + 1}/{total_sections}: Continue naturally, no greetings, reference earlier content."
         
-        prompt = f"""Create a detailed video script for educational content.{language_instruction}
+        # Limit content size based on section - use relevant portion
+        content_limit = 25000  # Reduced from 40000
+        content_excerpt = content[:content_limit]
+        
+        # Build a more concise prompt - ONLY generate narration, not visual scripts
+        prompt = f"""Generate narration for ONE lecture section. Focus ONLY on what to SAY.
 
-{mode_instructions}
+SECTION: {section_outline.get('title', 'Untitled')}
+TYPE: {section_outline.get('section_type', 'content')}
+CONTENT TO COVER: {section_outline.get('content_to_cover', '')}
+KEY POINTS: {json.dumps(section_outline.get('key_points', []))}
 
-TOPIC: {topic.get('title', 'Educational Content')}
-OUTPUT LANGUAGE: {language_name}
-SOURCE MATERIAL (cover ALL of this): {content[:45000]}
+{position_note}
+{language_instruction}
 
-ALL NARRATION MUST BE IN {language_name.upper()}.
+LECTURE OUTLINE:
+{outline_text}
 
-ANIMATION TYPES:
-- "static": Text/images on screen with narration (use for definitions, simple explanations)
-- "animated": Step-by-step animations (use for complex concepts, derivations)
-- "mixed": Combination of both
+PREVIOUS SECTIONS (for continuity):
+{previous_sections_context if previous_sections_context else "(First section)"}
 
-Respond with JSON:
-{{
-    "title": "[title in {language_name}]",
-    "subject_area": "[subject]",
-    "total_duration_seconds": [total],
-    "sections": [
-        {{
-            "id": "[id]",
-            "title": "[title in {language_name}]",
-            "duration_seconds": [duration based on content complexity],
-            "narration": "[Complete narration covering source content plus explanations]",
-            "tts_narration": "[spoken version in {language_name} - symbols spelled out]",
-            "visual_description": "[what to show]",
-            "key_concepts": ["concepts"],
-            "animation_type": "[static|animated|mixed]"
-        }}
-    ]
-}}"""
+DEPTH REQUIREMENTS:
+- Explain the WHY, not just the WHAT
+- For definitions: motivation → intuition → formal statement → example
+- For theorems: importance → statement → proof strategy → steps → reinforcement  
+- For proofs: reasoning behind each step, key insights
+- Be thorough - no length limits
 
-        response = await asyncio.to_thread(
-            self.client.models.generate_content,
-            model=self.MODEL,
-            contents=prompt,
-            config=self.generation_config
-        )
-        
-        script = self._parse_json_response(response.text)
-        script = self._validate_script(script, topic)
-        return script
-    
-    def _verify_content_coverage(self, outline: Dict[str, Any], script: Dict[str, Any]) -> Dict[str, Any]:
-        """Verify that all content from the outline checklist was covered in the script
-        
-        Returns script with coverage_report metadata
-        """
-        # Get the content coverage checklist from outline
-        content_checklist = outline.get('content_coverage_checklist', [])
-        sections_outline = outline.get('sections_outline', [])
-        
-        # Collect all items that should be covered
-        all_items_to_cover = set(content_checklist)
-        for section in sections_outline:
-            for item in section.get('content_checklist', []):
-                all_items_to_cover.add(item)
-        
-        # Collect all covered items from generated sections
-        covered_items = set()
-        for section in script.get('sections', []):
-            for item in section.get('covered_items', []):
-                covered_items.add(item)
-        
-        # Calculate coverage
-        total_items = len(all_items_to_cover)
-        covered_count = len(covered_items & all_items_to_cover)
-        
-        script['coverage_report'] = {
-            'total_items_to_cover': total_items,
-            'items_covered': covered_count,
-            'coverage_percentage': (covered_count / total_items * 100) if total_items > 0 else 100,
-            'missing_items': list(all_items_to_cover - covered_items)[:20]  # Limit to 20 items
-        }
-        
-        if total_items > 0:
-            print(f"[ScriptGenerator] Coverage: {covered_count}/{total_items} items ({script['coverage_report']['coverage_percentage']:.1f}%)")
-        
-        return script
-    
-    def _outline_to_script(self, outline: Dict[str, Any], topic: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert a phase-1 outline to a basic script if phase-2 fails"""
-        sections = []
-        for section_outline in outline.get('sections_outline', []):
-            key_points = section_outline.get('key_points', [])
-            narration = f"{section_outline.get('title', 'Section')}. " + ". ".join(key_points)
+SOURCE MATERIAL:
+{content_excerpt}
+
+OUTPUT: Valid JSON only, no markdown. Generate ONLY narration text:
+{{"id": "{section_outline.get('id', f'section_{section_idx}')}",
+"title": "{section_outline.get('title', f'Part {section_idx + 1}')}",
+"narration": "Complete spoken narration for this section...",
+"tts_narration": "Same narration with math symbols spelled out (e.g., 'theta' not 'θ', 'x squared' not 'x²')..."}}"""
+
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        thinking_config=types.ThinkingConfig(thinking_level="LOW"),
+                        max_output_tokens=8192,  # Reduced for reliability
+                    )
+                ),
+                timeout=120  # 2 minute timeout per section
+            )
             
-            sections.append({
-                "id": section_outline.get('id', f"section_{len(sections)}"),
-                "title": section_outline.get('title', 'Section'),
-                "duration_seconds": section_outline.get('duration_seconds', 60),
-                "narration": narration,
-                "tts_narration": narration,
-                "visual_description": section_outline.get('purpose', 'Display content'),
-                "key_concepts": key_points[:3],
-                "animation_type": section_outline.get('visual_type', 'mixed')
-            })
-        
-        return {
-            "title": outline.get('title', topic.get('title', 'Video')),
-            "subject_area": outline.get('subject_area', 'general'),
-            "total_duration_seconds": sum(s['duration_seconds'] for s in sections),
-            "sections": sections
-        }
-    
+            # Track cost
+            self.cost_tracker.track_usage(response, self.MODEL)
+            
+            # Debug: check response
+            if not response or not hasattr(response, 'text'):
+                print(f"[ScriptGenerator] Section {section_idx + 1}: Empty response object")
+                return None
+            
+            response_text = response.text
+            if not response_text or not response_text.strip():
+                print(f"[ScriptGenerator] Section {section_idx + 1}: Empty response text")
+                # Check for safety/block reasons
+                if hasattr(response, 'candidates') and response.candidates:
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'finish_reason'):
+                        print(f"[ScriptGenerator] Finish reason: {candidate.finish_reason}")
+                    if hasattr(candidate, 'safety_ratings'):
+                        print(f"[ScriptGenerator] Safety ratings: {candidate.safety_ratings}")
+                return None
+            
+            print(f"[ScriptGenerator] Section {section_idx + 1}: Got {len(response_text)} chars response")
+            
+            section = self._parse_json_response(response_text)
+            
+            # Check if parse returned default (failed)
+            if section.get('title') == 'Mathematical Exploration':
+                print(f"[ScriptGenerator] Section {section_idx + 1}: JSON parse failed, response preview: {response_text[:300]}")
+                return None
+            
+            # Ensure required fields
+            section["id"] = section.get("id", section_outline.get("id", f"section_{section_idx}"))
+            section["title"] = section.get("title", section_outline.get("title", f"Part {section_idx + 1}"))
+            
+            return section
+            
+        except asyncio.TimeoutError:
+            print(f"[ScriptGenerator] Section {section_idx + 1}: Timeout after 120s")
+            return None
+        except Exception as e:
+            print(f"[ScriptGenerator] Section {section_idx + 1} failed: {type(e).__name__}: {e}")
+            return None
+
     def _segment_narrations(self, script: Dict[str, Any]) -> Dict[str, Any]:
         """Segment each section's narration into ~10 second audio chunks
         
@@ -960,6 +650,7 @@ Respond with JSON:
         3. Pass timing info to Gemini for video generation
         
         Each segment is designed to be ~10 seconds for good audio-video sync.
+        Segments only contain: text, estimated_duration, segment_index
         """
         import re
         
@@ -970,22 +661,8 @@ Respond with JSON:
                 continue
             
             segments = self._split_narration_into_segments(narration)
-            
-            # Add visual hints to each segment based on section's visual_description
-            section_visual = section.get("visual_description", "")
-            num_segments = len(segments)
-            for i, seg in enumerate(segments):
-                # Create segment-specific visual hint
-                if num_segments == 1:
-                    seg["visual_description"] = section_visual
-                else:
-                    # Add context about segment position
-                    if i == 0:
-                        seg["visual_description"] = f"INTRO: {section_visual}"
-                    elif i == num_segments - 1:
-                        seg["visual_description"] = f"CONCLUSION: {section_visual}"
-                    else:
-                        seg["visual_description"] = f"Part {i+1}/{num_segments}: {section_visual}"
+            # Segments only need: text, estimated_duration, segment_index
+            # Visual descriptions are NOT duplicated here - handled at render time
             
             section["narration_segments"] = segments
             
@@ -1197,7 +874,7 @@ Respond with JSON:
         if "sections" not in script or not script["sections"]:
             script["sections"] = self._default_script()["sections"]
         
-        # Ensure each section has required fields
+        # Ensure each section has required fields (minimal set)
         for i, section in enumerate(script["sections"]):
             if "id" not in section:
                 section["id"] = f"section_{i}"
@@ -1210,15 +887,8 @@ Respond with JSON:
             # Fallback: if no tts_narration, use narration (TTS will handle it)
             if "tts_narration" not in section:
                 section["tts_narration"] = section["narration"]
-            if "visual_description" not in section:
-                section["visual_description"] = "Show relevant visuals"
-            # Support both key_equations (old) and key_concepts (new)
-            if "key_equations" not in section and "key_concepts" not in section:
-                section["key_concepts"] = []
-            elif "key_equations" in section and "key_concepts" not in section:
-                section["key_concepts"] = section["key_equations"]
-            if "animation_type" not in section:
-                section["animation_type"] = "text"
+            # Remove legacy fields that are no longer needed
+            # visual_description, key_concepts, animation_type are handled by Manim generator
         
         # Calculate total duration
         script["total_duration_seconds"] = sum(s["duration_seconds"] for s in script["sections"])
@@ -1226,7 +896,7 @@ Respond with JSON:
         return script
     
     def _default_script(self) -> Dict[str, Any]:
-        """Return a default script structure"""
+        """Return a default script structure - minimal fields only"""
         return {
             "title": "Mathematical Exploration",
             "total_duration_seconds": 300,
@@ -1236,27 +906,21 @@ Respond with JSON:
                     "title": "Introduction",
                     "duration_seconds": 30,
                     "narration": "Welcome! Today we're going to explore a fascinating mathematical concept.",
-                    "visual_description": "Show the title text with a gradient background",
-                    "key_equations": [],
-                    "animation_type": "text"
+                    "tts_narration": "Welcome! Today we're going to explore a fascinating mathematical concept.",
                 },
                 {
                     "id": "main",
                     "title": "Main Concept",
                     "duration_seconds": 180,
                     "narration": "Let's dive into the core idea and build our intuition step by step.",
-                    "visual_description": "Animate the main mathematical concept with shapes and equations",
-                    "key_equations": [],
-                    "animation_type": "equation"
+                    "tts_narration": "Let's dive into the core idea and build our intuition step by step.",
                 },
                 {
                     "id": "conclusion",
                     "title": "Conclusion",
                     "duration_seconds": 30,
                     "narration": "And that's the beautiful idea at the heart of this topic. Thanks for watching!",
-                    "visual_description": "Show a summary of key points",
-                    "key_equations": [],
-                    "animation_type": "text"
+                    "tts_narration": "And that's the beautiful idea at the heart of this topic. Thanks for watching!",
                 }
             ]
         }

@@ -180,7 +180,6 @@ class VideoGenerator:
             
             if progress_callback:
                 progress_callback({"stage": "script", "progress": 100, "message": f"Script ready with {total_sections} sections"})
-            
             # Step 2: Process sections
             section_videos = []
             section_audios = []

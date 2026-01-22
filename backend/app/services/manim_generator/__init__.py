@@ -6,6 +6,7 @@ videos using Manim Community Edition and Google's Gemini AI.
 """
 
 import os
+import json
 import asyncio
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
@@ -35,6 +36,8 @@ from .prompts import (
     build_generation_prompt,
     build_timing_context,
     build_visual_script_prompt,
+    build_visual_script_analysis_prompt,
+    get_visual_script_analysis_schema,
     build_code_from_script_prompt,
 )
 from .code_utils import clean_code, create_scene_file
@@ -63,6 +66,13 @@ class ManimGenerator:
             self.client = genai.Client(api_key=api_key)
         else:
             raise ValueError("GEMINI_API_KEY environment variable is required")
+        
+        # Generation config with medium thinking for code generation
+        self.generation_config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(
+                thinking_level="MEDIUM",
+            ),
+        ) if types else None
         
         # Initialize cost tracker
         self.cost_tracker = CostTracker()
@@ -119,7 +129,9 @@ class ManimGenerator:
         # Generate Manim code using Gemini (2-shot approach)
         retry_note = f" (clean retry {clean_retry})" if clean_retry > 0 else ""
         print(f"[ManimGenerator] Generating code for section {section_index}{retry_note}")
-        manim_code, visual_script = await self._generate_manim_code(section, target_duration)
+        manim_code, visual_script = await self._generate_manim_code(
+            section, target_duration, output_dir=output_dir, section_index=section_index
+        )
         
         # Write the code to a temp file
         section_id = section.get("id", f"section_{section_index}").replace("-", "_").replace(" ", "_")
@@ -127,11 +139,7 @@ class ManimGenerator:
         
         code_file = Path(output_dir) / f"scene_{section_index}.py"
         
-        # Save visual script for debugging if available
-        if visual_script:
-            script_file = Path(output_dir) / f"visual_script_{section_index}.md"
-            with open(script_file, "w") as f:
-                f.write(visual_script)
+        # Visual script is already saved in _generate_manim_code immediately after generation
         
         # Create the full scene file with theme enforcement
         full_code = create_scene_file(manim_code, section_id, target_duration, style)
@@ -182,11 +190,24 @@ class ManimGenerator:
         """Render a Manim scene from existing code (e.g., translated code)"""
         return await renderer.render_from_code(self, manim_code, output_dir, section_index)
     
-    async def _generate_manim_code(self, section: Dict[str, Any], target_duration: float) -> Tuple[str, Optional[str]]:
+    async def _generate_manim_code(
+        self, 
+        section: Dict[str, Any], 
+        target_duration: float,
+        output_dir: Optional[str] = None,
+        section_index: int = 0
+    ) -> Tuple[str, Optional[str]]:
         """Use Gemini to generate Manim code for a section using 2-shot approach
         
         Shot 1: Generate detailed visual script with object descriptions, positions, timing
-        Shot 2: Convert visual script to Manim code
+        Shot 1.5: Quick spatial safety check with structured JSON output
+        Shot 2: Convert visual script to Manim code (with fixes if any)
+        
+        Args:
+            section: Section data
+            target_duration: Target duration in seconds
+            output_dir: Directory to save visual script immediately (optional)
+            section_index: Index of the section for naming the visual script file
         
         Returns:
             Tuple of (manim_code: str, visual_script: Optional[str])
@@ -226,11 +247,7 @@ class ManimGenerator:
                     self.client.models.generate_content,
                     model=self.MODEL,
                     contents=visual_script_prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.6,  # Slightly lower for more structured output
-                        top_p=0.95,
-                        top_k=40
-                    )
+                    config=self.generation_config
                 ),
                 timeout=180
             )
@@ -238,6 +255,13 @@ class ManimGenerator:
             self.cost_tracker.track_usage(response1, self.MODEL)
             visual_script = response1.text.strip()
             print(f"[ManimGenerator] Shot 1 complete: {len(visual_script)} chars")
+            
+            # Save visual script IMMEDIATELY after generation (before analysis)
+            if output_dir and visual_script:
+                script_file = Path(output_dir) / f"visual_script_{section_index}.md"
+                with open(script_file, "w") as f:
+                    f.write(visual_script)
+                print(f"[ManimGenerator] Visual script saved to {script_file}")
             
         except asyncio.TimeoutError:
             print(f"[ManimGenerator] Shot 1 timed out, falling back to single-shot")
@@ -247,7 +271,79 @@ class ManimGenerator:
             visual_script = None
         
         # ══════════════════════════════════════════════════════════════════════
-        # SHOT 2: Generate Manim Code from Visual Script
+        # SHOT 1.5: Analyze Visual Script for Spatial Issues (Structured Output)
+        # ══════════════════════════════════════════════════════════════════════
+        
+        spatial_fixes = []  # Will hold any fixes from analysis
+        
+        if visual_script:
+            print(f"[ManimGenerator] Shot 1.5: Checking visual script for spatial issues...")
+            
+            analysis_prompt = build_visual_script_analysis_prompt(
+                visual_script=visual_script,
+                audio_duration=audio_duration
+            )
+            
+            # Get the structured output schema
+            analysis_schema = get_visual_script_analysis_schema()
+            
+            try:
+                # Use structured output config if schema is available
+                if analysis_schema:
+                    analysis_config = types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=analysis_schema
+                    )
+                else:
+                    analysis_config = self.generation_config
+                
+                analysis_response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=self.CORRECTION_MODEL,  # Use cheaper model for analysis
+                        contents=analysis_prompt,
+                        config=analysis_config
+                    ),
+                    timeout=60  # Shorter timeout for quick check
+                )
+                
+                self.cost_tracker.track_usage(analysis_response, self.CORRECTION_MODEL)
+                analysis_text = analysis_response.text.strip()
+                
+                # Parse JSON response
+                try:
+                    analysis_result = json.loads(analysis_text)
+                    status = analysis_result.get('status', 'ok')
+                    issues_count = analysis_result.get('issues_found', 0)
+                    spatial_fixes = analysis_result.get('fixes', [])
+                    
+                    if status == 'ok':
+                        print(f"[ManimGenerator] Shot 1.5: Layout OK ✓")
+                    else:
+                        print(f"[ManimGenerator] Shot 1.5: Found {issues_count} issues, {len(spatial_fixes)} fixes")
+                    
+                    # Save analysis report
+                    if output_dir:
+                        analysis_file = Path(output_dir) / f"visual_script_analysis_{section_index}.json"
+                        with open(analysis_file, "w") as f:
+                            json.dump(analysis_result, f, indent=2)
+                        print(f"[ManimGenerator] Analysis saved to {analysis_file}")
+                        
+                except json.JSONDecodeError:
+                    print(f"[ManimGenerator] Shot 1.5: Could not parse JSON, skipping fixes")
+                    # Save raw response for debugging
+                    if output_dir:
+                        analysis_file = Path(output_dir) / f"visual_script_analysis_{section_index}.txt"
+                        with open(analysis_file, "w") as f:
+                            f.write(analysis_text)
+                    
+            except asyncio.TimeoutError:
+                print(f"[ManimGenerator] Shot 1.5 timed out, proceeding without fixes")
+            except Exception as e:
+                print(f"[ManimGenerator] Shot 1.5 error: {e}, proceeding without fixes")
+        
+        # ══════════════════════════════════════════════════════════════════════
+        # SHOT 2: Generate Manim Code from Visual Script (with fixes if any)
         # ══════════════════════════════════════════════════════════════════════
         
         if visual_script:
@@ -259,7 +355,8 @@ class ManimGenerator:
                 audio_duration=audio_duration,
                 language_instructions=language_instructions,
                 color_instructions=color_instructions,
-                type_guidance=type_guidance
+                type_guidance=type_guidance,
+                spatial_fixes=spatial_fixes if spatial_fixes else None
             )
             
             try:
@@ -268,11 +365,7 @@ class ManimGenerator:
                         self.client.models.generate_content,
                         model=self.MODEL,
                         contents=code_prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=0.5,  # Lower temperature for code generation
-                            top_p=0.95,
-                            top_k=40
-                        )
+                        config=self.generation_config
                     ),
                     timeout=180
                 )
@@ -309,11 +402,7 @@ class ManimGenerator:
                     self.client.models.generate_content,
                     model=self.MODEL,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.7,
-                        top_p=0.95,
-                        top_k=40
-                    )
+                    config=self.generation_config
                 ),
                 timeout=300
             )

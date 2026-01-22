@@ -1,0 +1,75 @@
+{
+  "id": "a5bb6f4a-f39a-42eb-8fd3-533e58c4c305",
+  "status": "completed",
+  "progress": 100,
+  "message": "Generated 1 video(s) successfully!",
+  "result": [
+    {
+      "video_id": "a5bb6f4a-f39a-42eb-8fd3-533e58c4c305",
+      "title": "Ma\u00eetriser l'Estimation Param\u00e9trique : M\u00e9thode des Moments et Maximum de Vraisemblance",
+      "duration": 890.3280000000001,
+      "chapters": [
+        {
+          "title": "Introduction : Le d\u00e9fi de l'estimation",
+          "start_time": 0,
+          "duration": 67.488
+        },
+        {
+          "title": "Fondations : Moments Th\u00e9oriques vs Moments Empiriques",
+          "start_time": 67.488,
+          "duration": 71.208
+        },
+        {
+          "title": "Le Principe de la M\u00e9thode des Moments (MM)",
+          "start_time": 138.696,
+          "duration": 60.792
+        },
+        {
+          "title": "Applications Directes : Bernoulli et Exponentielle",
+          "start_time": 199.488,
+          "duration": 95.064
+        },
+        {
+          "title": "Cas Complexe : La Loi de Puissance",
+          "start_time": 294.552,
+          "duration": 78.024
+        },
+        {
+          "title": "Le Lemme d'Application Continue (LAC)",
+          "start_time": 372.576,
+          "duration": 87.55200000000002
+        },
+        {
+          "title": "\u00c9tude Approfondie : La Variance Empirique",
+          "start_time": 460.12800000000004,
+          "duration": 87.12
+        },
+        {
+          "title": "La M\u00e9thode du Maximum de Vraisemblance (MV)",
+          "start_time": 547.248,
+          "duration": 72.048
+        },
+        {
+          "title": "L'Art de la Log-Vraisemblance",
+          "start_time": 619.296,
+          "duration": 87.43199999999999
+        },
+        {
+          "title": "Mise en \u0153uvre : EMV de la loi de Bernoulli",
+          "start_time": 706.7280000000001,
+          "duration": 107.23199999999999
+        },
+        {
+          "title": "Synth\u00e8se et Perspectives",
+          "start_time": 813.96,
+          "duration": 76.36800000000001
+        }
+      ],
+      "download_url": "/outputs/a5bb6f4a-f39a-42eb-8fd3-533e58c4c305/final_video.mp4",
+      "thumbnail_url": null
+    }
+  ],
+  "error": null,
+  "created_at": "2026-01-22T17:07:46.962260",
+  "updated_at": "2026-01-22T17:22:39.471399"
+}

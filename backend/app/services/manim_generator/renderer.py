@@ -413,6 +413,20 @@ async def correct_manim_code(
     # Build prompt using the prompts module
     prompt = build_correction_prompt(original_code, error_message, section)
 
+    # Only use thinking config for models that support it (gemini-3-flash-preview)
+    if is_last_attempt:
+        config = types.GenerateContentConfig(
+            system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
+            thinking_config=types.ThinkingConfig(thinking_level="MEDIUM"),
+            max_output_tokens=8192
+        )
+    else:
+        # CORRECTION_MODEL (gemini-2.5-flash) doesn't support thinking config
+        config = types.GenerateContentConfig(
+            system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
+            max_output_tokens=8192
+        )
+
     try:
         response = await asyncio.to_thread(
             generator.client.models.generate_content,
@@ -423,11 +437,7 @@ async def correct_manim_code(
                     parts=[types.Part.from_text(text=prompt)]
                 )
             ],
-            config=types.GenerateContentConfig(
-                system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
-                temperature=0.1,
-                max_output_tokens=8192
-            )
+            config=config
         )
         
         generator.cost_tracker.track_usage(response, model_to_use)
@@ -475,7 +485,7 @@ async def generate_visual_fix(
             model=generator.STRONG_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=0.2,
+                thinking_config=types.ThinkingConfig(thinking_level="MEDIUM"),
                 max_output_tokens=8192
             )
         )

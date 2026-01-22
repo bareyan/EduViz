@@ -323,24 +323,29 @@ Position reference:
 - RIGHT edge: x = +7.1 (safe: +6.0)
 
 ════════════════════════════════════════════════════════════════════════════════
-YOUR TASK: Create a Visual Script
+YOUR TASK: Create a Visual Script with Object Lifecycle Tracking
 ════════════════════════════════════════════════════════════════════════════════
 
 For each time segment, specify:
 
-1. **OBJECTS**: What visual elements appear
-   - Type: Text, MathTex, Shape, Diagram, Graph, etc.
-   - Content: Exact text/equation/shape
-   - Size: font_size or scale factor (keep text ≤36, equations scale ≤0.85)
+1. **NARRATION SCRIPT**: Full narration text with exact timestamps
+   - Start and end time for each spoken phrase
+   - Sync points between narration and visuals
 
-2. **POSITIONS**: Where each object is placed (CRITICAL!)
-   - Use coordinates or relative positioning
-   - Example: "center of screen (0, 0)", "top with buff=0.8 (0, 3.2)", "below title with buff=0.8"
+2. **OBJECTS with LIFECYCLE**: Each object MUST include:
+   - **id**: Unique identifier (e.g., obj_1, title_main, eq_bias)
+   - **type**: Text, MathTex, Shape, Diagram, Graph, Circle, Arrow, etc.
+   - **content**: Exact text/equation/shape specification
+   - **size**: font_size or scale factor (keep text ≤36, equations scale ≤0.85)
+   - **position**: Center point (x, y) coordinates
+   - **bounding_box**: Approximate bounds as (x_min, y_min, x_max, y_max)
+   - **appear_at**: Timestamp when object first becomes visible
+   - **hide_at**: Timestamp when object should be removed (or "end" if visible until end)
+
+3. **POSITIONS**: Where each object is placed (CRITICAL!)
+   - Use exact (x, y) coordinates for center point
+   - Calculate bounding box based on content size
    - NEVER place objects outside safe zone!
-
-3. **TIMING**: When things happen
-   - Start time and duration for each action
-   - How long to wait/display
 
 4. **ANIMATIONS**: How objects appear/transform
    - Entry: FadeIn, Write, Create, GrowFromCenter
@@ -350,6 +355,19 @@ For each time segment, specify:
 5. **SPACING**: Gaps between elements
    - Minimum vertical gap: 0.6-0.8 units
    - Minimum horizontal gap: 0.5-0.6 units
+
+════════════════════════════════════════════════════════════════════════════════
+BOUNDING BOX ESTIMATION GUIDE
+════════════════════════════════════════════════════════════════════════════════
+Estimate bounding boxes based on content:
+- Text (font_size 32): ~0.15 units height per line, ~0.08 units width per character
+- Text (font_size 36): ~0.18 units height per line, ~0.09 units width per character
+- MathTex (scale 0.8): ~0.8-1.2 units height, width varies with equation length
+- Circle: radius defines bounds, box is (cx-r, cy-r, cx+r, cy+r)
+- Arrow: box from start point to end point with small padding
+
+For position (cx, cy) and estimated (width, height):
+  bounding_box = (cx - width/2, cy - height/2, cx + width/2, cy + height/2)
 
 ════════════════════════════════════════════════════════════════════════════════
 OUTPUT FORMAT
@@ -363,35 +381,60 @@ TOTAL DURATION: {audio_duration:.1f}s
 ---
 
 ## SEGMENT 1: [0.0s - X.Xs]
-**Narration summary**: "..."
 
-**Objects**:
-1. [ObjectType] "content" | size: X | position: (x, y) or description
-2. ...
+### Narration Script:
+```
+[0.0s - 2.5s] "First phrase of narration..."
+[2.5s - 5.0s] "Second phrase continues..."
+```
 
-**Actions**:
-- [0.0s] Animation(object) | run_time: Xs
-- [X.Xs] self.wait(Xs)
-- ...
+### Objects:
+| id | type | content | size | position (cx, cy) | bounding_box (x_min, y_min, x_max, y_max) | appear_at | hide_at |
+|----|------|---------|------|-------------------|-------------------------------------------|-----------|---------|
+| title_1 | Text | "Title Here" | 42 | (0, 3.5) | (-2.0, 3.3, 2.0, 3.7) | 0.0s | 8.8s |
+| eq_main | MathTex | "E[X] = \\mu" | 0.8 | (0, 1.5) | (-1.5, 1.0, 1.5, 2.0) | 3.0s | end |
+| arrow_1 | Arrow | from (a,b) to (c,d) | - | (mid_x, mid_y) | (a, min(b,d), c, max(b,d)) | 4.0s | 8.8s |
 
-**Layout notes**: Any spacing/positioning considerations
+### Actions:
+- [0.0s] Write(title_1) | run_time: 1.5s
+- [1.5s] FadeIn(eq_main) | run_time: 1.0s
+- [4.0s] GrowArrow(arrow_1) | run_time: 1.0s
+- [5.0s] self.wait(3.8s)
+
+### Layout notes: Any spacing/positioning considerations
 
 ---
 
 ## SEGMENT 2: [X.Xs - Y.Ys]
-**Narration summary**: "..."
 
-**Cleanup first**: FadeOut(previous_objects) if needed
+### Narration Script:
+```
+[X.Xs - Y.0s] "Narration for this segment..."
+```
 
-**Objects**:
+### Cleanup:
+- [X.Xs] FadeOut(title_1, arrow_1) | run_time: 1.0s
+
+### Objects:
+| id | type | content | size | position (cx, cy) | bounding_box (x_min, y_min, x_max, y_max) | appear_at | hide_at |
+|----|------|---------|------|-------------------|-------------------------------------------|-----------|---------|
 ...
 
-**Actions**:
+### Actions:
 ...
 
 ---
 
 (Continue for all segments)
+
+---
+## OBJECT LIFECYCLE SUMMARY
+| id | type | appear_at | hide_at | total_visible_duration |
+|----|------|-----------|---------|------------------------|
+| title_1 | Text | 0.0s | 8.8s | 8.8s |
+| eq_main | MathTex | 3.0s | end | (duration - 3.0)s |
+...
+---
 
 ---
 FINAL TIMING CHECK:
@@ -400,8 +443,148 @@ FINAL TIMING CHECK:
 - Combined: {audio_duration:.1f}s ✓
 ---
 
-Be VERY SPECIFIC about positions. Use exact coordinates when possible.
-Ensure NO overlaps and NO off-screen content."""
+Be VERY SPECIFIC about positions and bounding boxes.
+Ensure NO overlaps and NO off-screen content.
+Track every object's full lifecycle from appearance to removal."""
+
+
+# Schema for structured visual script analysis output
+def get_visual_script_analysis_schema():
+    """Returns the JSON schema for visual script spatial analysis.
+    
+    This is used with Gemini's structured output feature for reliable parsing.
+    """
+    try:
+        from google import genai
+        
+        return genai.types.Schema(
+            type=genai.types.Type.OBJECT,
+            required=["status", "issues_found", "fixes"],
+            properties={
+                "status": genai.types.Schema(
+                    type=genai.types.Type.STRING,
+                    description="Overall status: 'ok' if no issues, 'needs_fixes' if issues found",
+                    enum=["ok", "needs_fixes"]
+                ),
+                "issues_found": genai.types.Schema(
+                    type=genai.types.Type.INTEGER,
+                    description="Total number of spatial issues detected"
+                ),
+                "fixes": genai.types.Schema(
+                    type=genai.types.Type.ARRAY,
+                    description="List of fixes/considerations for the Manim code generator. Empty if status is 'ok'.",
+                    items=genai.types.Schema(
+                        type=genai.types.Type.OBJECT,
+                        required=["object_id", "issue_type", "severity", "description", "fix_instruction"],
+                        properties={
+                            "object_id": genai.types.Schema(
+                                type=genai.types.Type.STRING,
+                                description="ID of the object with the issue (from visual script)"
+                            ),
+                            "issue_type": genai.types.Schema(
+                                type=genai.types.Type.STRING,
+                                description="Type of issue detected",
+                                enum=["overflow_left", "overflow_right", "overflow_top", "overflow_bottom", "overlap", "too_large", "spacing_tight"]
+                            ),
+                            "severity": genai.types.Schema(
+                                type=genai.types.Type.STRING,
+                                description="How critical the issue is",
+                                enum=["critical", "warning"]
+                            ),
+                            "description": genai.types.Schema(
+                                type=genai.types.Type.STRING,
+                                description="Brief description of what's wrong"
+                            ),
+                            "fix_instruction": genai.types.Schema(
+                                type=genai.types.Type.STRING,
+                                description="Specific instruction for fixing: e.g., 'move to (x, y)', 'reduce scale to 0.7', 'add buff=0.8 between objects'"
+                            ),
+                            "affects_objects": genai.types.Schema(
+                                type=genai.types.Type.ARRAY,
+                                description="Other object IDs affected (for overlaps)",
+                                items=genai.types.Schema(type=genai.types.Type.STRING)
+                            ),
+                            "time_range": genai.types.Schema(
+                                type=genai.types.Type.STRING,
+                                description="Time range when issue occurs, e.g., '5.0s - 12.0s'"
+                            )
+                        }
+                    )
+                )
+            }
+        )
+    except ImportError:
+        return None
+
+
+def build_visual_script_analysis_prompt(
+    visual_script: str,
+    audio_duration: float
+) -> str:
+    """Build prompt for quick safety check of visual script spatial layout.
+    
+    This is a lightweight check that validates the visual script and outputs
+    structured JSON with any fixes needed for the Manim code generator.
+    """
+    
+    return f"""You are an expert visual layout validator for Manim animations. Quickly check this visual script for spatial safety issues.
+
+════════════════════════════════════════════════════════════════════════════════
+VISUAL SCRIPT TO CHECK
+════════════════════════════════════════════════════════════════════════════════
+{visual_script}
+
+════════════════════════════════════════════════════════════════════════════════
+SAFETY BOUNDARIES
+════════════════════════════════════════════════════════════════════════════════
+Manim safe zone (objects must stay within):
+- HORIZONTAL: x ∈ [-6.0, +6.0]  (frame edge is ±7.1)
+- VERTICAL: y ∈ [-3.2, +3.2]  (frame edge is ±4.0)
+
+════════════════════════════════════════════════════════════════════════════════
+SIZE REFERENCE (for estimating if content fits)
+════════════════════════════════════════════════════════════════════════════════
+Text width ≈ 0.15 * font_size/32 * character_count
+Text height ≈ 0.45 * font_size/32
+MathTex: roughly 0.25 units per symbol, scale factor applies
+Long equations (>15 symbols) risk horizontal overflow
+Stacked elements need ~0.6-0.8 units vertical spacing
+
+════════════════════════════════════════════════════════════════════════════════
+CHECK FOR THESE ISSUES
+════════════════════════════════════════════════════════════════════════════════
+
+1. **OVERFLOW**: Object's bounding box extends beyond safe zone
+   - Check if position + estimated size exceeds boundaries
+   - Long text/equations near edges are high risk
+
+2. **OVERLAP**: Two objects visible at the same time occupy the same space
+   - Compare bounding boxes of simultaneously visible objects
+   - Ignore if objects are cleaned up before new ones appear
+
+3. **TIGHT SPACING**: Objects too close together (< 0.5 units apart)
+   - Check vertical/horizontal gaps between adjacent objects
+
+4. **TOO LARGE**: Content that won't fit even when centered
+   - Very long equations or text blocks
+
+════════════════════════════════════════════════════════════════════════════════
+OUTPUT
+════════════════════════════════════════════════════════════════════════════════
+
+Return JSON with:
+- "status": "ok" if everything is safe, "needs_fixes" if issues found
+- "issues_found": count of issues
+- "fixes": array of fix instructions (empty if status is "ok")
+
+Each fix should include:
+- object_id: which object has the issue
+- issue_type: overflow_left/right/top/bottom, overlap, too_large, spacing_tight
+- severity: "critical" (will definitely cause problems) or "warning" (might be ok)
+- description: what's wrong
+- fix_instruction: specific fix like "move to (-3.0, 2.0)" or "scale to 0.7"
+
+Be concise. Only report real issues that will cause visual problems."""
 
 
 def build_code_from_script_prompt(
@@ -410,12 +593,47 @@ def build_code_from_script_prompt(
     audio_duration: float,
     language_instructions: str,
     color_instructions: str,
-    type_guidance: str
+    type_guidance: str,
+    spatial_fixes: Optional[List[Dict[str, Any]]] = None
 ) -> str:
-    """Build prompt for Shot 2: Generate Manim code from visual script"""
+    """Build prompt for Shot 2: Generate Manim code from visual script
+    
+    Args:
+        section: Section data
+        visual_script: The visual script to implement
+        audio_duration: Target duration in seconds
+        language_instructions: Language-specific instructions
+        color_instructions: Color/style instructions
+        type_guidance: Animation type guidance
+        spatial_fixes: Optional list of spatial fixes from analysis phase
+    """
     
     title = section.get('title', 'Untitled')
     narration = section.get('narration', section.get('tts_narration', ''))
+    
+    # Build spatial fixes section if provided
+    spatial_fixes_section = ""
+    if spatial_fixes and len(spatial_fixes) > 0:
+        fixes_text = []
+        for fix in spatial_fixes:
+            severity = fix.get('severity', 'warning').upper()
+            obj_id = fix.get('object_id', 'unknown')
+            issue = fix.get('issue_type', 'unknown')
+            desc = fix.get('description', '')
+            instruction = fix.get('fix_instruction', '')
+            fixes_text.append(f"  - [{severity}] {obj_id}: {issue} - {desc}\n    → FIX: {instruction}")
+        
+        spatial_fixes_section = f"""
+════════════════════════════════════════════════════════════════════════════════
+⚠️ SPATIAL FIXES REQUIRED (from layout analysis)
+════════════════════════════════════════════════════════════════════════════════
+The visual script was analyzed and the following issues need to be addressed
+when generating code. Apply these fixes to avoid overflow/overlap problems:
+
+{chr(10).join(fixes_text)}
+
+Apply these fixes when positioning objects. The visual script positions may need adjustment.
+"""
     
     return f"""You are an expert Manim Community Edition programmer. Generate Python code for the construct(self) method body.
 
@@ -424,7 +642,7 @@ def build_code_from_script_prompt(
 ════════════════════════════════════════════════════════════════════════════════
 Your animation MUST run for EXACTLY {audio_duration:.1f} seconds total.
 Sum of all run_time values + all self.wait() calls MUST equal {audio_duration:.1f}s.
-
+{spatial_fixes_section}
 ════════════════════════════════════════════════════════════════════════════════
 VISUAL SCRIPT TO IMPLEMENT
 ════════════════════════════════════════════════════════════════════════════════
