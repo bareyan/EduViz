@@ -418,13 +418,11 @@ async def correct_manim_code(
         config = types.GenerateContentConfig(
             system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
             thinking_config=types.ThinkingConfig(thinking_level="MEDIUM"),
-            max_output_tokens=8192
         )
     else:
         # CORRECTION_MODEL (gemini-2.5-flash) doesn't support thinking config
         config = types.GenerateContentConfig(
             system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
-            max_output_tokens=8192
         )
 
     try:
@@ -485,8 +483,7 @@ async def generate_visual_fix(
             model=generator.STRONG_MODEL,
             contents=prompt,
             config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_level="MEDIUM"),
-                max_output_tokens=8192
+                thinking_config=types.ThinkingConfig(thinking_level="LOW"),
             )
         )
         

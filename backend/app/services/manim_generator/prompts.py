@@ -309,18 +309,31 @@ Full Narration:
 {narration}
 
 ════════════════════════════════════════════════════════════════════════════════
-⚠️ CRITICAL: FRAME BOUNDARIES
+⚠️ CRITICAL LAYOUT & PACING RULES
 ════════════════════════════════════════════════════════════════════════════════
-Manim frame dimensions (MUST RESPECT):
-- HORIZONTAL: -7.1 to +7.1 (SAFE ZONE: -6.0 to +6.0)
-- VERTICAL: -4.0 to +4.0 (SAFE ZONE: -3.2 to +3.2)
-- ORIGIN (0, 0) is the center of the screen
+1. **SAFE ZONE**: All content MUST fit within x=[-6, +6], y=[-3, +3].
+   - **Header/Footer**: Reserve y > 3.0 for Titles, y < -3.0 for subtitles.
+   - **Body**: Main content goes in the center box (-6 to +6, -3 to +3).
 
-Position reference:
-- UP edge: y = +4.0 (safe: +3.2)
-- DOWN edge: y = -4.0 (safe: -3.2)
-- LEFT edge: x = -7.1 (safe: -6.0)
-- RIGHT edge: x = +7.1 (safe: +6.0)
+2. **AVOID CLUTTER**:
+   - MAX 4 visual elements (groups/equations) on screen at once.
+   - If new content arrives and screen is full -> **CLEAN UP** (`FadeOut`) old content first!
+   - **Sequential Display**: Do NOT dump everything at once. Reveal step-by-step.
+
+3. **TEXT HANDLING**:
+   - Split long sentences into multiple short lines (Max 8-10 words per line).
+   - NEVER place text on top of equations.
+   - Use `next_to(prev_obj, DOWN)` to naturally flow content.
+
+4. **BOUNDING BOX REALISM**:
+   - Text(size 36) is TALLER than you think (~0.5 units).
+   - MathTex(size 48) is WIDE. 
+   - Always assume objects are 20% larger than minimum to be safe.
+
+5. **MATH vs TEXT**:
+   - Variables ($x$, $y$, $\\alpha$) MUST be `MathTex`.
+   - Normal words MUST be `Text`.
+   - Never write `Text("alpha")` -> Use `MathTex(r"\\alpha")`.
 
 ════════════════════════════════════════════════════════════════════════════════
 YOUR TASK: Create a Visual Script with Object Lifecycle Tracking
@@ -643,6 +656,29 @@ Apply these fixes when positioning objects. The visual script positions may need
 Your animation MUST run for EXACTLY {audio_duration:.1f} seconds total.
 Sum of all run_time values + all self.wait() calls MUST equal {audio_duration:.1f}s.
 {spatial_fixes_section}
+
+════════════════════════════════════════════════════════════════════════════════
+🛑 ANTI-OVERFLOW CODING RULES (MANDATORY) 🛑
+════════════════════════════════════════════════════════════════════════════════
+1. **SAFE AUTOSCALING**:
+   - For ANY MathTex or Text that might be long:
+     `obj.scale_to_fit_width(11)`  # Ensures it fits width-wise
+   - For groups of text:
+     `group.scale_to_fit_height(6)` # Ensures it fits height-wise
+
+2. **LAYOUT MANAGEMENT**:
+   - **Prefer**: `VGroup().arrange(DOWN, buff=0.5)` over manual positioning.
+   - **Prefer**: `obj.next_to(prev, DOWN)` over `obj.move_to(...)`.
+   - **Avoid**: Absolute coordinates > 6.0 in X or > 3.0 in Y.
+
+3. **TEXT FORMAT**:
+   - Use `Paragraph("Line 1", "Line 2", alignment="center")` for multi-line text.
+   - Or `Text("Long sentence...", width=10)` to force wrapping.
+
+4. **CLEAN TRANSITIONS**:
+   - If swapping huge formulas: `self.play(ReplacementTransform(old, new))`
+   - ALWAYS verify you aren't writing on top of existing objects.
+
 ════════════════════════════════════════════════════════════════════════════════
 VISUAL SCRIPT TO IMPLEMENT
 ════════════════════════════════════════════════════════════════════════════════
@@ -676,14 +712,30 @@ Position translation:
 - "(x, y)" coordinates → .move_to(np.array([x, y, 0])) or .move_to(RIGHT*x + UP*y)
 
 Spacing rules:
-- ALL .next_to() calls: use buff=0.6 minimum (0.8 preferred)
-- ALL .to_edge() calls: use buff=0.8 minimum
-- ALL .arrange() calls: use buff=0.5 minimum
+- **AVOID OVERLAPS**: When placing B below A, `B.next_to(A, DOWN, buff=0.8)` is SAFER than manual coordinates.
+- ALL .next_to() calls: use `buff=0.8` minimum for vertical stacking.
+- ALL .to_edge() calls: use `buff=0.8` minimum.
+- ALL .arrange() calls: use `buff=0.5` minimum and `aligned_edge=LEFT` for text lists.
 
-Size rules:
-- Titles: font_size=36-40
-- Body text: font_size=26-32
-- Equations: ALWAYS add .scale(0.75-0.85)
+Size rules - STANDARDIZED:
+- **Titles**: `font_size=40` (consistent across all scenes)
+- **Subtitles/Headers**: `font_size=32`
+- **Body Text**: `font_size=28` (max 30 if sparse)
+- **Labels/captions**: `font_size=24`
+- **Math Equations**: `MathTex(...).scale(0.8)` (approx matches 36pt text)
+
+LaTeX vs Text Rules - STRICT ENFORCEMENT:
+1. **Math Mode**: ALWAYS use `MathTex(r"...")` for anything that is a variable, number, or formula.
+   - ❌ WRONG: `Text("x = 5")`, `Text("alpha")`, `Text("30%")`, `Text("H2O")`, `Text("v_0")`
+   - ✅ CORRECT: `MathTex(r"x = 5")`, `MathTex(r"\alpha")`, `MathTex(r"30\%")`, `MathTex(r"H_2O")`, `MathTex(r"v_0")`
+   - **MANDATORY**: Even single variables like "x" MUST be `MathTex(r"x")`.
+2. **Plain Text**: Use `Text("...")` for descriptions and sentences.
+   - Example: `Text("The limit diverges")`
+3. **Mixed Content**: 
+   - ❌ NEVER mix simple text descriptions with latex symbols in `Text()`.
+   - ❌ NEVER put long English sentences in `MathTex()`.
+   - ✅ SPLIT THEM: `VGroup(Text("Velocity"), MathTex(r"v_0"), Text("is constant")).arrange(RIGHT)`
+   - ✅ `Text()` cannot render LaTeX commands like `\frac`, `^`, `_`, `\alpha`.
 
 ════════════════════════════════════════════════════════════════════════════════
 COMMON PATTERNS
@@ -698,11 +750,15 @@ new_content = Text("New", font_size=32).move_to(ORIGIN)
 self.play(FadeIn(new_content))
 
 # VGroup with safe spacing:
-items = VGroup(*elements).arrange(DOWN, buff=0.6, aligned_edge=LEFT)
-items.next_to(title, DOWN, buff=0.8)
+items = VGroup(*elements).arrange(DOWN, buff=0.8, aligned_edge=LEFT)
+items.next_to(title, DOWN, buff=1.0) # Larger gap after title to avoid overlap
 
 # Scale equation to safe size:
 eq = MathTex(r"\\frac{{a}}{{b}} = c").scale(0.8).move_to(ORIGIN)
+
+# Sequential text (safer than manual):
+line1 = Text("First Line")
+line2 = Text("Second Line").next_to(line1, DOWN, buff=0.8) # Explicit next_to prevents overlap
 
 ════════════════════════════════════════════════════════════════════════════════
 SYNTAX REQUIREMENTS
@@ -1241,9 +1297,9 @@ Content MUST stay within safe zone to avoid cutoff!
 - For VGroups: items.arrange(DOWN, buff=0.6, aligned_edge=LEFT)
 
 **FOR OVERFLOW/CLIPPING/OFF-SCREEN:**
+- **MANDATORY**: Use `.scale_to_fit_width(12.0)` on wide groups/equations.
+- **MANDATORY**: Use `.scale_to_fit_height(6.0)` on tall groups.
 - SCALE DOWN: Add .scale(0.7) or .scale(0.75) to large elements
-- Use .scale_to_fit_width(12.0) for wide content
-- Use .scale_to_fit_height(5.5) for tall content
 - INCREASE edge buffers: .to_edge(UP, buff=0.8) not buff=0.3
 - RECENTER: Use .move_to(ORIGIN) or .move_to(DOWN * 0.5)
 - For equations: .scale(0.75) is usually needed

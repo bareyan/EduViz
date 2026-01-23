@@ -55,7 +55,7 @@ class ManimGenerator:
     MAX_CLEAN_RETRIES = 1
     
     # Visual QC settings
-    ENABLE_VISUAL_QC = True  # Toggle: Set to True to enable visual QC
+    ENABLE_VISUAL_QC = False  # Toggle: Set to True to enable visual QC
     QC_MODEL = "gemini-flash-lite-latest"
     MAX_QC_ITERATIONS = 3  # Allow up to 3 fix attempts before accepting
     
@@ -70,7 +70,7 @@ class ManimGenerator:
         # Generation config with medium thinking for code generation
         self.generation_config = types.GenerateContentConfig(
             thinking_config=types.ThinkingConfig(
-                thinking_level="MEDIUM",
+                thinking_level="LOW",
             ),
         ) if types else None
         
