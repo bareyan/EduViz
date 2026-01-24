@@ -9,6 +9,22 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
+# Model configuration
+from .models import (
+    ModelConfig,
+    ThinkingLevel,
+    PipelineModels,
+    ACTIVE_PIPELINE,
+    DEFAULT_PIPELINE_MODELS,
+    HIGH_QUALITY_PIPELINE,
+    COST_OPTIMIZED_PIPELINE,
+    AVAILABLE_MODELS,
+    THINKING_CAPABLE_MODELS,
+    get_model_config,
+    get_thinking_config,
+    list_pipeline_steps,
+)
+
 # Base directories
 APP_DIR = Path(__file__).parent.parent
 BACKEND_DIR = APP_DIR.parent

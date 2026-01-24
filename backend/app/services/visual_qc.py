@@ -25,6 +25,9 @@ except ImportError:
     GEMINI_AVAILABLE = False
     print("[VisualQC] Warning: google-genai package not installed. Run: pip install google-genai")
 
+# Model configuration
+from app.config.models import get_model_config
+
 
 class VisualQualityController:
     """
@@ -33,8 +36,9 @@ class VisualQualityController:
     Uses structured output for reliable error detection
     """
     
-    # Gemini Flash Lite for fast, cheap vision analysis
-    DEFAULT_MODEL = "gemini-flash-lite-latest"
+    # Model configuration - loaded from centralized config
+    _config = get_model_config("visual_qc")
+    DEFAULT_MODEL = _config.model_name
     
     # Video processing settings
     TARGET_HEIGHT = 480  # 480p

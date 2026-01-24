@@ -1,0 +1,306 @@
+"""
+Model Configuration for Pipeline Steps
+
+This module defines all AI models used throughout the video generation pipeline.
+Each pipeline step has its own model configuration, allowing for easy tuning
+and experimentation with different models.
+
+Thinking Levels (for gemini-3-flash-preview and gemini-3-pro-preview):
+    - LOW: Minimal reasoning, fastest responses
+    - MEDIUM: Balanced reasoning and speed
+    - HIGH: Deep reasoning, slower but more accurate
+"""
+
+from enum import Enum
+from typing import Optional
+from dataclasses import dataclass, field
+
+
+class ThinkingLevel(str, Enum):
+    """Thinking budget levels for Gemini 3 models"""
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    NONE = None  # For models that don't support thinking
+
+
+@dataclass
+class ModelConfig:
+    """Configuration for a single model"""
+    model_name: str
+    thinking_level: Optional[ThinkingLevel] = None
+    description: str = ""
+    
+    @property
+    def supports_thinking(self) -> bool:
+        """Check if this model supports thinking configuration"""
+        return self.model_name in THINKING_CAPABLE_MODELS
+
+
+# Models that support thinking configuration
+THINKING_CAPABLE_MODELS = [
+    "gemini-3-flash-preview",
+    "gemini-3-pro-preview",
+]
+
+# Available models
+AVAILABLE_MODELS = [
+    # Gemini 3 Preview (with thinking support)
+    "gemini-3-flash-preview",
+    "gemini-3-pro-preview",
+    
+    # Gemini 2.5
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    
+    # Gemini 2.0 Flash Lite
+    "gemini-flash-lite-latest",
+    
+    # Legacy
+    "gemini-2.0-flash",
+]
+
+
+@dataclass
+class PipelineModels:
+    """
+    Model configuration for each step of the video generation pipeline.
+    
+    Pipeline Steps:
+    1. Analysis - Analyze uploaded documents/images
+    2. Script Generation - Create video script with chapters
+    3. Language Detection - Detect document language
+    4. Translation - Translate content if needed
+    5. Manim Generation - Generate Manim animation code
+    6. Code Correction - Fix errors in generated code
+    7. Visual QC - Quality control of rendered videos
+    8. Code Fix (Manual) - User-requested code fixes
+    """
+    
+    # Step 1: Material Analysis
+    # Analyzes PDFs, images, and text files to extract content
+    analysis: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-flash-lite-latest",
+        thinking_level=None,
+        description="Fast analysis of uploaded materials"
+    ))
+    
+    # Step 2: Script Generation (Two-phase)
+    # Phase 1: Create detailed video script with chapters and narration
+    script_generation: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-3-flash-preview",
+        thinking_level=ThinkingLevel.MEDIUM,
+        description="Generate comprehensive video scripts"
+    ))
+    
+    # Step 3: Language Detection
+    # Detect the language of the source document
+    language_detection: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-flash-lite-latest",
+        thinking_level=None,
+        description="Quick language detection"
+    ))
+    
+    # Step 4: Translation
+    # Translate content between languages
+    translation: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-flash-lite-latest",
+        thinking_level=None,
+        description="Efficient content translation"
+    ))
+    
+    # Step 5: Manim Code Generation
+    # Generate Manim animation code from script
+    manim_generation: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-3-pro-preview",
+        thinking_level=ThinkingLevel.HIGH,
+        description="Generate Manim animation code"
+    ))
+    
+    # Step 6a: Code Correction (Primary)
+    # Fix errors in generated Manim code - first attempts
+    code_correction: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-flash-lite-latest",
+        thinking_level=None,
+        description="Fast code error correction"
+    ))
+    
+    # Step 6b: Code Correction (Strong Fallback)
+    # Fix errors when primary correction fails - final attempts
+    code_correction_strong: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-3-flash-preview",
+        thinking_level=ThinkingLevel.MEDIUM,
+        description="Stronger model for complex code fixes"
+    ))
+    
+    # Step 7: Visual Quality Control
+    # Analyze rendered videos for visual issues
+    visual_qc: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-flash-lite-latest",
+        thinking_level=None,
+        description="Fast visual quality analysis"
+    ))
+    
+    # Step 8: Manual Code Fix
+    # User-requested code improvements via API
+    manual_code_fix: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-3-flash-preview",
+        thinking_level=ThinkingLevel.LOW,
+        description="Interactive code fixing"
+    ))
+
+
+# Default pipeline configuration
+DEFAULT_PIPELINE_MODELS = PipelineModels()
+
+
+# Alternative configurations for different use cases
+
+# High Quality - Use stronger models with more thinking
+HIGH_QUALITY_PIPELINE = PipelineModels(
+    analysis=ModelConfig(
+        model_name="gemini-2.5-flash",
+        thinking_level=None,
+        description="Higher quality analysis"
+    ),
+    script_generation=ModelConfig(
+        model_name="gemini-3-pro-preview",
+        thinking_level=ThinkingLevel.HIGH,
+        description="Deep reasoning for script generation"
+    ),
+    language_detection=ModelConfig(
+        model_name="gemini-flash-lite-latest",
+        thinking_level=None,
+        description="Quick language detection"
+    ),
+    translation=ModelConfig(
+        model_name="gemini-2.5-flash",
+        thinking_level=None,
+        description="Higher quality translation"
+    ),
+    manim_generation=ModelConfig(
+        model_name="gemini-3-pro-preview",
+        thinking_level=ThinkingLevel.MEDIUM,
+        description="High quality Manim generation"
+    ),
+    code_correction=ModelConfig(
+        model_name="gemini-2.5-flash",
+        thinking_level=None,
+        description="Fast code correction"
+    ),
+    code_correction_strong=ModelConfig(
+        model_name="gemini-3-pro-preview",
+        thinking_level=ThinkingLevel.HIGH,
+        description="Deep reasoning for complex fixes"
+    ),
+    visual_qc=ModelConfig(
+        model_name="gemini-2.5-flash",
+        thinking_level=None,
+        description="Better visual analysis"
+    ),
+    manual_code_fix=ModelConfig(
+        model_name="gemini-3-pro-preview",
+        thinking_level=ThinkingLevel.MEDIUM,
+        description="High quality code fixes"
+    ),
+)
+
+
+# Cost Optimized - Use cheapest models everywhere
+COST_OPTIMIZED_PIPELINE = PipelineModels(
+    analysis=ModelConfig(
+        model_name="gemini-flash-lite-latest",
+        thinking_level=None,
+        description="Budget analysis"
+    ),
+    script_generation=ModelConfig(
+        model_name="gemini-2.5-flash",
+        thinking_level=None,
+        description="Cost-effective script generation"
+    ),
+    language_detection=ModelConfig(
+        model_name="gemini-flash-lite-latest",
+        thinking_level=None,
+        description="Quick language detection"
+    ),
+    translation=ModelConfig(
+        model_name="gemini-flash-lite-latest",
+        thinking_level=None,
+        description="Budget translation"
+    ),
+    manim_generation=ModelConfig(
+        model_name="gemini-2.5-flash",
+        thinking_level=None,
+        description="Budget Manim generation"
+    ),
+    code_correction=ModelConfig(
+        model_name="gemini-flash-lite-latest",
+        thinking_level=None,
+        description="Budget code correction"
+    ),
+    code_correction_strong=ModelConfig(
+        model_name="gemini-2.5-flash",
+        thinking_level=None,
+        description="Fallback code correction"
+    ),
+    visual_qc=ModelConfig(
+        model_name="gemini-flash-lite-latest",
+        thinking_level=None,
+        description="Budget visual QC"
+    ),
+    manual_code_fix=ModelConfig(
+        model_name="gemini-2.5-flash",
+        thinking_level=None,
+        description="Budget code fixes"
+    ),
+)
+
+
+# Current active configuration
+# Change this to switch between configurations
+ACTIVE_PIPELINE = DEFAULT_PIPELINE_MODELS
+
+
+def get_model_config(step: str) -> ModelConfig:
+    """
+    Get the model configuration for a specific pipeline step.
+    
+    Args:
+        step: Pipeline step name (e.g., 'analysis', 'script_generation')
+        
+    Returns:
+        ModelConfig for the specified step
+    """
+    if hasattr(ACTIVE_PIPELINE, step):
+        return getattr(ACTIVE_PIPELINE, step)
+    raise ValueError(f"Unknown pipeline step: {step}")
+
+
+def get_thinking_config(model_config: ModelConfig):
+    """
+    Get the thinking configuration for Gemini API calls.
+    
+    Args:
+        model_config: The model configuration
+        
+    Returns:
+        ThinkingConfig dict or None if thinking is not supported
+    """
+    if model_config.thinking_level and model_config.supports_thinking:
+        return {"thinking_level": model_config.thinking_level.value}
+    return None
+
+
+def list_pipeline_steps() -> list[str]:
+    """List all available pipeline step names"""
+    return [
+        "analysis",
+        "script_generation", 
+        "language_detection",
+        "translation",
+        "manim_generation",
+        "code_correction",
+        "code_correction_strong",
+        "visual_qc",
+        "manual_code_fix",
+    ]

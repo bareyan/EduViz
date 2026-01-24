@@ -19,6 +19,13 @@ except ImportError:
     genai = None
     types = None
 
+# Model configuration
+from app.config.models import (
+    ACTIVE_PIPELINE,
+    get_model_config,
+    get_thinking_config,
+)
+
 # Visual Quality Control
 try:
     from ..visual_qc import VisualQualityController
@@ -47,16 +54,22 @@ from . import renderer
 class ManimGenerator:
     """Generates Manim animations using Gemini AI"""
     
-    # Model configuration
-    MODEL = "gemini-3-flash-preview"  # Main generation
-    CORRECTION_MODEL = "gemini-2.5-flash"  # Cheap model for corrections
-    STRONG_MODEL = "gemini-3-flash-preview"  # Strong fallback for visual fixes
-    MAX_CORRECTION_ATTEMPTS = 2
+    # Model configuration - loaded from centralized config
+    _manim_config = get_model_config("manim_generation")
+    _correction_config = get_model_config("code_correction")
+    _correction_strong_config = get_model_config("code_correction_strong")
+    _visual_qc_config = get_model_config("visual_qc")
+    
+    MODEL = _manim_config.model_name
+    CORRECTION_MODEL = _correction_config.model_name
+    STRONG_MODEL = _correction_strong_config.model_name
+    QC_MODEL = _visual_qc_config.model_name
+    
+    MAX_CORRECTION_ATTEMPTS = 1
     MAX_CLEAN_RETRIES = 1
     
     # Visual QC settings
     ENABLE_VISUAL_QC = False  # Toggle: Set to True to enable visual QC
-    QC_MODEL = "gemini-flash-lite-latest"
     MAX_QC_ITERATIONS = 3  # Allow up to 3 fix attempts before accepting
     
     def __init__(self):
@@ -67,12 +80,16 @@ class ManimGenerator:
         else:
             raise ValueError("GEMINI_API_KEY environment variable is required")
         
-        # Generation config with medium thinking for code generation
-        self.generation_config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(
-                thinking_level="LOW",
-            ),
-        ) if types else None
+        # Generation config from centralized config
+        thinking_config = get_thinking_config(self._manim_config)
+        if types and thinking_config:
+            self.generation_config = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=thinking_config["thinking_level"],
+                ),
+            )
+        else:
+            self.generation_config = None
         
         # Initialize cost tracker
         self.cost_tracker = CostTracker()

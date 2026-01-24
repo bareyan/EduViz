@@ -18,12 +18,16 @@ except ImportError:
     genai = None
     types = None
 
+# Model configuration
+from app.config.models import get_model_config
+
 
 class TranslationService:
     """Translates video content to different languages"""
     
-    # Use lightweight model for translation
-    MODEL = "gemini-flash-lite-latest"
+    # Model configuration - loaded from centralized config
+    _config = get_model_config("translation")
+    MODEL = _config.model_name
     
     # Language mappings
     LANGUAGE_NAMES = {

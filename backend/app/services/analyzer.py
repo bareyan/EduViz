@@ -30,11 +30,16 @@ except ImportError:
     genai = None
     types = None
 
+# Model configuration
+from app.config.models import get_model_config
+
 
 class MaterialAnalyzer:
     """Analyzes educational materials using Gemini AI"""
     
-    MODEL = "gemini-flash-lite-latest"  # Fast lite model for analysis
+    # Model configuration - loaded from centralized config
+    _config = get_model_config("analysis")
+    MODEL = _config.model_name
     
     # Threshold for "massive" documents that warrant multiple videos
     MASSIVE_DOC_PAGES = 15

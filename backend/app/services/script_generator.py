@@ -25,6 +25,9 @@ except ImportError:
 # Cost tracking
 from app.services.manim_generator.cost_tracker import CostTracker
 
+# Model configuration
+from app.config.models import get_model_config, get_thinking_config
+
 
 class ScriptGenerator:
     """Generates detailed video scripts using Gemini AI
@@ -40,7 +43,12 @@ class ScriptGenerator:
     - Deep explanations with intuition, motivation, and examples
     """
     
-    MODEL = "gemini-3-flash-preview"  # Latest flash model for comprehensive generation
+    # Model configuration - loaded from centralized config
+    _script_config = get_model_config("script_generation")
+    _lang_detect_config = get_model_config("language_detection")
+    
+    MODEL = _script_config.model_name
+    LANGUAGE_DETECTION_MODEL = _lang_detect_config.model_name
     
     # Target segment duration for audio (in seconds) - ~10-12 seconds for good sync
     TARGET_SEGMENT_DURATION = 12
@@ -56,12 +64,16 @@ class ScriptGenerator:
         else:
             raise ValueError("GEMINI_API_KEY environment variable is required")
         
-        # Generation config - no thinking for script generation (structured output)
-        self.generation_config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(
-                thinking_level="LOW",
-            ),
-        ) if types else None
+        # Generation config from centralized configuration
+        thinking_config = get_thinking_config(self._script_config)
+        if types and thinking_config:
+            self.generation_config = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=thinking_config["thinking_level"],
+                ),
+            )
+        else:
+            self.generation_config = None
     
     async def generate_script(
         self,
@@ -124,7 +136,7 @@ TEXT SAMPLE:
 LANGUAGE CODE:"""
             
             response = self.client.models.generate_content(
-                model="gemini-flash-lite-latest",  # Use fast/cheap model for detection
+                model=self.LANGUAGE_DETECTION_MODEL,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.1,
@@ -133,7 +145,7 @@ LANGUAGE CODE:"""
             )
             
             # Track cost for language detection
-            self.cost_tracker.track_usage(response, "gemini-flash-lite-latest")
+            self.cost_tracker.track_usage(response, self.LANGUAGE_DETECTION_MODEL)
             
             detected = response.text.strip().lower()[:2]
             
@@ -421,43 +433,63 @@ Respond with ONLY valid JSON:
             sections_outline = outline.get('sections_outline', [])
         
         # ═══════════════════════════════════════════════════════════════════════
-        # PHASE 2: Generate script SECTION BY SECTION with full context
+        # PHASE 2: Generate script sections
+        # - OVERVIEW mode: Generate ALL sections in ONE call (faster, simpler)
+        # - COMPREHENSIVE mode: Generate sections ONE BY ONE with context (detailed)
         # ═══════════════════════════════════════════════════════════════════════
-        print(f"[ScriptGenerator] PHASE 2: Generating script section-by-section ({len(sections_outline)} sections) in {language_name}...")
         
         # Get learning objectives and prerequisites if available
         learning_objectives = outline.get('learning_objectives', [])
         prerequisites = outline.get('prerequisites', [])
         gaps_to_fill = outline.get('document_analysis', {}).get('gaps_to_fill', [])
         
-        # Generate sections one by one, passing previous sections as context
         generated_sections = []
         
-        for section_idx, section_outline in enumerate(sections_outline):
-            print(f"[ScriptGenerator] Generating section {section_idx + 1}/{len(sections_outline)}: {section_outline.get('title', 'Untitled')}...")
+        if video_mode == "overview":
+            # ═══════════════════════════════════════════════════════════════════
+            # OVERVIEW MODE: Generate ALL sections in ONE prompt
+            # ═══════════════════════════════════════════════════════════════════
+            print(f"[ScriptGenerator] PHASE 2 (OVERVIEW): Generating ALL {len(sections_outline)} sections in one call...")
             
-            section = await self._generate_single_section(
-                section_outline=section_outline,
-                section_idx=section_idx,
-                total_sections=len(sections_outline),
+            generated_sections = await self._generate_all_sections_at_once(
+                sections_outline=sections_outline,
                 full_outline=outline,
-                previous_sections=generated_sections,
                 content=content,
                 language_name=language_name,
                 language_instruction=language_instruction,
                 gaps_to_fill=gaps_to_fill,
             )
+        else:
+            # ═══════════════════════════════════════════════════════════════════
+            # COMPREHENSIVE MODE: Generate sections ONE BY ONE with full context
+            # ═══════════════════════════════════════════════════════════════════
+            print(f"[ScriptGenerator] PHASE 2 (COMPREHENSIVE): Generating script section-by-section ({len(sections_outline)} sections) in {language_name}...")
             
-            if section:
-                generated_sections.append(section)
-            else:
-                # Fallback section if generation failed
-                generated_sections.append({
-                    "id": section_outline.get("id", f"section_{section_idx}"),
-                    "title": section_outline.get("title", f"Part {section_idx + 1}"),
-                    "narration": f"Let's explore {section_outline.get('title', 'this topic')}.",
-                    "tts_narration": f"Let's explore {section_outline.get('title', 'this topic')}.",
-                })
+            for section_idx, section_outline in enumerate(sections_outline):
+                print(f"[ScriptGenerator] Generating section {section_idx + 1}/{len(sections_outline)}: {section_outline.get('title', 'Untitled')}...")
+                
+                section = await self._generate_single_section(
+                    section_outline=section_outline,
+                    section_idx=section_idx,
+                    total_sections=len(sections_outline),
+                    full_outline=outline,
+                    previous_sections=generated_sections,
+                    content=content,
+                    language_name=language_name,
+                    language_instruction=language_instruction,
+                    gaps_to_fill=gaps_to_fill,
+                )
+                
+                if section:
+                    generated_sections.append(section)
+                else:
+                    # Fallback section if generation failed
+                    generated_sections.append({
+                        "id": section_outline.get("id", f"section_{section_idx}"),
+                        "title": section_outline.get("title", f"Part {section_idx + 1}"),
+                        "narration": f"Let's explore {section_outline.get('title', 'this topic')}.",
+                        "tts_narration": f"Let's explore {section_outline.get('title', 'this topic')}.",
+                    })
         
         # Build final script
         script = {
@@ -639,6 +671,166 @@ OUTPUT: Valid JSON only, no markdown. Generate ONLY narration text:
         except Exception as e:
             print(f"[ScriptGenerator] Section {section_idx + 1} failed: {type(e).__name__}: {e}")
             return None
+
+    async def _generate_all_sections_at_once(
+        self,
+        sections_outline: List[Dict[str, Any]],
+        full_outline: Dict[str, Any],
+        content: str,
+        language_name: str,
+        language_instruction: str,
+        gaps_to_fill: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Generate ALL sections in a single prompt for overview mode.
+        
+        This is faster and more efficient for short overview videos where
+        we want concise, connected sections without the overhead of
+        generating each section separately.
+        """
+        
+        # Build sections outline summary
+        sections_summary = []
+        for i, sec in enumerate(sections_outline):
+            sections_summary.append(
+                f"{i + 1}. [{sec.get('id', f'section_{i}')}] {sec.get('title', f'Part {i+1}')}: "
+                f"{sec.get('content_to_cover', 'Cover this topic')}"
+            )
+        sections_summary_str = "\n".join(sections_summary)
+        
+        # Limit content for overview mode
+        content_excerpt = content[:8000] if len(content) > 8000 else content
+        
+        # Build learning objectives string
+        objectives_str = "\n".join(f"- {obj}" for obj in full_outline.get('learning_objectives', []))
+        if not objectives_str:
+            objectives_str = "- Understand the key concepts from the material"
+        
+        prompt = f"""You are an expert educator creating a CONCISE VIDEO OVERVIEW script.
+{language_instruction}
+
+Generate ALL sections for this video in ONE response. Keep each section brief and focused.
+
+OVERVIEW TITLE: {full_outline.get('title', 'Educational Content')}
+
+LEARNING OBJECTIVES:
+{objectives_str}
+
+SECTIONS TO GENERATE:
+{sections_summary_str}
+
+SOURCE MATERIAL:
+{content_excerpt}
+
+IMPORTANT - OVERVIEW MODE GUIDELINES:
+- Keep narrations CONCISE (30-90 seconds per section typically)
+- Focus on KEY POINTS only, not exhaustive detail
+- Each section should flow naturally into the next
+- Use clear, engaging language suitable for a summary video
+- Total video should be around {len(sections_outline) * 45} seconds
+
+OUTPUT FORMAT: Valid JSON array with ALL sections:
+[
+  {{
+    "id": "section_id",
+    "title": "Section Title",
+    "narration": "Complete spoken narration for this section...",
+    "tts_narration": "Same narration with math symbols spelled out..."
+  }},
+  ...
+]
+
+Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
+
+        try:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        thinking_config=types.ThinkingConfig(thinking_level="LOW"),
+                        max_output_tokens=16384,  # Larger for all sections
+                    )
+                ),
+                timeout=180  # 3 minute timeout for all sections
+            )
+            
+            # Track cost
+            self.cost_tracker.track_usage(response, self.MODEL)
+            
+            if not response or not hasattr(response, 'text') or not response.text.strip():
+                print(f"[ScriptGenerator] Overview mode: Empty response")
+                return self._fallback_sections(sections_outline)
+            
+            response_text = response.text.strip()
+            print(f"[ScriptGenerator] Overview mode: Got {len(response_text)} chars response")
+            
+            # Parse JSON array
+            sections = self._parse_json_array_response(response_text)
+            
+            if not sections:
+                print(f"[ScriptGenerator] Overview mode: JSON parse failed")
+                return self._fallback_sections(sections_outline)
+            
+            # Ensure all sections have required fields
+            for i, section in enumerate(sections):
+                section["id"] = section.get("id", sections_outline[i].get("id", f"section_{i}") if i < len(sections_outline) else f"section_{i}")
+                section["title"] = section.get("title", sections_outline[i].get("title", f"Part {i + 1}") if i < len(sections_outline) else f"Part {i + 1}")
+                if not section.get("tts_narration"):
+                    section["tts_narration"] = section.get("narration", "")
+            
+            print(f"[ScriptGenerator] Overview mode complete: {len(sections)} sections generated")
+            return sections
+            
+        except asyncio.TimeoutError:
+            print(f"[ScriptGenerator] Overview mode: Timeout after 180s")
+            return self._fallback_sections(sections_outline)
+        except Exception as e:
+            print(f"[ScriptGenerator] Overview mode failed: {type(e).__name__}: {e}")
+            return self._fallback_sections(sections_outline)
+    
+    def _fallback_sections(self, sections_outline: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Generate fallback sections when AI generation fails."""
+        return [
+            {
+                "id": sec.get("id", f"section_{i}"),
+                "title": sec.get("title", f"Part {i + 1}"),
+                "narration": f"Let's explore {sec.get('title', 'this topic')}.",
+                "tts_narration": f"Let's explore {sec.get('title', 'this topic')}.",
+            }
+            for i, sec in enumerate(sections_outline)
+        ]
+    
+    def _parse_json_array_response(self, text: str) -> List[Dict[str, Any]]:
+        """Parse a JSON array response from the model."""
+        # Clean markdown code blocks
+        if '```json' in text:
+            text = text.split('```json')[1].split('```')[0]
+        elif '```' in text:
+            parts = text.split('```')
+            if len(parts) >= 2:
+                text = parts[1]
+        
+        text = text.strip()
+        
+        try:
+            result = json.loads(text)
+            if isinstance(result, list):
+                return result
+            elif isinstance(result, dict) and 'sections' in result:
+                return result['sections']
+            return []
+        except json.JSONDecodeError as e:
+            print(f"[ScriptGenerator] JSON array parse error: {e}")
+            # Try to find array in text
+            try:
+                import re
+                match = re.search(r'\[[\s\S]*\]', text)
+                if match:
+                    return json.loads(match.group(0))
+            except Exception:
+                pass
+            return []
 
     def _segment_narrations(self, script: Dict[str, Any]) -> Dict[str, Any]:
         """Segment each section's narration into ~10 second audio chunks

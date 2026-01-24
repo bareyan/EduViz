@@ -402,25 +402,31 @@ async def correct_manim_code(
     """Use Gemini to fix errors in the Manim code"""
     from google.genai import types
     from .prompts import CORRECTION_SYSTEM_INSTRUCTION, build_correction_prompt
+    from app.config.models import get_model_config, get_thinking_config
+    
+    # Get model configs from centralized configuration
+    correction_config = get_model_config("code_correction")
+    correction_strong_config = get_model_config("code_correction_strong")
     
     # Use stronger model on last attempt
     is_last_attempt = attempt >= generator.MAX_CORRECTION_ATTEMPTS - 1
-    model_to_use = generator.STRONG_MODEL if is_last_attempt else generator.CORRECTION_MODEL
+    model_config = correction_strong_config if is_last_attempt else correction_config
+    model_to_use = model_config.model_name
     
     if is_last_attempt:
-        print(f"[ManimGenerator] Using stronger model ({generator.STRONG_MODEL}) for final fix attempt")
+        print(f"[ManimGenerator] Using stronger model ({model_to_use}) for final fix attempt")
     
     # Build prompt using the prompts module
     prompt = build_correction_prompt(original_code, error_message, section)
 
-    # Only use thinking config for models that support it (gemini-3-flash-preview)
-    if is_last_attempt:
+    # Use thinking config from centralized configuration if model supports it
+    thinking_config = get_thinking_config(model_config)
+    if thinking_config:
         config = types.GenerateContentConfig(
             system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
-            thinking_config=types.ThinkingConfig(thinking_level="HIGH"),
+            thinking_config=types.ThinkingConfig(thinking_level=thinking_config["thinking_level"]),
         )
     else:
-        # CORRECTION_MODEL (gemini-2.5-flash) doesn't support thinking config
         config = types.GenerateContentConfig(
             system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
         )
@@ -439,6 +445,7 @@ async def correct_manim_code(
         )
         
         generator.cost_tracker.track_usage(response, model_to_use)
+
         
         if not response or not response.text:
             print("[ManimGenerator] Empty response from correction model")
@@ -467,6 +474,7 @@ async def generate_visual_fix(
     """Generate fixed Manim code based on visual QC error report"""
     from google.genai import types
     from .prompts import build_visual_fix_prompt
+    from app.config.models import get_model_config, get_thinking_config
     
     if not error_report:
         return None
@@ -474,21 +482,32 @@ async def generate_visual_fix(
     if not section:
         section = {}
     
+    # Get strong model config for visual fixes
+    strong_config = get_model_config("code_correction_strong")
+    model_to_use = strong_config.model_name
+    
     # Build prompt using the prompts module
     prompt = build_visual_fix_prompt(original_code, error_report, section)
+    
+    # Get thinking config from centralized configuration
+    thinking_config = get_thinking_config(strong_config)
+    if thinking_config:
+        config = types.GenerateContentConfig(
+            thinking_config=types.ThinkingConfig(thinking_level=thinking_config["thinking_level"]),
+        )
+    else:
+        config = None
 
     try:
         response = await asyncio.to_thread(
             generator.client.models.generate_content,
-            model=generator.STRONG_MODEL,
+            model=model_to_use,
             contents=prompt,
-            config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_level="LOW"),
-            )
+            config=config
         )
         
         try:
-            generator.cost_tracker.track_usage(response, generator.STRONG_MODEL)
+            generator.cost_tracker.track_usage(response, model_to_use)
         except Exception:
             pass
         
