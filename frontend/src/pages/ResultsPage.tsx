@@ -16,6 +16,7 @@ import {
 import toast from 'react-hot-toast'
 import { 
   getJobStatus, 
+  getJobDetails,
   JobResponse, 
   GeneratedVideo, 
   getVideoUrl, 
@@ -26,8 +27,11 @@ import {
   AVAILABLE_LANGUAGES,
   MULTILINGUAL_VOICES,
   getResumeInfo,
-  ResumeInfo
+  ResumeInfo,
+  DetailedProgress,
+  SectionProgress
 } from '../api'
+import { SectionProgressView, SectionScriptModal } from '../components/SectionProgressView'
 
 export default function ResultsPage() {
   const { jobId } = useParams<{ jobId: string }>()
@@ -48,6 +52,10 @@ export default function ResultsPage() {
   const [resumeInfo, setResumeInfo] = useState<ResumeInfo | null>(null)
   const [isResuming, setIsResuming] = useState(false)
 
+  // Detailed progress state
+  const [detailedProgress, setDetailedProgress] = useState<DetailedProgress | null>(null)
+  const [selectedSection, setSelectedSection] = useState<SectionProgress | null>(null)
+
   useEffect(() => {
     if (!jobId) return
 
@@ -56,12 +64,20 @@ export default function ResultsPage() {
 
     const pollStatus = async () => {
       try {
-        const status = await getJobStatus(jobId)
+        const [status, details] = await Promise.all([
+          getJobStatus(jobId),
+          getJobDetails(jobId).catch(() => null) // Don't fail if details endpoint isn't ready
+        ])
         
         if (!isMounted) return
         
         // Force update by creating a new object reference
         setJob({ ...status })
+        
+        // Update detailed progress
+        if (details) {
+          setDetailedProgress(details)
+        }
 
         if (status.status === 'completed' && status.result && status.result.length > 0) {
           setSelectedVideo(status.result[0])
@@ -264,6 +280,21 @@ export default function ResultsPage() {
             You can leave this page open and check back later.
           </p>
         </div>
+
+        {/* Detailed Section Progress - Side Panel */}
+        {detailedProgress && (
+          <SectionProgressView 
+            details={detailedProgress}
+            onSectionClick={(section: SectionProgress) => setSelectedSection(section)}
+          />
+        )}
+
+        {/* Section Script Modal */}
+        <SectionScriptModal 
+          section={selectedSection}
+          jobId={jobId}
+          onClose={() => setSelectedSection(null)}
+        />
       </div>
     )
   }

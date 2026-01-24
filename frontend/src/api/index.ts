@@ -78,6 +78,37 @@ export interface VoicesResponse {
   default_voice: string
 }
 
+// === Detailed Progress Types ===
+
+export interface SectionProgress {
+  index: number
+  id: string
+  title: string
+  status: 'waiting' | 'generating_script' | 'generating_manim' | 'fixing_manim' | 'generating_audio' | 'completed' | 'failed'
+  duration_seconds?: number
+  narration_preview?: string
+  has_video: boolean
+  has_audio: boolean
+  has_code: boolean
+  error?: string
+  fix_attempts: number
+  qc_iterations: number
+}
+
+export interface DetailedProgress {
+  job_id: string
+  status: string
+  progress: number
+  message: string
+  current_stage: 'analyzing' | 'script' | 'sections' | 'combining' | 'completed' | 'failed' | 'unknown'
+  current_section_index?: number
+  script_ready: boolean
+  script_title?: string
+  total_sections: number
+  completed_sections: number
+  sections: SectionProgress[]
+}
+
 // API Functions
 export async function uploadFile(file: File): Promise<UploadResponse> {
   const formData = new FormData()
@@ -115,6 +146,11 @@ export async function generateVideos(params: {
 
 export async function getJobStatus(jobId: string): Promise<JobResponse> {
   const response = await api.get(`/job/${jobId}`)
+  return response.data
+}
+
+export async function getJobDetails(jobId: string): Promise<DetailedProgress> {
+  const response = await api.get(`/job/${jobId}/details`)
   return response.data
 }
 
@@ -168,6 +204,31 @@ export interface SectionFile {
   files: Record<string, string>
   video?: string
   audio?: string
+}
+
+// Full section details (for modal)
+export interface SectionDetails {
+  index: number
+  id: string
+  title: string
+  duration_seconds?: number
+  narration: string
+  visual_description: string
+  narration_segments: Array<{
+    segment_id: string
+    visual_description: string
+    narration: string
+    duration_seconds: number
+  }>
+  code?: string
+  video_url?: string
+  has_audio: boolean
+  has_video: boolean
+}
+
+export async function getSectionDetails(jobId: string, sectionIndex: number): Promise<SectionDetails> {
+  const response = await api.get(`/job/${jobId}/section/${sectionIndex}`)
+  return response.data
 }
 
 export async function listAllJobs(): Promise<GalleryJob[]> {

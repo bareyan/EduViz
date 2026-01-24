@@ -23,7 +23,7 @@ COLOR PALETTE (Light theme - WHITE background is pre-set):
 - Secondary: GREEN  
 - Emphasis: RED
 - DO NOT set background_color (it's pre-configured)
-- Example: Text("Title", color=BLACK, font_size=48)"""
+- Example: Text("Title", color=BLACK, font_size=36)"""
     },
     'dracula': {
         'colors': """
@@ -57,71 +57,78 @@ COLOR PALETTE (Nord arctic - background is pre-set):
 # Animation type guidance - expanded with more detail
 ANIMATION_GUIDANCE = {
     'equation': """EQUATION-FOCUSED ANIMATION:
-- Use MathTex for all mathematical expressions: MathTex(r"\\frac{a}{b}").scale(0.85)
+- Use MathTex for all mathematical expressions: MathTex(r"\\frac{a}{b}").scale(0.7)
 - Transform equations step-by-step with ReplacementTransform
 - Highlight specific terms with Indicate() or set_color()
 - Show derivation steps one at a time
-- Use .scale(0.85) for equations to prevent overflow
+- Use .scale(0.7) for equations, .scale(0.6) for very long ones
+- Long equations (>20 chars): split across lines or use smaller scale
 - Example flow: Show equation → Highlight term → Transform to next step → Wait for narration""",
 
     'text': """TEXT-FOCUSED ANIMATION:
-- Use Text("content", font_size=32) for regular text
+- Use Text("content", font_size=24) for regular text (max 28)
+- Titles: font_size=36 (never exceed 40)
 - Build bullet points with VGroup and .arrange(DOWN, buff=0.5, aligned_edge=LEFT)
 - Fade in points one by one to match narration
 - Keep titles at top with .to_edge(UP, buff=0.8)
 - Don't crowd the screen - max 4-5 lines visible at once
+- Split long sentences (>8 words) into multiple lines
 - Use FadeOut before adding new content""",
 
     'diagram': """DIAGRAM/VISUAL ANIMATION:
 - Create shapes: Circle(), Square(), Rectangle(), Arrow(), Line()
 - Group related elements with VGroup
 - Animate connections: GrowArrow for arrows, Create for shapes
-- Label components with Text positioned using .next_to()
+- Label components with Text(font_size=20) positioned using .next_to()
 - Use consistent spacing with .arrange() or manual positioning
-- Consider using Brace for grouping visual elements""",
+- Consider using Brace for grouping visual elements
+- Keep diagrams compact: max 8 units wide, 5 units tall
+- Position diagrams slightly below center to leave room for titles""",
 
     'code': """CODE DISPLAY ANIMATION:
 - Use Code() mobject for syntax highlighting OR
-- Use Text("code", font="Monospace", font_size=24) for simple code
+- Use Text("code", font="Monospace", font_size=20) for simple code
 - Highlight important lines by changing color: line.animate.set_color(YELLOW)
 - Build code incrementally if showing construction
-- Keep code blocks reasonably sized - max 10-12 lines
+- Keep code blocks small - max 8-10 lines
 - Position code centrally with good margins""",
 
     'graph': """GRAPH/PLOT ANIMATION:
-- Create axes: Axes(x_range=[-5, 5, 1], y_range=[-3, 3, 1], x_length=8, y_length=5)
+- Create axes: Axes(x_range=[-4, 4, 1], y_range=[-2.5, 2.5, 1], x_length=7, y_length=4)
+- Keep graphs SMALLER than full screen to avoid overflow!
 - Plot functions: graph = axes.plot(lambda x: x**2, color=BLUE)
-- Label axes with axes.get_x_axis_label() and get_y_axis_label()
+- Label axes with axes.get_x_axis_label(font_size=20) and get_y_axis_label()
 - Animate graph creation: Create(graph) with run_time matching narration
-- Add points of interest with Dot() and labels
-- Use axes.get_graph_label() for function labels""",
+- Add points of interest with Dot() and small labels (font_size=18)
+- Position graphs in center-lower area to leave room for title""",
 
     'process': """PROCESS/FLOW ANIMATION:
-- Create stages as shapes or text boxes
+- Create stages as shapes or text boxes (font_size=24)
 - Connect with arrows: Arrow(start, end)
 - Reveal stages sequentially to match narration
 - Use consistent left-to-right or top-to-bottom flow
 - Highlight current stage while dimming others
-- Group stage+arrow pairs for easier animation""",
+- Group stage+arrow pairs for easier animation
+- Keep process compact - max 4-5 stages visible""",
 
     'comparison': """COMPARISON ANIMATION:
 - Divide screen: LEFT_SIDE and RIGHT_SIDE for two items
 - Use consistent styling for comparable elements
 - Animate alternating reveals
 - Use SurroundingRectangle to highlight differences
-- Add clear labels for each side
+- Add clear labels (font_size=24) for each side
 - Keep visual balance between compared items""",
 
     'static': """STATIC SCENE (minimal animation):
 - Display text/equations that STAY on screen while narrator explains
 - Use simple FadeIn animations, then long self.wait() calls
 - NO complex transformations - let the narration do the explaining
-- Example: Show title → show bullet points → self.wait(5.0)
+- Example: Show title (font_size=36) → show bullet points (font_size=24) → self.wait(5.0)
 - 80% of duration should be self.wait() while content is displayed
 - Clear content between major topic changes only""",
 
     'mixed': """MIXED SCENE (balance of static and animated):
-- Start with static elements (title, context)
+- Start with static elements (title font_size=36, context font_size=24)
 - Add animated elements for key points only
 - Balance: 40% animation, 60% static display with waits
 - Animate equations and diagrams, keep text mostly static
@@ -188,29 +195,29 @@ def get_language_instructions(language: str) -> str:
 This content uses {script_name} script. Follow these rules STRICTLY:
 
 1. NEVER mix {script_name} text with LaTeX in the same MathTex object
-2. Use Text() for ALL {script_name} text: Text("text here", font_size=28)
-3. Use MathTex() ONLY for pure math symbols: MathTex(r"x^2 + y^2")
+2. Use Text() for ALL {script_name} text: Text("text here", font_size=24)
+3. Use MathTex() ONLY for pure math symbols: MathTex(r"x^2 + y^2").scale(0.7)
 4. Position text and math as SEPARATE objects using .next_to()
 
-FONT SIZES for {script_name} (smaller than Latin text):
-- Titles: font_size=32
-- Body text: font_size=26
-- Labels/captions: font_size=22
-- Add .scale(0.8) if content is wide
+FONT SIZES for {script_name} (smaller than Latin text to prevent overflow):
+- Titles: font_size=30
+- Body text: font_size=22
+- Labels/captions: font_size=18
+- Add .scale(0.75) if content is wide
 
 CORRECT PATTERN:
         # Title in {script_name}
-        title = Text("Title Here", font_size=32)
+        title = Text("Title Here", font_size=30)
         title.to_edge(UP, buff=0.5)
         self.play(Write(title))
         
         # Math equation (universal symbols only)
-        eq = MathTex(r"x = 2").scale(0.9)
+        eq = MathTex(r"x = 2").scale(0.7)
         eq.move_to(ORIGIN)
         self.play(Write(eq))
         
         # Explanation in {script_name}
-        label = Text("Explanation text", font_size=26)
+        label = Text("Explanation text", font_size=22)
         label.next_to(eq, DOWN, buff=0.6)
         self.play(FadeIn(label))
 
@@ -227,10 +234,11 @@ NOTE: NON-ENGLISH LATIN TEXT
 Text is in a non-English language with accented characters.
 
 Rules:
-- Text() handles accented characters correctly: Text("Théorème", font_size=36)
-- MathTex is ONLY for mathematical notation: MathTex(r"\\frac{{x}}{{y}}")
+- Text() handles accented characters correctly: Text("Théorème", font_size=32)
+- MathTex is ONLY for mathematical notation: MathTex(r"\\frac{{x}}{{y}}").scale(0.7)
 - NEVER put non-math words inside MathTex - it will fail on accented chars
 - Keep math and text as separate objects positioned with .next_to()
+- Use smaller fonts to accommodate longer words: font_size=24 for body text
 """
     else:
         return ""  # No special instructions for English
@@ -320,9 +328,13 @@ Full Narration:
    - If new content arrives and screen is full -> **CLEAN UP** (`FadeOut`) old content first!
    - **Sequential Display**: Do NOT dump everything at once. Reveal step-by-step.
 
-3. **TEXT HANDLING**:
-   - Split long sentences into multiple short lines (Max 8-10 words per line).
-   - NEVER place text on top of equations.
+3. **TEXT SIZE LIMITS** (SMALLER TO PREVENT OVERFLOW):
+   - Titles: font_size=36 (max 40)
+   - Body text: font_size=24 (max 28)
+   - Labels: font_size=20
+   - MathTex: scale=0.7 (use 0.65 for equations with >10 symbols)
+   - Split long sentences into multiple short lines (Max 6-8 words per line).
+   - NEVER place text on top of equations or visual elements.
    - Use `next_to(prev_obj, DOWN)` to naturally flow content.
 
 4. **BOUNDING BOX REALISM**:
@@ -370,14 +382,23 @@ For each time segment, specify:
    - Minimum horizontal gap: 0.5-0.6 units
 
 ════════════════════════════════════════════════════════════════════════════════
-BOUNDING BOX ESTIMATION GUIDE
+BOUNDING BOX ESTIMATION GUIDE (CRITICAL FOR AVOIDING OVERFLOW!)
 ════════════════════════════════════════════════════════════════════════════════
-Estimate bounding boxes based on content:
-- Text (font_size 32): ~0.15 units height per line, ~0.08 units width per character
-- Text (font_size 36): ~0.18 units height per line, ~0.09 units width per character
-- MathTex (scale 0.8): ~0.8-1.2 units height, width varies with equation length
+Estimate bounding boxes based on content - BE CONSERVATIVE (assume larger):
+- Text (font_size 24): ~0.35 units height, ~0.06 units width per character
+- Text (font_size 28): ~0.40 units height, ~0.07 units width per character
+- Text (font_size 36): ~0.50 units height, ~0.09 units width per character
+- MathTex (scale 0.7): ~0.7-1.0 units height, ~0.20 units per symbol
+- MathTex (scale 0.65): ~0.6-0.9 units height, ~0.18 units per symbol
 - Circle: radius defines bounds, box is (cx-r, cy-r, cx+r, cy+r)
-- Arrow: box from start point to end point with small padding
+- Arrow: box from start point to end point with 0.3 unit padding
+- Axes/Graphs: typically need 8x5 units minimum, center carefully!
+
+⚠️ OVERFLOW PREVENTION:
+- Long equations (>15 symbols at scale 0.7): Use scale 0.6 or split
+- Text >40 characters: Split into multiple lines
+- Graphs/diagrams: Reserve center area (-4, -2.5) to (4, 2.5)
+- Keep titles SHORT (max 30 chars) or use smaller font_size=32
 
 For position (cx, cy) and estimated (width, height):
   bounding_box = (cx - width/2, cy - height/2, cx + width/2, cy + height/2)
@@ -404,8 +425,8 @@ TOTAL DURATION: {audio_duration:.1f}s
 ### Objects:
 | id | type | content | size | position (cx, cy) | bounding_box (x_min, y_min, x_max, y_max) | appear_at | hide_at |
 |----|------|---------|------|-------------------|-------------------------------------------|-----------|---------|
-| title_1 | Text | "Title Here" | 42 | (0, 3.5) | (-2.0, 3.3, 2.0, 3.7) | 0.0s | 8.8s |
-| eq_main | MathTex | "E[X] = \\mu" | 0.8 | (0, 1.5) | (-1.5, 1.0, 1.5, 2.0) | 3.0s | end |
+| title_1 | Text | "Title Here" | 36 | (0, 3.2) | (-2.0, 3.0, 2.0, 3.4) | 0.0s | 8.8s |
+| eq_main | MathTex | "E[X] = \\mu" | 0.7 | (0, 1.5) | (-1.2, 1.1, 1.2, 1.9) | 3.0s | end |
 | arrow_1 | Arrow | from (a,b) to (c,d) | - | (mid_x, mid_y) | (a, min(b,d), c, max(b,d)) | 4.0s | 8.8s |
 
 ### Actions:
@@ -449,6 +470,21 @@ TOTAL DURATION: {audio_duration:.1f}s
 ...
 ---
 
+════════════════════════════════════════════════════════════════════════════════
+⚠️ CRITICAL: OBJECT REMOVAL SCHEDULE (MUST INCLUDE!)
+════════════════════════════════════════════════════════════════════════════════
+At the END of your visual script, provide a SORTED list of ALL FadeOut/removal times.
+This tells the code generator WHEN to clean up each object:
+
+REMOVAL SCHEDULE (sorted by time):
+- [8.8s] FadeOut: title_1, arrow_1
+- [15.0s] FadeOut: eq_main, diagram_1  
+- [22.5s] FadeOut: bullet_group
+- [END] Objects still visible at end: eq_final, conclusion_text
+
+This is CRITICAL for avoiding overlaps and ensuring proper cleanup!
+---
+
 ---
 FINAL TIMING CHECK:
 - Total animation time: Xs
@@ -456,9 +492,11 @@ FINAL TIMING CHECK:
 - Combined: {audio_duration:.1f}s ✓
 ---
 
-Be VERY SPECIFIC about positions and bounding boxes.
-Ensure NO overlaps and NO off-screen content.
-Track every object's full lifecycle from appearance to removal."""
+⚠️ REMEMBER: 
+- Be VERY SPECIFIC about positions and bounding boxes.
+- Ensure NO overlaps and NO off-screen content.
+- Track every object's full lifecycle from appearance to removal.
+- The OBJECT LIFECYCLE SUMMARY and REMOVAL SCHEDULE are MANDATORY - they give context for when to clean up!"""
 
 
 # Schema for structured visual script analysis output
@@ -662,22 +700,36 @@ Sum of all run_time values + all self.wait() calls MUST equal {audio_duration:.1
 ════════════════════════════════════════════════════════════════════════════════
 1. **SAFE AUTOSCALING**:
    - For ANY MathTex or Text that might be long:
-     `obj.scale_to_fit_width(11)`  # Ensures it fits width-wise
+     `obj.scale_to_fit_width(10)`  # Ensures it fits width-wise (use 10, not 11)
    - For groups of text:
-     `group.scale_to_fit_height(6)` # Ensures it fits height-wise
+     `group.scale_to_fit_height(5)` # Ensures it fits height-wise
 
 2. **LAYOUT MANAGEMENT**:
-   - **Prefer**: `VGroup().arrange(DOWN, buff=0.5)` over manual positioning.
-   - **Prefer**: `obj.next_to(prev, DOWN)` over `obj.move_to(...)`.
-   - **Avoid**: Absolute coordinates > 6.0 in X or > 3.0 in Y.
+   - **Prefer**: `VGroup().arrange(DOWN, buff=0.6)` over manual positioning.
+   - **Prefer**: `obj.next_to(prev, DOWN, buff=0.6)` over `obj.move_to(...)`.
+   - **Avoid**: Absolute coordinates > 5.5 in X or > 2.8 in Y.
 
 3. **TEXT FORMAT**:
    - Use `Paragraph("Line 1", "Line 2", alignment="center")` for multi-line text.
    - Or `Text("Long sentence...", width=10)` to force wrapping.
+   - MAX 6-8 words per line to prevent horizontal overflow.
 
-4. **CLEAN TRANSITIONS**:
+4. **GRAPHS AND AXES** (CRITICAL - common overflow source!):
+   - Keep axes SMALL: `Axes(x_range=[-3, 3], y_range=[-2, 2], x_length=6, y_length=4)`
+   - Position graphs in center or slightly lower: `.move_to(DOWN * 0.5)`
+   - Leave room for title above: don't use full y_range
+   - Add axis labels with SMALL fonts: `font_size=18`
+
+5. **SHAPES AND DIAGRAMS**:
+   - Keep circles radius ≤ 1.5, squares side ≤ 2.0
+   - Position diagrams in center area: x ∈ [-4, 4], y ∈ [-2.5, 2.5]
+   - Group and scale: `diagram_group.scale_to_fit_width(8)`
+   - Labels: use `font_size=20` and position with `.next_to(shape, direction, buff=0.3)`
+
+6. **CLEAN TRANSITIONS**:
    - If swapping huge formulas: `self.play(ReplacementTransform(old, new))`
-   - ALWAYS verify you aren't writing on top of existing objects.
+   - ALWAYS FadeOut old content before adding new in the same position.
+   - Check the REMOVAL SCHEDULE in the visual script for when to clean up!
 
 ════════════════════════════════════════════════════════════════════════════════
 VISUAL SCRIPT TO IMPLEMENT
@@ -717,12 +769,12 @@ Spacing rules:
 - ALL .to_edge() calls: use `buff=0.8` minimum.
 - ALL .arrange() calls: use `buff=0.5` minimum and `aligned_edge=LEFT` for text lists.
 
-Size rules - STANDARDIZED:
-- **Titles**: `font_size=40` (consistent across all scenes)
-- **Subtitles/Headers**: `font_size=32`
-- **Body Text**: `font_size=28` (max 30 if sparse)
-- **Labels/captions**: `font_size=24`
-- **Math Equations**: `MathTex(...).scale(0.8)` (approx matches 36pt text)
+Size rules - STANDARDIZED (SMALLER TO PREVENT OVERFLOW):
+- **Titles**: `font_size=36` (max 40, prefer 36)
+- **Subtitles/Headers**: `font_size=28`
+- **Body Text**: `font_size=24` (never exceed 28)
+- **Labels/captions**: `font_size=20`
+- **Math Equations**: `MathTex(...).scale(0.7)` (use 0.65 for long equations)
 
 LaTeX vs Text Rules - STRICT ENFORCEMENT:
 1. **Math Mode**: ALWAYS use `MathTex(r"...")` for anything that is a variable, number, or formula.

@@ -102,6 +102,37 @@ class ResumeInfo(BaseModel):
     last_completed_section: Optional[str]
 
 
+class SectionProgress(BaseModel):
+    """Progress information for a single section"""
+    index: int
+    id: str
+    title: str
+    status: str  # "waiting", "generating_script", "generating_manim", "fixing_manim", "generating_audio", "completed", "failed"
+    duration_seconds: Optional[float] = None
+    narration_preview: Optional[str] = None  # First 200 chars of narration
+    has_video: bool = False
+    has_audio: bool = False
+    has_code: bool = False
+    error: Optional[str] = None
+    fix_attempts: int = 0
+    qc_iterations: int = 0
+
+
+class DetailedProgress(BaseModel):
+    """Detailed progress information for a job"""
+    job_id: str
+    status: str
+    progress: float
+    message: str
+    current_stage: str  # "analyzing", "script", "sections", "combining"
+    current_section_index: Optional[int] = None
+    script_ready: bool = False
+    script_title: Optional[str] = None
+    total_sections: int = 0
+    completed_sections: int = 0
+    sections: List[SectionProgress] = []
+
+
 class SectionInfo(BaseModel):
     """Information about a video section"""
     id: str

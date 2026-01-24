@@ -417,7 +417,7 @@ async def correct_manim_code(
     if is_last_attempt:
         config = types.GenerateContentConfig(
             system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
-            thinking_config=types.ThinkingConfig(thinking_level="MEDIUM"),
+            thinking_config=types.ThinkingConfig(thinking_level="HIGH"),
         )
     else:
         # CORRECTION_MODEL (gemini-2.5-flash) doesn't support thinking config
