@@ -1,6 +1,14 @@
 """
 Translation Service - Translates video narration and Manim text to different languages
-Uses lightweight Gemini model for efficient translation
+
+STATUS: NOT IN USE
+This service is maintained for potential future use but is not currently
+called by the main video generation pipeline. Translation features are
+disabled by default.
+
+To enable: Set ENABLE_TRANSLATION=true in environment
+
+Uses LLM service abstraction for provider flexibility.
 """
 
 import os
@@ -10,20 +18,24 @@ import re
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-# Gemini
-try:
-    from google import genai
-    from google.genai import types
-except ImportError:
-    genai = None
-    types = None
+# LLM service abstraction
+from app.services.llm import (
+    LLMConfig, 
+    ProviderType,
+    get_llm_provider,
+    get_default_provider_type
+)
 
 # Model configuration
-from app.config.models import get_model_config
+from app.config.models import get_model_config, get_model_for_provider, ENABLE_TRANSLATION
 
 
 class TranslationService:
-    """Translates video content to different languages"""
+    """Translates video content to different languages.
+    
+    NOTE: This service is NOT CURRENTLY IN USE. The translation pipeline
+    step is disabled by default. Set ENABLE_TRANSLATION=true to enable.
+    """
     
     # Model configuration - loaded from centralized config
     _config = get_model_config("translation")
@@ -54,12 +66,32 @@ class TranslationService:
     }
     
     def __init__(self):
-        self.client = None
-        api_key = os.getenv("GEMINI_API_KEY")
-        if genai and api_key:
-            self.client = genai.Client(api_key=api_key)
-        else:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
+        # Initialize LLM provider
+        self.provider_type = get_default_provider_type()
+        self.llm = get_llm_provider(self.provider_type)
+        self.model = get_model_for_provider("translation", self.provider_type)
+        print(f"[TranslationService] Using {self.provider_type.value} provider with model: {self.model}")
+    
+    async def _llm_generate(self, prompt: str, temperature: float = 0.3, max_tokens: int = 4000) -> str:
+        """Helper to generate text using the configured LLM provider.
+        
+        Args:
+            prompt: The prompt to send to the LLM
+            temperature: Temperature for generation
+            max_tokens: Maximum tokens to generate
+            
+        Returns:
+            Generated text response
+        """
+        config = LLMConfig(
+            model=self.model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=60.0
+        )
+        
+        response = await self.llm.generate(prompt, config)
+        return response.text
     
     async def translate_script(
         self,
@@ -250,17 +282,8 @@ OUTPUT (same format, translated):
             prompt += f"[TEXT_{i}]\n...\n[/TEXT_{i}]\n"
 
         try:
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=4000,
-                )
-            )
-            
-            result_text = response.text.strip()
+            result_text = await self._llm_generate(prompt, temperature=0.3, max_tokens=4000)
+            result_text = result_text.strip()
             
             # Parse translations
             translated_texts = []
@@ -502,17 +525,8 @@ TRANSLATIONS (same format):
             prompt += f"[TEXT_{i}]\n...\n[/TEXT_{i}]\n"
 
         try:
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.2,
-                    max_output_tokens=4000,
-                )
-            )
-            
-            result_text = response.text.strip()
+            result_text = await self._llm_generate(prompt, temperature=0.2, max_tokens=4000)
+            result_text = result_text.strip()
             
             # Parse translations
             translated_texts = []
@@ -579,16 +593,8 @@ INPUT TEXT:
 SPOKEN {target_name.upper()} VERSION:"""
 
         try:
-            response = self.client.models.generate_content(
-                model=self.MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=2000,
-                )
-            )
-            
-            translated = response.text.strip()
+            translated = await self._llm_generate(prompt, temperature=0.3, max_tokens=2000)
+            translated = translated.strip()
             
             # Remove any prefix if the model included it
             prefixes_to_remove = [
@@ -737,16 +743,8 @@ ITEMS:
 TRANSLATIONS:"""
 
         try:
-            response = self.client.models.generate_content(
-                model=self.MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=2000,
-                )
-            )
-            
-            result = response.text.strip()
+            result = await self._llm_generate(prompt, temperature=0.3, max_tokens=2000)
+            result = result.strip()
             
             # Remove prefix if present
             if result.upper().startswith("TRANSLATIONS:"):

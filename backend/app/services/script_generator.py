@@ -1,6 +1,10 @@
 """
-Script Generator V2 - Uses Gemini to create detailed video scripts
+Script Generator V2 - Uses LLM to create detailed video scripts
 Each script has sections with narration, timing, and visual descriptions
+
+Supports multiple LLM providers:
+- Gemini (Google's AI models)
+- Ollama (local models like gemma3, deepseek)
 """
 
 import os
@@ -14,23 +18,29 @@ try:
 except ImportError:
     fitz = None
 
-# Gemini
+# Gemini (for backward compatibility and thinking config)
 try:
     from google import genai
     from google.genai import types
+    GEMINI_AVAILABLE = True
 except ImportError:
     genai = None
     types = None
+    GEMINI_AVAILABLE = False
+
+# LLM Service
+from app.services.llm import get_llm_provider, LLMConfig, LLMProvider
+from app.services.llm.base import ProviderType
 
 # Cost tracking
 from app.services.manim_generator.cost_tracker import CostTracker
 
 # Model configuration
-from app.config.models import get_model_config, get_thinking_config
+from app.config.models import get_model_config, get_model_name, get_thinking_config, ACTIVE_PROVIDER
 
 
 class ScriptGenerator:
-    """Generates detailed video scripts using Gemini AI
+    """Generates detailed video scripts using LLM (Gemini or Ollama)
     
     Uses a TWO-PHASE approach:
     Phase 1: Generate a detailed pedagogical outline covering ALL material
@@ -47,33 +57,37 @@ class ScriptGenerator:
     _script_config = get_model_config("script_generation")
     _lang_detect_config = get_model_config("language_detection")
     
-    MODEL = _script_config.model_name
-    LANGUAGE_DETECTION_MODEL = _lang_detect_config.model_name
-    
     # Target segment duration for audio (in seconds) - ~10-12 seconds for good sync
     TARGET_SEGMENT_DURATION = 12
     # Speaking rate for estimation: ~150 words/min = 2.5 words/sec, ~5 chars/word = 12.5 chars/sec
     CHARS_PER_SECOND = 12.5
     
-    def __init__(self, cost_tracker: Optional[CostTracker] = None):
-        self.client = None
+    def __init__(self, cost_tracker: Optional[CostTracker] = None, llm_provider: Optional[LLMProvider] = None):
         self.cost_tracker = cost_tracker or CostTracker()
-        api_key = os.getenv("GEMINI_API_KEY")
-        if genai and api_key:
-            self.client = genai.Client(api_key=api_key)
-        else:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
+        self.llm = llm_provider or get_llm_provider()
         
-        # Generation config from centralized configuration
-        thinking_config = get_thinking_config(self._script_config)
-        if types and thinking_config:
-            self.generation_config = types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(
-                    thinking_level=thinking_config["thinking_level"],
-                ),
-            )
-        else:
-            self.generation_config = None
+        # Get model names for the active provider
+        self.model = get_model_name("script_generation")
+        self.language_detection_model = get_model_name("language_detection")
+        
+        print(f"[ScriptGenerator] Using {self.llm.name} provider with model: {self.model}")
+        
+        # For Gemini, also keep direct client for thinking config support
+        self.client = None
+        self.generation_config = None
+        
+        if self.llm.provider_type == ProviderType.GEMINI:
+            api_key = os.getenv("GEMINI_API_KEY")
+            if GEMINI_AVAILABLE and api_key:
+                self.client = genai.Client(api_key=api_key)
+                # Generation config with thinking support
+                thinking_config = get_thinking_config(self._script_config)
+                if types and thinking_config:
+                    self.generation_config = types.GenerateContentConfig(
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level=thinking_config["thinking_level"],
+                        ),
+                    )
     
     async def generate_script(
         self,
@@ -119,9 +133,49 @@ class ScriptGenerator:
         
         return script
     
+    async def _llm_generate(self, prompt: str, model: Optional[str] = None, temperature: float = 0.7, max_tokens: Optional[int] = None, use_thinking: bool = True) -> str:
+        """Generate response using the configured LLM provider
+        
+        Args:
+            prompt: The prompt to send
+            model: Model override (default uses self.model)
+            temperature: Temperature for generation
+            max_tokens: Max output tokens
+            use_thinking: Whether to use thinking config (Gemini only)
+            
+        Returns:
+            Generated text response
+        """
+        model = model or self.model
+        
+        # For Gemini with thinking config, use direct client
+        if self.llm.provider_type == ProviderType.GEMINI and self.client and use_thinking and self.generation_config:
+            response = await asyncio.to_thread(
+                self.client.models.generate_content,
+                model=model,
+                contents=prompt,
+                config=self.generation_config
+            )
+            self.cost_tracker.track_usage(response, model)
+            return response.text.strip() if response.text else ""
+        
+        # Use the abstracted LLM provider
+        config = LLMConfig(
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        response = await self.llm.generate(prompt, config=config)
+        
+        # Track cost using the response's usage data
+        if response.raw_response:
+            self.cost_tracker.track_usage(response, model)
+        
+        return response.text
+    
     async def _detect_language(self, text_sample: str) -> str:
-        """Detect the language of the document using Gemini"""
-        if not self.client or not text_sample.strip():
+        """Detect the language of the document"""
+        if not text_sample.strip():
             return "en"  # Default to English
         
         try:
@@ -135,19 +189,15 @@ TEXT SAMPLE:
 
 LANGUAGE CODE:"""
             
-            response = self.client.models.generate_content(
-                model=self.LANGUAGE_DETECTION_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.1,
-                    max_output_tokens=10,
-                )
+            detected = await self._llm_generate(
+                prompt,
+                model=self.language_detection_model,
+                temperature=0.1,
+                max_tokens=10,
+                use_thinking=False
             )
             
-            # Track cost for language detection
-            self.cost_tracker.track_usage(response, self.LANGUAGE_DETECTION_MODEL)
-            
-            detected = response.text.strip().lower()[:2]
+            detected = detected.strip().lower()[:2]
             
             # Validate it's a known language code
             valid_codes = ["en", "fr", "es", "de", "it", "pt", "zh", "ja", "ko", "ar", "ru", "hy"]
@@ -398,23 +448,14 @@ Respond with ONLY valid JSON:
 }}"""""
 
         try:
-            phase1_response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=self.MODEL,
-                    contents=phase1_prompt,
-                    config=types.GenerateContentConfig(
-                        thinking_config=types.ThinkingConfig(thinking_level="LOW"),
-                        max_output_tokens=16384,
-                    )
-                ),
-                timeout=300  # 5 minute timeout for outline
+            phase1_text = await self._llm_generate(
+                phase1_prompt,
+                model=self.model,
+                max_tokens=16384,
+                use_thinking=True
             )
             
-            # Track cost for Phase 1
-            self.cost_tracker.track_usage(phase1_response, self.MODEL)
-            
-            outline = self._parse_json_response(phase1_response.text)
+            outline = self._parse_json_response(phase1_text)
             sections_outline = outline.get('sections_outline', [])
             print(f"[ScriptGenerator] Phase 1 complete: {len(sections_outline)} sections outlined")
         except Exception as e:
@@ -617,37 +658,15 @@ OUTPUT: Valid JSON only, no markdown. Generate ONLY narration text:
 "tts_narration": "Same narration with math symbols spelled out (e.g., 'theta' not 'θ', 'x squared' not 'x²')..."}}"""
 
         try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=self.MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        thinking_config=types.ThinkingConfig(thinking_level="LOW"),
-                        max_output_tokens=8192,  # Reduced for reliability
-                    )
-                ),
-                timeout=120  # 2 minute timeout per section
+            response_text = await self._llm_generate(
+                prompt,
+                model=self.model,
+                max_tokens=8192,
+                use_thinking=True
             )
             
-            # Track cost
-            self.cost_tracker.track_usage(response, self.MODEL)
-            
-            # Debug: check response
-            if not response or not hasattr(response, 'text'):
-                print(f"[ScriptGenerator] Section {section_idx + 1}: Empty response object")
-                return None
-            
-            response_text = response.text
             if not response_text or not response_text.strip():
                 print(f"[ScriptGenerator] Section {section_idx + 1}: Empty response text")
-                # Check for safety/block reasons
-                if hasattr(response, 'candidates') and response.candidates:
-                    candidate = response.candidates[0]
-                    if hasattr(candidate, 'finish_reason'):
-                        print(f"[ScriptGenerator] Finish reason: {candidate.finish_reason}")
-                    if hasattr(candidate, 'safety_ratings'):
-                        print(f"[ScriptGenerator] Safety ratings: {candidate.safety_ratings}")
                 return None
             
             print(f"[ScriptGenerator] Section {section_idx + 1}: Got {len(response_text)} chars response")
@@ -742,27 +761,18 @@ OUTPUT FORMAT: Valid JSON array with ALL sections:
 Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
 
         try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=self.MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        thinking_config=types.ThinkingConfig(thinking_level="LOW"),
-                        max_output_tokens=16384,  # Larger for all sections
-                    )
-                ),
-                timeout=180  # 3 minute timeout for all sections
+            response_text = await self._llm_generate(
+                prompt,
+                model=self.model,
+                max_tokens=16384,
+                use_thinking=True
             )
             
-            # Track cost
-            self.cost_tracker.track_usage(response, self.MODEL)
-            
-            if not response or not hasattr(response, 'text') or not response.text.strip():
+            if not response_text or not response_text.strip():
                 print(f"[ScriptGenerator] Overview mode: Empty response")
                 return self._fallback_sections(sections_outline)
             
-            response_text = response.text.strip()
+            response_text = response_text.strip()
             print(f"[ScriptGenerator] Overview mode: Got {len(response_text)} chars response")
             
             # Parse JSON array

@@ -14,8 +14,9 @@ Pillow>=10.1.0
 # Text-to-Speech (Free, high quality)
 edge-tts>=6.1.0
 
-# AI/ML (Optional - for enhanced analysis)
-google-generativeai>=0.8.0
+# AI/ML - LLM Providers
+google-genai>=1.0.0  # Google Gemini (primary cloud provider)
+httpx>=0.25.0  # HTTP client for Ollama provider
 
 # Visual Quality Control (Optional - for video QC with local LLM)
 ollama>=0.1.0

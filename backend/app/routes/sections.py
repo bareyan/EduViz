@@ -12,7 +12,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse, FileResponse
 from pydantic import BaseModel
 
-from ..config import OUTPUT_DIR, GEMINI_API_KEY
+from ..config import OUTPUT_DIR
 from ..services.job_manager import JobManager, JobStatus, get_job_manager
 
 router = APIRouter(tags=["sections"])
@@ -325,13 +325,15 @@ async def recompile_job(job_id: str, background_tasks: BackgroundTasks):
 
 @router.post("/job/{job_id}/section/{section_id}/fix")
 async def fix_section_code(job_id: str, section_id: str, request: FixCodeRequest):
-    """Use Gemini to fix/improve Manim code based on prompt and optional frame context"""
+    """Use LLM to fix/improve Manim code based on prompt and optional frame context"""
     import base64
-    from google import genai
-    from google.genai import types
-    
-    if not GEMINI_API_KEY:
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
+    from ..services.llm import (
+        LLMConfig, 
+        ProviderType,
+        get_llm_provider,
+        get_default_provider_type
+    )
+    from ..config.models import get_model_for_provider
     
     sections_dir = OUTPUT_DIR / job_id / "sections" / section_id
     if not sections_dir.exists():
@@ -348,7 +350,10 @@ async def fix_section_code(job_id: str, section_id: str, request: FixCodeRequest
                     section_info = section
                     break
     
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    # Initialize LLM provider
+    provider_type = get_default_provider_type()
+    llm = get_llm_provider(provider_type)
+    model = get_model_for_provider("manim_generation", provider_type)
     
     system_prompt = """You are an expert Manim animator, skilled at creating beautiful 3Blue1Brown-style mathematical animations.
 Your task is to fix or improve the provided Manim code based on the user's request.
@@ -375,30 +380,34 @@ USER REQUEST: {request.prompt if request.prompt else 'Please review and fix any 
 
 Please provide the fixed/improved Manim code."""
 
-    parts = []
-    for i, frame_data in enumerate(request.frames[:5]):
-        try:
-            if "base64," in frame_data:
-                base64_data = frame_data.split("base64,")[1]
-                image_bytes = base64.b64decode(base64_data)
-                try:
-                    parts.append(types.Part.from_bytes(data=image_bytes, mime_type="image/png"))
-                except Exception:
-                    pass
-        except Exception as e:
-            print(f"Error processing frame {i}: {e}")
-
-    parts.append(types.Part.from_text(text=user_prompt))
+    config = LLMConfig(
+        model=model,
+        temperature=0.3,
+        max_tokens=8000,
+        system_prompt=system_prompt,
+        timeout=120.0
+    )
     
     try:
-        response = client.models.generate_content(
-            model="gemini-3-flash-preview",
-            contents=[types.Content(role="user", parts=parts)],
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.3,
-            )
-        )
+        # Extract image bytes if provided
+        image_data_list = []
+        for i, frame_data in enumerate(request.frames[:5]):
+            try:
+                if "base64," in frame_data:
+                    base64_data = frame_data.split("base64,")[1]
+                    image_bytes = base64.b64decode(base64_data)
+                    image_data_list.append((image_bytes, "image/png"))
+            except Exception as e:
+                print(f"Error processing frame {i}: {e}")
+        
+        # Use multimodal if images are provided and provider supports it
+        if image_data_list and provider_type == ProviderType.GEMINI:
+            response = await llm.generate_with_images(user_prompt, image_data_list, config)
+        else:
+            # For Ollama or when no images, use text-only
+            if image_data_list:
+                user_prompt = f"[Note: {len(image_data_list)} frame(s) were provided but image analysis is only available with Gemini provider]\n\n{user_prompt}"
+            response = await llm.generate(user_prompt, config)
         
         fixed_code = response.text
         
@@ -410,7 +419,7 @@ Please provide the fixed/improved Manim code."""
         return {"fixed_code": fixed_code}
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Gemini error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"LLM error: {str(e)}")
 
 
 @router.post("/job/{job_id}/section/{section_id}/regenerate")

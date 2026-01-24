@@ -1,8 +1,8 @@
 """
-Manim Generator - Uses Gemini to generate Manim code for each video section
+Manim Generator - Uses LLM to generate Manim code for each video section
 
 This module provides the ManimGenerator class for generating animated math
-videos using Manim Community Edition and Google's Gemini AI.
+videos using Manim Community Edition and various AI providers (Gemini, Ollama).
 """
 
 import os
@@ -11,18 +11,26 @@ import asyncio
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 
-# Gemini
+# Gemini (for backward compatibility and thinking config)
 try:
     from google import genai
     from google.genai import types
+    GEMINI_AVAILABLE = True
 except ImportError:
     genai = None
     types = None
+    GEMINI_AVAILABLE = False
+
+# LLM Service
+from app.services.llm import get_llm_provider, LLMConfig, LLMProvider
+from app.services.llm.base import ProviderType
 
 # Model configuration
 from app.config.models import (
     ACTIVE_PIPELINE,
+    ACTIVE_PROVIDER,
     get_model_config,
+    get_model_name,
     get_thinking_config,
 )
 
@@ -52,18 +60,13 @@ from . import renderer
 
 
 class ManimGenerator:
-    """Generates Manim animations using Gemini AI"""
+    """Generates Manim animations using LLM (Gemini or Ollama)"""
     
     # Model configuration - loaded from centralized config
     _manim_config = get_model_config("manim_generation")
     _correction_config = get_model_config("code_correction")
     _correction_strong_config = get_model_config("code_correction_strong")
     _visual_qc_config = get_model_config("visual_qc")
-    
-    MODEL = _manim_config.model_name
-    CORRECTION_MODEL = _correction_config.model_name
-    STRONG_MODEL = _correction_strong_config.model_name
-    QC_MODEL = _visual_qc_config.model_name
     
     MAX_CORRECTION_ATTEMPTS = 1
     MAX_CLEAN_RETRIES = 1
@@ -72,24 +75,38 @@ class ManimGenerator:
     ENABLE_VISUAL_QC = False  # Toggle: Set to True to enable visual QC
     MAX_QC_ITERATIONS = 3  # Allow up to 3 fix attempts before accepting
     
-    def __init__(self):
-        self.client = None
-        api_key = os.getenv("GEMINI_API_KEY")
-        if genai and api_key:
-            self.client = genai.Client(api_key=api_key)
-        else:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
+    def __init__(self, llm_provider: Optional[LLMProvider] = None):
+        """Initialize Manim generator
         
-        # Generation config from centralized config
-        thinking_config = get_thinking_config(self._manim_config)
-        if types and thinking_config:
-            self.generation_config = types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(
-                    thinking_level=thinking_config["thinking_level"],
-                ),
-            )
-        else:
-            self.generation_config = None
+        Args:
+            llm_provider: Custom LLM provider. If None, uses default from config.
+        """
+        self.llm = llm_provider or get_llm_provider()
+        
+        # Get model names for the active provider
+        self.MODEL = get_model_name("manim_generation")
+        self.CORRECTION_MODEL = get_model_name("code_correction")
+        self.STRONG_MODEL = get_model_name("code_correction_strong")
+        self.QC_MODEL = get_model_name("visual_qc")
+        
+        print(f"[ManimGenerator] Using {self.llm.name} provider with model: {self.MODEL}")
+        
+        # For Gemini, keep direct client for thinking config support
+        self.client = None
+        self.generation_config = None
+        
+        if self.llm.provider_type == ProviderType.GEMINI:
+            api_key = os.getenv("GEMINI_API_KEY")
+            if GEMINI_AVAILABLE and api_key:
+                self.client = genai.Client(api_key=api_key)
+                # Generation config with thinking support
+                thinking_config = get_thinking_config(self._manim_config)
+                if types and thinking_config:
+                    self.generation_config = types.GenerateContentConfig(
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level=thinking_config["thinking_level"],
+                        ),
+                    )
         
         # Initialize cost tracker
         self.cost_tracker = CostTracker()
@@ -103,6 +120,59 @@ class ManimGenerator:
             except Exception as e:
                 print(f"[ManimGenerator] Failed to initialize Visual QC: {e}")
                 self.visual_qc = None
+    
+    async def _llm_generate(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        use_thinking: bool = True,
+        response_schema: Optional[Dict[str, Any]] = None,
+        timeout: float = 300
+    ) -> str:
+        """Generate response using the configured LLM provider
+        
+        Args:
+            prompt: The prompt to send
+            model: Model override (default uses self.MODEL)
+            use_thinking: Whether to use thinking config (Gemini only)
+            response_schema: Optional schema for structured JSON output
+            timeout: Timeout in seconds
+            
+        Returns:
+            Generated text response
+        """
+        model = model or self.MODEL
+        
+        # For Gemini with thinking config, use direct client
+        if self.llm.provider_type == ProviderType.GEMINI and self.client and use_thinking and self.generation_config:
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=model,
+                        contents=prompt,
+                        config=self.generation_config
+                    ),
+                    timeout=timeout
+                )
+                self.cost_tracker.track_usage(response, model)
+                return response.text.strip() if response.text else ""
+            except asyncio.TimeoutError:
+                print(f"[ManimGenerator] LLM call timed out after {timeout}s")
+                raise
+        
+        # Use the abstracted LLM provider
+        config = LLMConfig(
+            model=model,
+            response_schema=response_schema,
+        )
+        response = await self.llm.generate(prompt, config=config)
+        
+        # Track cost using the response's usage data
+        if response.raw_response:
+            self.cost_tracker.track_usage(response, model)
+        
+        return response.text
     
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get a summary of token usage and costs"""
@@ -259,18 +329,12 @@ class ManimGenerator:
         
         visual_script = None
         try:
-            response1 = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=self.MODEL,
-                    contents=visual_script_prompt,
-                    config=self.generation_config
-                ),
+            visual_script = await self._llm_generate(
+                visual_script_prompt,
+                model=self.MODEL,
+                use_thinking=True,
                 timeout=180
             )
-            
-            self.cost_tracker.track_usage(response1, self.MODEL)
-            visual_script = response1.text.strip()
             print(f"[ManimGenerator] Shot 1 complete: {len(visual_script)} chars")
             
             # Save visual script IMMEDIATELY after generation (before analysis)
@@ -305,27 +369,13 @@ class ManimGenerator:
             analysis_schema = get_visual_script_analysis_schema()
             
             try:
-                # Use structured output config if schema is available
-                if analysis_schema:
-                    analysis_config = types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=analysis_schema
-                    )
-                else:
-                    analysis_config = self.generation_config
-                
-                analysis_response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.client.models.generate_content,
-                        model=self.CORRECTION_MODEL,  # Use cheaper model for analysis
-                        contents=analysis_prompt,
-                        config=analysis_config
-                    ),
-                    timeout=60  # Shorter timeout for quick check
+                analysis_text = await self._llm_generate(
+                    analysis_prompt,
+                    model=self.CORRECTION_MODEL,
+                    use_thinking=False,
+                    response_schema=analysis_schema,
+                    timeout=60
                 )
-                
-                self.cost_tracker.track_usage(analysis_response, self.CORRECTION_MODEL)
-                analysis_text = analysis_response.text.strip()
                 
                 # Parse JSON response
                 try:
@@ -377,18 +427,12 @@ class ManimGenerator:
             )
             
             try:
-                response2 = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.client.models.generate_content,
-                        model=self.MODEL,
-                        contents=code_prompt,
-                        config=self.generation_config
-                    ),
+                code = await self._llm_generate(
+                    code_prompt,
+                    model=self.MODEL,
+                    use_thinking=True,
                     timeout=180
                 )
-                
-                self.cost_tracker.track_usage(response2, self.MODEL)
-                code = response2.text.strip()
                 code = clean_code(code)
                 print(f"[ManimGenerator] Shot 2 complete: {len(code)} chars of code")
                 
@@ -414,30 +458,23 @@ class ManimGenerator:
         )
 
         try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=self.MODEL,
-                    contents=prompt,
-                    config=self.generation_config
-                ),
+            code = await self._llm_generate(
+                prompt,
+                model=self.MODEL,
+                use_thinking=True,
                 timeout=300
             )
             
-            self.cost_tracker.track_usage(response, self.MODEL)
-            
         except asyncio.TimeoutError:
-            print(f"[ManimGenerator] Gemini API timed out for section code generation")
+            print(f"[ManimGenerator] LLM API timed out for section code generation")
             return ('''        text = Text("Section", font_size=48)
         self.play(Write(text))
         self.wait(2)''', None)
         except Exception as e:
-            print(f"[ManimGenerator] Gemini API error: {e}")
+            print(f"[ManimGenerator] LLM API error: {e}")
             return ('''        text = Text("Section", font_size=48)
         self.play(Write(text))
         self.wait(2)''', None)
-        
-        code = response.text.strip()
         code = clean_code(code)
         
         return (code, None)

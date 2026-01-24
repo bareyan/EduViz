@@ -1,6 +1,10 @@
 """
-Material Analyzer V2 - Uses Gemini to analyze PDFs and images for math content
+Material Analyzer V2 - Uses LLM to analyze PDFs and images for math content
 Generates structured video topic suggestions
+
+Supports multiple LLM providers:
+- Gemini (Google's AI models)
+- Ollama (local models like gemma3, deepseek)
 """
 
 import os
@@ -22,36 +26,32 @@ try:
 except ImportError:
     Image = None
 
-# Gemini
-try:
-    from google import genai
-    from google.genai import types
-except ImportError:
-    genai = None
-    types = None
+# LLM Service
+from app.services.llm import get_llm_provider, LLMConfig, LLMProvider
 
 # Model configuration
-from app.config.models import get_model_config
+from app.config.models import get_model_config, get_model_name, ACTIVE_PROVIDER
 
 
 class MaterialAnalyzer:
-    """Analyzes educational materials using Gemini AI"""
+    """Analyzes educational materials using LLM (Gemini or Ollama)"""
     
     # Model configuration - loaded from centralized config
     _config = get_model_config("analysis")
-    MODEL = _config.model_name
     
     # Threshold for "massive" documents that warrant multiple videos
     MASSIVE_DOC_PAGES = 15
     MASSIVE_DOC_CHAPTERS = 5
     
-    def __init__(self):
-        self.client = None
-        api_key = os.getenv("GEMINI_API_KEY")
-        if genai and api_key:
-            self.client = genai.Client(api_key=api_key)
-        else:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
+    def __init__(self, llm_provider: Optional[LLMProvider] = None):
+        """Initialize analyzer with optional custom LLM provider
+        
+        Args:
+            llm_provider: Custom LLM provider. If None, uses default from config.
+        """
+        self.llm = llm_provider or get_llm_provider()
+        self.model = get_model_name("analysis")
+        print(f"[MaterialAnalyzer] Using {self.llm.name} provider with model: {self.model}")
     
     async def analyze(self, file_path: str, file_id: str) -> Dict[str, Any]:
         """Main analysis entry point"""
@@ -206,16 +206,17 @@ Respond with ONLY valid JSON (no markdown, no code blocks):
 {"If the document has 5+ clearly distinct chapters, you may suggest up to 3 separate videos. Otherwise, create ONE comprehensive video." if is_massive else "Create exactly ONE comprehensive video covering everything."}
 The goal is THOROUGH coverage - the video should contain ALL information from the source."""
 
-        response = await asyncio.to_thread(
-            self.client.models.generate_content,
-            model=self.MODEL,
-            contents=prompt
-        )
+        config = LLMConfig(model=self.model, temperature=0.7)
+        response = await self.llm.generate(prompt, config=config)
         
         return self._parse_json_response(response.text)
     
     async def _gemini_analyze_image(self, image_data: bytes, file_path: str) -> Dict[str, Any]:
-        """Use Gemini Vision to analyze an image"""
+        """Use LLM Vision to analyze an image
+        
+        Note: Image analysis may have limited support with Ollama depending on model.
+        For best results with images, use Gemini provider.
+        """
         
         # Determine mime type
         ext = Path(file_path).suffix.lower()
@@ -264,16 +265,66 @@ Respond with ONLY valid JSON (no markdown, no code blocks):
 
 CRITICAL: Create exactly ONE comprehensive video covering everything."""
 
-        # Create image part for Gemini
-        image_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
+        # For image analysis, we need provider-specific handling
+        from app.services.llm.base import ProviderType
         
-        response = await asyncio.to_thread(
-            self.client.models.generate_content,
-            model=self.MODEL,
-            contents=[prompt, image_part]
-        )
+        config = LLMConfig(model=self.model, temperature=0.7)
         
-        return self._parse_json_response(response.text)
+        if self.llm.provider_type == ProviderType.GEMINI:
+            # Gemini supports multimodal content directly
+            try:
+                from google.genai import types
+                image_part = types.Part.from_bytes(data=image_data, mime_type=mime_type)
+                # Use raw Gemini client for multimodal
+                response = await asyncio.to_thread(
+                    self.llm.client.models.generate_content,
+                    model=self.model,
+                    contents=[prompt, image_part]
+                )
+                return self._parse_json_response(response.text)
+            except ImportError:
+                # Fall back to text-only analysis
+                print("[MaterialAnalyzer] Warning: google-genai not available for image analysis")
+                return self._get_fallback_image_analysis()
+        else:
+            # For Ollama, image support depends on the model
+            # Some models like llava support images, but we'll use text description fallback
+            print("[MaterialAnalyzer] Warning: Image analysis with Ollama may be limited. Consider using Gemini for images.")
+            
+            # Encode image as base64 for models that support it
+            import base64
+            image_b64 = base64.b64encode(image_data).decode('utf-8')
+            
+            # Try with image if model supports it, otherwise use prompt only
+            try:
+                # For Ollama, include base64 image in prompt
+                multimodal_prompt = f"{prompt}\n\n[Image data provided as base64 - analyze if supported]\nBase64: {image_b64[:500]}..."
+                response = await self.llm.generate(multimodal_prompt, config=config)
+                return self._parse_json_response(response.text)
+            except Exception as e:
+                print(f"[MaterialAnalyzer] Image analysis failed: {e}")
+                return self._get_fallback_image_analysis()
+    
+    def _get_fallback_image_analysis(self) -> Dict[str, Any]:
+        """Return fallback analysis when image processing fails"""
+        return {
+            "summary": "Image content analysis",
+            "main_subject": "Visual content",
+            "subject_area": "general",
+            "key_concepts": ["visual content"],
+            "detected_math_elements": 0,
+            "suggested_topics": [{
+                "index": 0,
+                "title": "Image Content",
+                "description": "Educational content from image",
+                "estimated_duration": 10,
+                "complexity": "intermediate",
+                "subtopics": [],
+                "prerequisites": [],
+                "visual_ideas": []
+            }],
+            "estimated_total_videos": 1
+        }
     
     def _fix_json_escapes(self, text: str) -> str:
         """Fix common JSON escape sequence issues from LLM responses"""

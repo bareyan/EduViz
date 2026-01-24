@@ -15,14 +15,28 @@ from .models import (
     ThinkingLevel,
     PipelineModels,
     ACTIVE_PIPELINE,
+    ACTIVE_PROVIDER,
+    LLMProviderType,
     DEFAULT_PIPELINE_MODELS,
     HIGH_QUALITY_PIPELINE,
     COST_OPTIMIZED_PIPELINE,
+    OLLAMA_PIPELINE,
     AVAILABLE_MODELS,
+    AVAILABLE_OLLAMA_MODELS,
+    GEMINI_TO_OLLAMA_MAP,
     THINKING_CAPABLE_MODELS,
     get_model_config,
+    get_model_name,
+    get_model_for_provider,  # Alias for get_model_name
     get_thinking_config,
+    get_active_provider,
     list_pipeline_steps,
+    # Feature flags
+    ENABLE_VISUAL_QC,
+    ENABLE_TRANSLATION,
+    # Default Ollama models
+    DEFAULT_OLLAMA_GENERAL,
+    DEFAULT_OLLAMA_CODE,
 )
 
 # Base directories
@@ -49,7 +63,11 @@ CORS_ORIGINS = [
     "http://localhost:5173",
 ]
 
-# Gemini API
+# LLM Provider settings
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "").lower() or None  # "gemini" or "ollama"
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+
+# Gemini API (for backward compatibility)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # File upload settings

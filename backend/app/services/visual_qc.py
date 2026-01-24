@@ -1,7 +1,14 @@
 """
 Visual Quality Control - Uses Gemini Flash Lite with video analysis to check generated videos
-Analyzes video segments for overlaps, off-screen elements, and visual issues
-Uses structured output for reliable error detection
+
+STATUS: DEPRECATED
+This service is disabled by default. Visual QC adds significant processing time
+and requires Gemini (cloud) for video analysis - it cannot work with Ollama.
+
+To enable: Set ENABLE_VISUAL_QC=true AND LLM_PROVIDER=gemini in environment
+
+Analyzes video segments for overlaps, off-screen elements, and visual issues.
+Uses structured output for reliable error detection.
 """
 
 import os
@@ -14,7 +21,10 @@ from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 import asyncio
 
-# Gemini SDK
+# Feature flag
+from app.config.models import get_model_config, ENABLE_VISUAL_QC
+
+# Gemini SDK (required for video analysis)
 try:
     from google import genai
     from google.genai import types
@@ -23,16 +33,16 @@ except ImportError:
     genai = None
     types = None
     GEMINI_AVAILABLE = False
-    print("[VisualQC] Warning: google-genai package not installed. Run: pip install google-genai")
-
-# Model configuration
-from app.config.models import get_model_config
+    if ENABLE_VISUAL_QC:
+        print("[VisualQC] Warning: google-genai package not installed. Run: pip install google-genai")
 
 
 class VisualQualityController:
     """
-    Analyzes generated Manim videos using Gemini Flash Lite with video input
-    Sends downscaled 480p video at 1fps for efficient analysis
+    DEPRECATED: Visual QC is disabled by default.
+    
+    Analyzes generated Manim videos using Gemini Flash Lite with video input.
+    Sends downscaled 480p video at 1fps for efficient analysis.
     Uses structured output for reliable error detection
     """
     
