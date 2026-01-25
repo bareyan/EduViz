@@ -351,10 +351,23 @@ Full Narration:
 YOUR TASK: Create a Visual Script with Object Lifecycle Tracking
 ════════════════════════════════════════════════════════════════════════════════
 
+⚠️ **CRITICAL NEW REQUIREMENT: USE TIME VARIABLES, NOT HARDCODED SECONDS!** ⚠️
+
+Instead of writing hardcoded times like "0.0s", "3.5s", "8.2s" scattered throughout,
+you will define meaningful TIME VARIABLES and only calculate their actual values at the
+bottom of the visual script. This makes timing adjustments much easier!
+
+**Example Time Variables:**
+- `segment_1_begin`, `segment_1_end`
+- `title_appear`, `title_hide`
+- `example_intro`, `example_complete`
+- `diagram_build_start`, `diagram_build_end`
+- `transition_to_next`, `section_end`
+
 For each time segment, specify:
 
-1. **NARRATION SCRIPT**: Full narration text with exact timestamps
-   - Start and end time for each spoken phrase
+1. **NARRATION SCRIPT**: Full narration text with TIME VARIABLES
+   - Start and end time for each spoken phrase using variables
    - Sync points between narration and visuals
 
 2. **OBJECTS with LIFECYCLE**: Each object MUST include:
@@ -364,18 +377,19 @@ For each time segment, specify:
    - **size**: font_size or scale factor (keep text ≤36, equations scale ≤0.85)
    - **position**: Center point (x, y) coordinates
    - **bounding_box**: Approximate bounds as (x_min, y_min, x_max, y_max)
-   - **appear_at**: Timestamp when object first becomes visible
-   - **hide_at**: Timestamp when object should be removed (or "end" if visible until end)
+   - **appear_at**: TIME VARIABLE when object first becomes visible (e.g., `title_appear`)
+   - **hide_at**: TIME VARIABLE when object should be removed (e.g., `title_hide`, or "end" if visible until end)
 
 3. **POSITIONS**: Where each object is placed (CRITICAL!)
    - Use exact (x, y) coordinates for center point
    - Calculate bounding box based on content size
    - NEVER place objects outside safe zone!
 
-4. **ANIMATIONS**: How objects appear/transform
+4. **ANIMATIONS**: How objects appear/transform (use TIME VARIABLES)
    - Entry: FadeIn, Write, Create, GrowFromCenter
    - Transform: ReplacementTransform, morph
    - Exit: FadeOut (ALWAYS clear before adding new overlapping content!)
+   - **Duration**: Specify run_time for each animation
 
 5. **SPACING**: Gaps between elements
    - Minimum vertical gap: 0.6-0.8 units
@@ -407,47 +421,47 @@ For position (cx, cy) and estimated (width, height):
 OUTPUT FORMAT
 ════════════════════════════════════════════════════════════════════════════════
 
-Use this exact format:
+Use this exact format with TIME VARIABLES instead of hardcoded seconds:
 
 ---
 VISUAL SCRIPT: {title}
 TOTAL DURATION: {audio_duration:.1f}s
 ---
 
-## SEGMENT 1: [0.0s - X.Xs]
+## SEGMENT 1: [segment_1_begin - segment_1_end]
 
 ### Narration Script:
 ```
-[0.0s - 2.5s] "First phrase of narration..."
-[2.5s - 5.0s] "Second phrase continues..."
+[phrase_1_begin - phrase_1_end] "First phrase of narration..."
+[phrase_2_begin - phrase_2_end] "Second phrase continues..."
 ```
 
 ### Objects:
 | id | type | content | size | position (cx, cy) | bounding_box (x_min, y_min, x_max, y_max) | appear_at | hide_at |
 |----|------|---------|------|-------------------|-------------------------------------------|-----------|---------|
-| title_1 | Text | "Title Here" | 36 | (0, 3.2) | (-2.0, 3.0, 2.0, 3.4) | 0.0s | 8.8s |
-| eq_main | MathTex | "E[X] = \\mu" | 0.7 | (0, 1.5) | (-1.2, 1.1, 1.2, 1.9) | 3.0s | end |
-| arrow_1 | Arrow | from (a,b) to (c,d) | - | (mid_x, mid_y) | (a, min(b,d), c, max(b,d)) | 4.0s | 8.8s |
+| title_1 | Text | "Title Here" | 36 | (0, 3.2) | (-2.0, 3.0, 2.0, 3.4) | title_appear | title_hide |
+| eq_main | MathTex | "E[X] = \\mu" | 0.7 | (0, 1.5) | (-1.2, 1.1, 1.2, 1.9) | eq_appear | end |
+| arrow_1 | Arrow | from (a,b) to (c,d) | - | (mid_x, mid_y) | (a, min(b,d), c, max(b,d)) | arrow_appear | arrow_hide |
 
 ### Actions:
-- [0.0s] Write(title_1) | run_time: 1.5s
-- [1.5s] FadeIn(eq_main) | run_time: 1.0s
-- [4.0s] GrowArrow(arrow_1) | run_time: 1.0s
-- [5.0s] self.wait(3.8s)
+- [title_appear] Write(title_1) | run_time: 1.5s
+- [eq_appear] FadeIn(eq_main) | run_time: 1.0s
+- [arrow_appear] GrowArrow(arrow_1) | run_time: 1.0s
+- [hold_visuals] self.wait(3.8s)
 
 ### Layout notes: Any spacing/positioning considerations
 
 ---
 
-## SEGMENT 2: [X.Xs - Y.Ys]
+## SEGMENT 2: [segment_2_begin - segment_2_end]
 
 ### Narration Script:
 ```
-[X.Xs - Y.0s] "Narration for this segment..."
+[phrase_3_begin - phrase_3_end] "Narration for this segment..."
 ```
 
 ### Cleanup:
-- [X.Xs] FadeOut(title_1, arrow_1) | run_time: 1.0s
+- [cleanup_segment_1] FadeOut(title_1, arrow_1) | run_time: 1.0s
 
 ### Objects:
 | id | type | content | size | position (cx, cy) | bounding_box (x_min, y_min, x_max, y_max) | appear_at | hide_at |
@@ -463,40 +477,87 @@ TOTAL DURATION: {audio_duration:.1f}s
 
 ---
 ## OBJECT LIFECYCLE SUMMARY
-| id | type | appear_at | hide_at | total_visible_duration |
-|----|------|-----------|---------|------------------------|
-| title_1 | Text | 0.0s | 8.8s | 8.8s |
-| eq_main | MathTex | 3.0s | end | (duration - 3.0)s |
+| id | type | appear_at | hide_at | notes |
+|----|------|-----------|---------|-------|
+| title_1 | Text | title_appear | title_hide | Main title |
+| eq_main | MathTex | eq_appear | end | Stays visible |
 ...
 ---
 
 ════════════════════════════════════════════════════════════════════════════════
-⚠️ CRITICAL: OBJECT REMOVAL SCHEDULE (MUST INCLUDE!)
+⚠️ CRITICAL: TIME VARIABLE DEFINITIONS (DEFINED AT THE BOTTOM!)
 ════════════════════════════════════════════════════════════════════════════════
-At the END of your visual script, provide a SORTED list of ALL FadeOut/removal times.
-This tells the code generator WHEN to clean up each object:
+At the END of your visual script, provide ALL time variable definitions in seconds.
+This is the ONLY place where actual numeric times appear!
 
-REMOVAL SCHEDULE (sorted by time):
-- [8.8s] FadeOut: title_1, arrow_1
-- [15.0s] FadeOut: eq_main, diagram_1  
-- [22.5s] FadeOut: bullet_group
-- [END] Objects still visible at end: eq_final, conclusion_text
+**TIME VARIABLE DEFINITIONS:**
 
-This is CRITICAL for avoiding overlaps and ensuring proper cleanup!
+```python
+# Segment boundaries
+segment_1_begin = 0.0
+segment_1_end = 8.8
+
+segment_2_begin = 8.8
+segment_2_end = 18.5
+
+# Individual event times
+title_appear = 0.0
+title_hide = 8.8
+
+phrase_1_begin = 0.0
+phrase_1_end = 2.5
+
+phrase_2_begin = 2.5
+phrase_2_end = 5.0
+
+eq_appear = 3.0
+arrow_appear = 4.0
+arrow_hide = 8.8
+
+hold_visuals = 5.0
+cleanup_segment_1 = 8.8
+
+# Add more variables as needed...
+
+# Total duration check
+total_duration = {audio_duration:.1f}
+assert segment_N_end == total_duration, "Timeline must match total duration!"
+```
+
+**BENEFITS OF THIS APPROACH:**
+1. Easy to adjust timing - change one variable, everything updates
+2. Clear semantic meaning - `title_appear` is more readable than `0.0s`
+3. Prevents timing conflicts - can see all times in one place
+4. Easier debugging - can verify timeline consistency
+5. Better for code generation - variables translate directly to Python
+
+---
+## REMOVAL SCHEDULE (derived from hide_at times)
+This section helps track when objects should be cleaned up:
+
+REMOVAL SCHEDULE (sorted chronologically by variable):
+- [title_hide] FadeOut: title_1, arrow_1
+- [eq_hide] FadeOut: eq_main, diagram_1  
+- [cleanup_final] FadeOut: bullet_group
+- [end] Objects still visible at end: eq_final, conclusion_text
+
 ---
 
 ---
 FINAL TIMING CHECK:
-- Total animation time: Xs
-- Total wait time: Xs
+- Total animation time: (sum of all run_times)
+- Total wait time: (sum of all waits)
 - Combined: {audio_duration:.1f}s ✓
+- All time variables defined: ✓
 ---
 
 ⚠️ REMEMBER: 
+- Use TIME VARIABLES everywhere, NEVER hardcoded seconds in the segments!
+- Define ALL time variables at the bottom with actual numeric values
 - Be VERY SPECIFIC about positions and bounding boxes.
 - Ensure NO overlaps and NO off-screen content.
 - Track every object's full lifecycle from appearance to removal.
-- The OBJECT LIFECYCLE SUMMARY and REMOVAL SCHEDULE are MANDATORY - they give context for when to clean up!"""
+- The TIME VARIABLE DEFINITIONS section is MANDATORY!"""
 
 
 # Schema for structured visual script analysis output
@@ -651,7 +712,7 @@ def build_code_from_script_prompt(
     
     Args:
         section: Section data
-        visual_script: The visual script to implement
+        visual_script: The visual script to implement (with time variables!)
         audio_duration: Target duration in seconds
         language_instructions: Language-specific instructions
         color_instructions: Color/style instructions
@@ -693,48 +754,23 @@ Apply these fixes when positioning objects. The visual script positions may need
 ════════════════════════════════════════════════════════════════════════════════
 Your animation MUST run for EXACTLY {audio_duration:.1f} seconds total.
 Sum of all run_time values + all self.wait() calls MUST equal {audio_duration:.1f}s.
+
+⚠️ **NEW: TIMING WITH PYTHON VARIABLES** ⚠️
+The visual script uses TIME VARIABLES (e.g., segment_1_begin, title_appear).
+You MUST:
+1. Extract ALL time variable definitions from the visual script
+2. Define them as Python variables at the START of construct()
+3. Use these variables for all self.play() and self.wait() timing
+4. Calculate wait durations using variable arithmetic (next_time - current_time)
+
+This makes the code easier to read, debug, and adjust!
 {spatial_fixes_section}
-
-════════════════════════════════════════════════════════════════════════════════
-🛑 ANTI-OVERFLOW CODING RULES (MANDATORY) 🛑
-════════════════════════════════════════════════════════════════════════════════
-1. **SAFE AUTOSCALING**:
-   - For ANY MathTex or Text that might be long:
-     `obj.scale_to_fit_width(10)`  # Ensures it fits width-wise (use 10, not 11)
-   - For groups of text:
-     `group.scale_to_fit_height(5)` # Ensures it fits height-wise
-
-2. **LAYOUT MANAGEMENT**:
-   - **Prefer**: `VGroup().arrange(DOWN, buff=0.6)` over manual positioning.
-   - **Prefer**: `obj.next_to(prev, DOWN, buff=0.6)` over `obj.move_to(...)`.
-   - **Avoid**: Absolute coordinates > 5.5 in X or > 2.8 in Y.
-
-3. **TEXT FORMAT**:
-   - Use `Paragraph("Line 1", "Line 2", alignment="center")` for multi-line text.
-   - Or `Text("Long sentence...", width=10)` to force wrapping.
-   - MAX 6-8 words per line to prevent horizontal overflow.
-
-4. **GRAPHS AND AXES** (CRITICAL - common overflow source!):
-   - Keep axes SMALL: `Axes(x_range=[-3, 3], y_range=[-2, 2], x_length=6, y_length=4)`
-   - Position graphs in center or slightly lower: `.move_to(DOWN * 0.5)`
-   - Leave room for title above: don't use full y_range
-   - Add axis labels with SMALL fonts: `font_size=18`
-
-5. **SHAPES AND DIAGRAMS**:
-   - Keep circles radius ≤ 1.5, squares side ≤ 2.0
-   - Position diagrams in center area: x ∈ [-4, 4], y ∈ [-2.5, 2.5]
-   - Group and scale: `diagram_group.scale_to_fit_width(8)`
-   - Labels: use `font_size=20` and position with `.next_to(shape, direction, buff=0.3)`
-
-6. **CLEAN TRANSITIONS**:
-   - If swapping huge formulas: `self.play(ReplacementTransform(old, new))`
-   - ALWAYS FadeOut old content before adding new in the same position.
-   - Check the REMOVAL SCHEDULE in the visual script for when to clean up!
 
 ════════════════════════════════════════════════════════════════════════════════
 VISUAL SCRIPT TO IMPLEMENT
 ════════════════════════════════════════════════════════════════════════════════
-Follow this visual script EXACTLY. It specifies all objects, positions, and timing:
+Follow this visual script EXACTLY. It specifies all objects, positions, and timing
+using TIME VARIABLES that you'll convert to Python variables:
 
 {visual_script}
 
@@ -749,6 +785,78 @@ ANIMATION TYPE GUIDANCE
 {type_guidance}
 {language_instructions}
 {color_instructions}
+
+════════════════════════════════════════════════════════════════════════════════
+⚠️ CODE STRUCTURE WITH TIME VARIABLES (MANDATORY!)
+════════════════════════════════════════════════════════════════════════════════
+
+Your construct() method MUST follow this structure:
+
+```python
+def construct(self):
+    # === THEME SETUP ===
+    # self.camera.background_color = ... (if needed)
+    
+    # ═══════════════════════════════════════════════════════════════
+    # TIMING VARIABLES (extracted from visual script)
+    # ═══════════════════════════════════════════════════════════════
+    # Define ALL time variables here at the top!
+    # This is the ONLY place where numeric time values appear!
+    
+    # Segment boundaries
+    segment_1_begin = 0.0
+    segment_1_end = 8.8
+    segment_2_begin = 8.8
+    segment_2_end = 18.5
+    # ... etc.
+    
+    # Event times
+    title_appear = 0.0
+    title_hide = 8.8
+    eq_appear = 3.0
+    arrow_appear = 4.0
+    # ... etc.
+    
+    # Animation durations (for run_time parameters)
+    title_write_duration = 1.5
+    eq_fade_duration = 1.0
+    # ... etc.
+    
+    # Calculated wait times
+    wait_after_title = eq_appear - (title_appear + title_write_duration)
+    wait_after_eq = arrow_appear - (eq_appear + eq_fade_duration)
+    # ... etc.
+    
+    # Total duration verification
+    total_duration = {audio_duration:.1f}
+    # ═══════════════════════════════════════════════════════════════
+    
+    # === SEGMENT 1 OBJECTS ===
+    title_main = Text("Title", font_size=36)
+    # ... create all objects
+    
+    # === SEGMENT 1 ANIMATIONS ===
+    # Use variables for timing!
+    self.play(Write(title_main), run_time=title_write_duration)
+    self.wait(wait_after_title)
+    
+    self.play(FadeIn(eq_main), run_time=eq_fade_duration)
+    self.wait(wait_after_eq)
+    
+    # === CLEANUP SEGMENT 1 ===
+    cleanup_duration = 1.0
+    self.play(FadeOut(title_main, arrow_1), run_time=cleanup_duration)
+    
+    # === SEGMENT 2 OBJECTS ===
+    # ... continue pattern
+```
+
+**KEY BENEFITS:**
+1. **Easy debugging**: See all timing in one place at the top
+2. **No magic numbers**: Every time has a meaningful variable name
+3. **Automatic wait calculation**: `wait_time = next_event - (current_event + duration)`
+4. **Easy adjustments**: Change one variable, timing updates throughout
+5. **Prevents object leaks**: Clear tracking of when objects should be cleaned up
 
 ════════════════════════════════════════════════════════════════════════════════
 ⚠️ POSITIONING RULES (CRITICAL - FOLLOW VISUAL SCRIPT POSITIONS!)
@@ -790,27 +898,72 @@ LaTeX vs Text Rules - STRICT ENFORCEMENT:
    - ✅ `Text()` cannot render LaTeX commands like `\frac`, `^`, `_`, `\alpha`.
 
 ════════════════════════════════════════════════════════════════════════════════
-COMMON PATTERNS
+COMMON PATTERNS WITH TIME VARIABLES
 ════════════════════════════════════════════════════════════════════════════════
 
-# Position at coordinates:
-obj.move_to(RIGHT * 2 + UP * 1.5)  # Position at (2, 1.5)
+# Example 1: Sequential animations with calculated waits
+title_appear = 0.0
+title_write_duration = 1.5
+eq_appear = title_appear + title_write_duration + 0.5  # 0.5s gap
+eq_fade_duration = 1.0
+next_event = eq_appear + eq_fade_duration + 2.0  # 2.0s hold time
 
-# Proper cleanup before new content:
-self.play(FadeOut(old_group))
-new_content = Text("New", font_size=32).move_to(ORIGIN)
-self.play(FadeIn(new_content))
+title = Text("Title", font_size=36).to_edge(UP, buff=0.8)
+self.play(Write(title), run_time=title_write_duration)
+self.wait(eq_appear - (title_appear + title_write_duration))
 
-# VGroup with safe spacing:
-items = VGroup(*elements).arrange(DOWN, buff=0.8, aligned_edge=LEFT)
-items.next_to(title, DOWN, buff=1.0) # Larger gap after title to avoid overlap
+eq = MathTex(r"x^2 + y^2 = r^2").scale(0.75).move_to(ORIGIN)
+self.play(FadeIn(eq), run_time=eq_fade_duration)
+self.wait(next_event - (eq_appear + eq_fade_duration))
 
-# Scale equation to safe size:
-eq = MathTex(r"\\frac{{a}}{{b}} = c").scale(0.8).move_to(ORIGIN)
+# Example 2: Cleanup with proper timing
+cleanup_start = 8.8
+cleanup_duration = 0.5
+segment_2_begin = cleanup_start + cleanup_duration
 
-# Sequential text (safer than manual):
-line1 = Text("First Line")
-line2 = Text("Second Line").next_to(line1, DOWN, buff=0.8) # Explicit next_to prevents overlap
+self.play(FadeOut(title, eq), run_time=cleanup_duration)
+# Now we're at segment_2_begin time
+
+# Example 3: Multiple objects appearing in sequence
+obj_1_appear = 2.0
+obj_1_duration = 0.8
+obj_2_appear = obj_1_appear + obj_1_duration + 0.2
+obj_2_duration = 0.8
+
+self.play(FadeIn(obj_1), run_time=obj_1_duration)
+self.wait(obj_2_appear - (obj_1_appear + obj_1_duration))
+self.play(FadeIn(obj_2), run_time=obj_2_duration)
+
+════════════════════════════════════════════════════════════════════════════════
+OBJECT CLEANUP TRACKING (PREVENT LEAKS!)
+════════════════════════════════════════════════════════════════════════════════
+
+The visual script contains an "OBJECT LIFECYCLE SUMMARY" and "REMOVAL SCHEDULE".
+Use this to ensure you FadeOut objects at the right time!
+
+Pattern:
+1. Look at the REMOVAL SCHEDULE in the visual script
+2. For each cleanup time variable, collect all objects with that hide_at time
+3. FadeOut them together
+
+Example from visual script:
+```
+REMOVAL SCHEDULE:
+- [title_hide] FadeOut: title_1, arrow_1
+- [diagram_cleanup] FadeOut: eq_main, diagram_1  
+- [end] Objects still visible: conclusion_text
+```
+
+Your code:
+```python
+# At title_hide time
+self.play(FadeOut(title_1, arrow_1), run_time=0.5)
+
+# At diagram_cleanup time  
+self.play(FadeOut(eq_main, diagram_1), run_time=0.5)
+
+# conclusion_text stays until end (no FadeOut)
+```
 
 ════════════════════════════════════════════════════════════════════════════════
 SYNTAX REQUIREMENTS
@@ -827,7 +980,9 @@ Output ONLY the Python code for the construct() body.
 - NO explanations
 - NO class definition or imports
 - Just the indented code that goes inside construct(self)
+- MUST start with timing variable definitions!
 - VERIFY: Implement ALL segments from the visual script
+- VERIFY: Use time variables for ALL timing
 - VERIFY: Total duration = {audio_duration:.1f}s"""
 
 

@@ -189,8 +189,15 @@ class ManimGenerator:
         # Generate Manim code using Gemini (2-shot approach)
         retry_note = f" (clean retry {clean_retry})" if clean_retry > 0 else ""
         print(f"[ManimGenerator] Generating code for section {section_index}{retry_note}")
+        
+        # On clean retry, reuse the existing visual script to save cost and maintain consistency
+        reuse_visual_script = (clean_retry > 0)
         manim_code, visual_script = await self._generate_manim_code(
-            section, target_duration, output_dir=output_dir, section_index=section_index
+            section, 
+            target_duration, 
+            output_dir=output_dir, 
+            section_index=section_index,
+            reuse_visual_script=reuse_visual_script
         )
         
         # Write the code to a temp file
@@ -263,7 +270,8 @@ class ManimGenerator:
         section: Dict[str, Any], 
         target_duration: float,
         output_dir: Optional[str] = None,
-        section_index: int = 0
+        section_index: int = 0,
+        reuse_visual_script: bool = False
     ) -> Tuple[str, Optional[str]]:
         """Use Gemini to generate Manim code for a section using 2-shot approach
         
@@ -276,6 +284,7 @@ class ManimGenerator:
             target_duration: Target duration in seconds
             output_dir: Directory to save visual script immediately (optional)
             section_index: Index of the section for naming the visual script file
+            reuse_visual_script: If True, reuse existing visual script instead of regenerating
         
         Returns:
             Tuple of (manim_code: str, visual_script: Optional[str])
@@ -298,45 +307,58 @@ class ManimGenerator:
         timing_context = build_timing_context(section, narration_segments)
         
         # ══════════════════════════════════════════════════════════════════════
-        # SHOT 1: Generate Visual Script (Storyboard)
+        # SHOT 1: Generate Visual Script (Storyboard) - OR REUSE EXISTING
         # ══════════════════════════════════════════════════════════════════════
-        print(f"[ManimGenerator] Shot 1: Generating visual script...")
-        
-        visual_script_prompt = build_visual_script_prompt(
-            section=section,
-            audio_duration=audio_duration,
-            timing_context=timing_context
-        )
         
         visual_script = None
-        try:
-            response1 = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=self.VISUAL_SCRIPT_MODEL,
-                    contents=visual_script_prompt,
-                    config=self.visual_script_generation_config
-                ),
-                timeout=180
+        
+        # Try to reuse existing visual script on clean retry
+        if reuse_visual_script and output_dir:
+            script_file = Path(output_dir) / f"visual_script_{section_index}.md"
+            if script_file.exists():
+                print(f"[ManimGenerator] ♻️ Reusing existing visual script from {script_file}")
+                with open(script_file, "r") as f:
+                    visual_script = f.read().strip()
+                print(f"[ManimGenerator] Loaded existing visual script: {len(visual_script)} chars")
+        
+        # Generate new visual script if not reusing or file doesn't exist
+        if not visual_script:
+            print(f"[ManimGenerator] Shot 1: Generating visual script...")
+            
+            visual_script_prompt = build_visual_script_prompt(
+                section=section,
+                audio_duration=audio_duration,
+                timing_context=timing_context
             )
             
-            self.cost_tracker.track_usage(response1, self.VISUAL_SCRIPT_MODEL)
-            visual_script = response1.text.strip()
-            print(f"[ManimGenerator] Shot 1 complete: {len(visual_script)} chars")
-            
-            # Save visual script IMMEDIATELY after generation (before analysis)
-            if output_dir and visual_script:
-                script_file = Path(output_dir) / f"visual_script_{section_index}.md"
-                with open(script_file, "w") as f:
-                    f.write(visual_script)
-                print(f"[ManimGenerator] Visual script saved to {script_file}")
-            
-        except asyncio.TimeoutError:
-            print(f"[ManimGenerator] Shot 1 timed out, falling back to single-shot")
-            visual_script = None
-        except Exception as e:
-            print(f"[ManimGenerator] Shot 1 error: {e}, falling back to single-shot")
-            visual_script = None
+            try:
+                response1 = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=self.VISUAL_SCRIPT_MODEL,
+                        contents=visual_script_prompt,
+                        config=self.visual_script_generation_config
+                    ),
+                    timeout=180
+                )
+                
+                self.cost_tracker.track_usage(response1, self.VISUAL_SCRIPT_MODEL)
+                visual_script = response1.text.strip()
+                print(f"[ManimGenerator] Shot 1 complete: {len(visual_script)} chars")
+                
+                # Save visual script IMMEDIATELY after generation (before analysis)
+                if output_dir and visual_script:
+                    script_file = Path(output_dir) / f"visual_script_{section_index}.md"
+                    with open(script_file, "w") as f:
+                        f.write(visual_script)
+                    print(f"[ManimGenerator] Visual script saved to {script_file}")
+                
+            except asyncio.TimeoutError:
+                print(f"[ManimGenerator] Shot 1 timed out, falling back to single-shot")
+                visual_script = None
+            except Exception as e:
+                print(f"[ManimGenerator] Shot 1 error: {e}, falling back to single-shot")
+                visual_script = None
         
         # ══════════════════════════════════════════════════════════════════════
         # SHOT 1.5: Analyze Visual Script for Spatial Issues (Structured Output)

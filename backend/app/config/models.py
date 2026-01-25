@@ -251,6 +251,7 @@ COST_OPTIMIZED_PIPELINE = PipelineModels(
     ),
     code_correction=ModelConfig(
         model_name="gemini-flash-lite-latest",
+        max_correction_attempts=3,
         description="Budget code correction"
     ),
     code_correction_strong=ModelConfig(
