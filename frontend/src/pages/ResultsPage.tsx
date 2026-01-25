@@ -51,6 +51,10 @@ export default function ResultsPage() {
   // Resume state
   const [resumeInfo, setResumeInfo] = useState<ResumeInfo | null>(null)
   const [isResuming, setIsResuming] = useState(false)
+  
+  // High quality compile state
+  const [isCompilingHQ, setIsCompilingHQ] = useState(false)
+  const [hqJobId, setHqJobId] = useState<string | null>(null)
 
   // Detailed progress state
   const [detailedProgress, setDetailedProgress] = useState<DetailedProgress | null>(null)
@@ -168,6 +172,37 @@ export default function ResultsPage() {
       toast.error('Failed to start translation')
     } finally {
       setIsTranslating(false)
+    }
+  }
+  
+  // Handle high quality compilation
+  const handleCompileHighQuality = async (quality: 'medium' | 'high' | '4k' = 'high') => {
+    if (!jobId) return
+    
+    setIsCompilingHQ(true)
+    try {
+      const response = await fetch(`${API_BASE}/job/${jobId}/compile-high-quality`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quality })
+      })
+      
+      if (!response.ok) throw new Error('Failed to start high quality compilation')
+      
+      const data = await response.json()
+      setHqJobId(data.hq_job_id)
+      toast.success(`${quality.toUpperCase()} quality compilation started!`)
+      
+      // Navigate to the new HQ job
+      setTimeout(() => {
+        navigate(`/results/${data.hq_job_id}`)
+      }, 1500)
+      
+    } catch (err) {
+      console.error('Failed to compile high quality:', err)
+      toast.error('Failed to start high quality compilation')
+    } finally {
+      setIsCompilingHQ(false)
     }
   }
 
@@ -497,6 +532,28 @@ export default function ResultsPage() {
                   No translations yet. Click "Add Translation" to create one.
                 </p>
               )}
+            </div>
+          </div>
+          
+          {/* High Quality Compile Section */}
+          <div className="mt-6 pt-6 border-t border-gray-800">
+            <h2 className="text-lg font-semibold mb-3">Quality Options</h2>
+            <div className="space-y-2">
+              <button
+                onClick={() => handleCompileHighQuality('high')}
+                disabled={isCompilingHQ}
+                className="w-full flex items-center justify-between p-3 bg-gradient-to-r from-purple-600 to-pink-600 
+                           text-white rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                <span className="flex items-center gap-2">
+                  <Play className="w-4 h-4" />
+                  Compile in High Quality (1080p)
+                </span>
+                {isCompilingHQ && <Loader2 className="w-4 h-4 animate-spin" />}
+              </button>
+              <p className="text-xs text-gray-500 px-3">
+                Re-render the entire video in high quality. This will take longer but produce better results.
+              </p>
             </div>
           </div>
         </div>

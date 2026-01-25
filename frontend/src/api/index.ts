@@ -109,6 +109,24 @@ export interface DetailedProgress {
   sections: SectionProgress[]
 }
 
+// === Pipeline Types ===
+
+export interface PipelineInfo {
+  name: string
+  description: string
+  is_active: boolean
+  models: {
+    script_generation: string
+    manim_generation: string
+    visual_script_generation: string
+  }
+}
+
+export interface PipelinesResponse {
+  pipelines: PipelineInfo[]
+  active: string
+}
+
 // API Functions
 export async function uploadFile(file: File): Promise<UploadResponse> {
   const formData = new FormData()
@@ -127,6 +145,11 @@ export async function analyzeFile(fileId: string): Promise<AnalysisResult> {
   return response.data
 }
 
+export async function getPipelines(): Promise<PipelinesResponse> {
+  const response = await api.get('/pipelines')
+  return response.data
+}
+
 export async function generateVideos(params: {
   file_id: string
   analysis_id: string
@@ -138,6 +161,7 @@ export async function generateVideos(params: {
   language?: string
   content_focus?: 'practice' | 'theory' | 'as_document'
   document_context?: 'standalone' | 'series' | 'auto'
+  pipeline?: string  // Pipeline configuration: "default", "high_quality", "cost_optimized"
   resume_job_id?: string  // If provided, resume this job instead of creating a new one
 }): Promise<JobResponse> {
   const response = await api.post('/generate', params)

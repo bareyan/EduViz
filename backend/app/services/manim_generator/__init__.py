@@ -56,17 +56,19 @@ class ManimGenerator:
     
     # Model configuration - loaded from centralized config
     _manim_config = get_model_config("manim_generation")
+    _visual_script_config = get_model_config("visual_script_generation")
     _correction_config = get_model_config("code_correction")
     _correction_strong_config = get_model_config("code_correction_strong")
     _visual_qc_config = get_model_config("visual_qc")
     
     MODEL = _manim_config.model_name
+    VISUAL_SCRIPT_MODEL = _visual_script_config.model_name
     CORRECTION_MODEL = _correction_config.model_name
     STRONG_MODEL = _correction_strong_config.model_name
     QC_MODEL = _visual_qc_config.model_name
     
-    MAX_CORRECTION_ATTEMPTS = 1
-    MAX_CLEAN_RETRIES = 1
+    MAX_CORRECTION_ATTEMPTS = getattr(_manim_config, 'max_correction_attempts', 3)
+    MAX_CLEAN_RETRIES = 2
     
     # Visual QC settings
     ENABLE_VISUAL_QC = False  # Toggle: Set to True to enable visual QC
@@ -82,17 +84,41 @@ class ManimGenerator:
         
         # Generation config from centralized config
         thinking_config = get_thinking_config(self._manim_config)
-        if types and thinking_config:
-            self.generation_config = types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(
-                    thinking_level=thinking_config["thinking_level"],
-                ),
-            )
+        script_thinking_config = get_thinking_config(self._visual_script_config)
+        
+        if types:
+            if thinking_config:
+                self.generation_config = types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level=thinking_config["thinking_level"],
+                    ),
+                )
+            else:
+                self.generation_config = None
+                
+            if script_thinking_config:
+                self.visual_script_generation_config = types.GenerateContentConfig(
+                    thinking_config=types.ThinkingConfig(
+                        thinking_level=script_thinking_config["thinking_level"],
+                    ),
+                )
+            else:
+                self.visual_script_generation_config = None
         else:
             self.generation_config = None
+            self.visual_script_generation_config = None
         
         # Initialize cost tracker
         self.cost_tracker = CostTracker()
+
+        # Initialize stats
+        self.stats = {
+            "total_sections": 0,
+            "regenerated_sections": 0,  # Count of sections that needed at least one retry
+            "total_retries": 0,         # Total number of retries across all sections
+            "skipped_sections": 0,      # Sections that failed even after retries
+            "failed_sections": []       # List of failed section indices
+        }
         
         # Initialize visual QC controller
         self.visual_qc = None
@@ -111,7 +137,21 @@ class ManimGenerator:
     def print_cost_summary(self):
         """Print a formatted cost summary to console"""
         self.cost_tracker.print_summary(self.visual_qc)
-    
+        
+    def print_generation_stats(self):
+        """Print statistics about the generation process"""
+        print("\n" + "="*60)
+        print(f"GENERATION STATISTICS")
+        print("="*60)
+        print(f"Total Sections Processed: {self.stats['total_sections']}")
+        print(f"Sections Regenerated:     {self.stats['regenerated_sections']}")
+        print(f"Total Retries Performed:  {self.stats['total_retries']}")
+        print(f"Skipped/Failed Sections:  {self.stats['skipped_sections']}")
+        
+        if self.stats['failed_sections']:
+            print(f"Failed Section Indices:   {', '.join(map(str, self.stats['failed_sections']))}")
+        print("="*60 + "\n")
+
     async def generate_section_video(
         self,
         section: Dict[str, Any],
@@ -137,6 +177,9 @@ class ManimGenerator:
             Dict with video_path and manim_code
         """
         
+        if clean_retry == 0:
+            self.stats["total_sections"] += 1
+
         # Use audio duration as the target if available
         target_duration = audio_duration if audio_duration else section.get("duration_seconds", 60)
         section["target_duration"] = target_duration
@@ -176,17 +219,25 @@ class ManimGenerator:
         )
         
         # Check if we need to retry from clean
-        if output_video is None and clean_retry < self.MAX_CLEAN_RETRIES:
-            print(f"[ManimGenerator] ⚠️ Section {section_index} failed, attempting clean retry {clean_retry + 1}/{self.MAX_CLEAN_RETRIES}")
-            return await self.generate_section_video(
-                section=section,
-                output_dir=output_dir,
-                section_index=section_index,
-                audio_duration=audio_duration,
-                style=style,
-                language=language,
-                clean_retry=clean_retry + 1
-            )
+        if output_video is None:
+            if clean_retry < self.MAX_CLEAN_RETRIES:
+                print(f"[ManimGenerator] ⚠️ Section {section_index} failed, attempting clean retry {clean_retry + 1}/{self.MAX_CLEAN_RETRIES}")
+                if clean_retry == 0:
+                    self.stats["regenerated_sections"] += 1
+                self.stats["total_retries"] += 1
+                
+                return await self.generate_section_video(
+                    section=section,
+                    output_dir=output_dir,
+                    section_index=section_index,
+                    audio_duration=audio_duration,
+                    style=style,
+                    language=language,
+                    clean_retry=clean_retry + 1
+                )
+            else:
+                self.stats["skipped_sections"] += 1
+                self.stats["failed_sections"].append(section_index)
         
         # Re-read the final code
         with open(code_file, "r") as f:
@@ -262,14 +313,14 @@ class ManimGenerator:
             response1 = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.client.models.generate_content,
-                    model=self.MODEL,
+                    model=self.VISUAL_SCRIPT_MODEL,
                     contents=visual_script_prompt,
-                    config=self.generation_config
+                    config=self.visual_script_generation_config
                 ),
                 timeout=180
             )
             
-            self.cost_tracker.track_usage(response1, self.MODEL)
+            self.cost_tracker.track_usage(response1, self.VISUAL_SCRIPT_MODEL)
             visual_script = response1.text.strip()
             print(f"[ManimGenerator] Shot 1 complete: {len(visual_script)} chars")
             

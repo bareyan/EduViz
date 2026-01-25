@@ -55,6 +55,11 @@ async def generate_videos(request: GenerationRequest, background_tasks: Backgrou
     # Start generation in background
     async def run_generation():
         try:
+            # Set the active pipeline for this generation
+            from ..config.models import set_active_pipeline
+            set_active_pipeline(request.pipeline)
+            print(f"[Generation] Using pipeline: {request.pipeline}")
+            
             if resume_mode:
                 job_manager.update_job(job_id, JobStatus.ANALYZING, 0, "Checking existing progress...")
             else:
@@ -186,3 +191,35 @@ async def get_resume_info(job_id: str):
         failed_sections=[],
         last_completed_section=None
     )
+
+
+@router.get("/pipelines")
+async def get_available_pipelines():
+    """Get available pipeline configurations"""
+    from ..config.models import AVAILABLE_PIPELINES, get_active_pipeline_name
+    
+    pipelines = []
+    for name, pipeline in AVAILABLE_PIPELINES.items():
+        description = ""
+        if name == "default":
+            description = "Balanced quality and speed - best for most use cases"
+        elif name == "high_quality":
+            description = "Maximum quality with stronger models and deeper thinking"
+        elif name == "cost_optimized":
+            description = "Budget-friendly with fastest models"
+        
+        pipelines.append({
+            "name": name,
+            "description": description,
+            "is_active": name == get_active_pipeline_name(),
+            "models": {
+                "script_generation": pipeline.script_generation.model_name,
+                "manim_generation": pipeline.manim_generation.model_name,
+                "visual_script_generation": pipeline.visual_script_generation.model_name,
+            }
+        })
+    
+    return {
+        "pipelines": pipelines,
+        "active": get_active_pipeline_name()
+    }

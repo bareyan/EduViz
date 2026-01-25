@@ -377,6 +377,7 @@ class VideoGenerator:
                 self.manim_generator.visual_qc.print_error_summary()
             
             print("\n")
+            self.manim_generator.print_generation_stats()
             self.manim_generator.print_cost_summary()
             
             cost_summary = self.manim_generator.get_cost_summary()

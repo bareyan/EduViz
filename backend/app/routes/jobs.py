@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from ..config import OUTPUT_DIR
-from ..models import JobResponse, DetailedProgress, SectionProgress
+from ..models import JobResponse, DetailedProgress, SectionProgress, HighQualityCompileRequest
 from ..services.job_manager import get_job_manager, JobStatus
 from ..services.tts_engine import TTSEngine
 
@@ -367,4 +367,133 @@ async def get_section_details(job_id: str, section_index: int):
         "video_url": video_path,
         "has_audio": audio_path.exists(),
         "has_video": video_path is not None
+    }
+
+
+@router.post("/job/{job_id}/compile-high-quality")
+async def compile_high_quality(job_id: str, request: HighQualityCompileRequest):
+    """Recompile the video in high quality"""
+    from fastapi import BackgroundTasks
+    from ..services.video_generator import VideoGenerator
+    
+    job_manager = get_job_manager()
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Check if script exists
+    script_path = OUTPUT_DIR / job_id / "script.json"
+    if not script_path.exists():
+        raise HTTPException(status_code=404, detail="Script not found for this job")
+    
+    # Load the script
+    with open(script_path, "r") as f:
+        script = json.load(f)
+    
+    sections = script.get("sections", [])
+    if not sections:
+        raise HTTPException(status_code=404, detail="No sections found in script")
+    
+    # Create a new job for high quality compilation
+    hq_job_id = f"{job_id}_hq_{request.quality}"
+    job_manager.create_job(hq_job_id)
+    
+    async def recompile_high_quality():
+        try:
+            from ..services.manim_generator import ManimGenerator
+            from pathlib import Path
+            
+            job_manager.update_job(hq_job_id, JobStatus.CREATING_ANIMATIONS, 0, f"Recompiling in {request.quality} quality...")
+            
+            manim_generator = ManimGenerator()
+            sections_dir = OUTPUT_DIR / job_id / "sections"
+            hq_output_dir = OUTPUT_DIR / hq_job_id
+            hq_output_dir.mkdir(parents=True, exist_ok=True)
+            hq_sections_dir = hq_output_dir / "sections"
+            hq_sections_dir.mkdir(exist_ok=True)
+            
+            section_videos = []
+            total_sections = len(sections)
+            
+            for idx, section in enumerate(sections):
+                section_id = section.get("id", f"section_{idx}")
+                section_dir = sections_dir / section_id
+                
+                job_manager.update_job(
+                    hq_job_id, 
+                    JobStatus.CREATING_ANIMATIONS, 
+                    int((idx / total_sections) * 90),
+                    f"Rendering section {idx + 1}/{total_sections} in {request.quality} quality..."
+                )
+                
+                # Find the code file
+                code_files = list(section_dir.glob("scene_*.py"))
+                if not code_files:
+                    print(f"[HighQuality] No code file found for section {idx}, skipping")
+                    continue
+                
+                code_file = code_files[0]
+                
+                # Copy code to HQ output directory
+                hq_section_dir = hq_sections_dir / section_id
+                hq_section_dir.mkdir(exist_ok=True)
+                hq_code_file = hq_section_dir / code_file.name
+                shutil.copy(code_file, hq_code_file)
+                
+                # Render with high quality
+                from ..services.manim_generator.renderer import render_scene
+                
+                scene_name = f"Section{section_id.title().replace('_', '')}"
+                output_video = await render_scene(
+                    manim_generator,
+                    hq_code_file,
+                    scene_name,
+                    str(hq_section_dir),
+                    idx,
+                    section=section,
+                    quality=request.quality
+                )
+                
+                if output_video:
+                    section_videos.append(output_video)
+                    print(f"[HighQuality] Section {idx + 1} rendered: {output_video}")
+                else:
+                    print(f"[HighQuality] Section {idx + 1} failed to render")
+            
+            # Combine videos
+            if section_videos:
+                job_manager.update_job(hq_job_id, JobStatus.COMPOSING_VIDEO, 90, "Combining sections...")
+                
+                from ..services.video_generator.audio_video_utils import concatenate_videos
+                final_video_path = hq_output_dir / "final_video.mp4"
+                
+                await concatenate_videos(section_videos, str(final_video_path))
+                
+                job_manager.update_job(
+                    hq_job_id,
+                    JobStatus.COMPLETED,
+                    100,
+                    f"High quality ({request.quality}) compilation complete!",
+                    result=[{
+                        "video_id": hq_job_id,
+                        "title": f"{script.get('title', 'Video')} ({request.quality.upper()})",
+                        "download_url": f"/outputs/{hq_job_id}/final_video.mp4"
+                    }]
+                )
+            else:
+                job_manager.update_job(hq_job_id, JobStatus.FAILED, 0, "No sections were successfully rendered")
+                
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            job_manager.update_job(hq_job_id, JobStatus.FAILED, 0, f"Error: {str(e)}")
+    
+    # Import BackgroundTasks properly and run the task
+    import asyncio
+    asyncio.create_task(recompile_high_quality())
+    
+    return {
+        "message": f"High quality compilation started",
+        "hq_job_id": hq_job_id,
+        "quality": request.quality
     }

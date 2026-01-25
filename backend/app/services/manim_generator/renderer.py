@@ -55,7 +55,8 @@ async def render_scene(
     section: Dict[str, Any] = None,
     attempt: int = 0,
     qc_iteration: int = 0,
-    clean_retry: int = 0
+    clean_retry: int = 0,
+    quality: str = "low",
 ) -> Optional[str]:
     """Render a Manim scene to video with auto-correction on errors and visual QC
     
@@ -75,10 +76,23 @@ async def render_scene(
     if match:
         scene_name = match.group(1)
     
+    # Determine quality flag
+    # -ql: Low quality (480p15)
+    # -qm: Medium quality (720p30)
+    # -qh: High quality (1080p60)
+    # -qk: 4k quality (2160p60)
+    quality_flag = "-ql"
+    if quality == "medium":
+        quality_flag = "-qm"
+    elif quality == "high":
+        quality_flag = "-qh"
+    elif quality == "4k":
+        quality_flag = "-qk"
+
     # Build manim command
     cmd = [
         "manim",
-        "-ql",  # Low quality for faster rendering
+        quality_flag,  # Use quality flag
         "--format=mp4",
         f"--output_file=section_{section_index}",
         f"--media_dir={output_dir}",
