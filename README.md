@@ -89,6 +89,10 @@ cp .env.example .env
 
 # Run the server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+
+
+micromamba run -n manim uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 ### 3. Frontend Setup
@@ -101,6 +105,9 @@ npm install
 
 # Run development server
 npm run dev
+
+
+ cd /run/media/sipanb/Data/Scripts/experiments/manimagain/frontend && ./node_modules/.bin/vite --host 2>&1 || node ./node_modules/vite/bin/vite.js --host 2>&1
 ```
 
 ### 4. Access the Application

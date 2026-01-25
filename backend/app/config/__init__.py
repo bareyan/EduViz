@@ -18,10 +18,14 @@ from .models import (
     DEFAULT_PIPELINE_MODELS,
     HIGH_QUALITY_PIPELINE,
     COST_OPTIMIZED_PIPELINE,
+    OVERVIEW_OPTIMIZED_PIPELINE,
+    AVAILABLE_PIPELINES,
     AVAILABLE_MODELS,
     THINKING_CAPABLE_MODELS,
     get_model_config,
     get_thinking_config,
+    set_active_pipeline,
+    get_active_pipeline_name,
     list_pipeline_steps,
 )
 

@@ -53,6 +53,39 @@ class MaterialAnalyzer:
         else:
             raise ValueError("GEMINI_API_KEY environment variable is required")
     
+    def _get_representative_sample(self, text: str, max_chars: int = 15000) -> str:
+        """Extract a representative sample from the document for analysis.
+        
+        OPTIMIZATION: For analysis, we don't need the full document. We sample:
+        - Beginning (intro/abstract): 40% of budget
+        - Middle (core content): 40% of budget
+        - End (conclusions): 20% of budget
+        
+        This reduces token costs while maintaining analysis quality.
+        """
+        if len(text) <= max_chars:
+            return text
+        
+        # Calculate section sizes
+        intro_size = int(max_chars * 0.4)
+        middle_size = int(max_chars * 0.4)
+        ending_size = max_chars - intro_size - middle_size
+        
+        # Get beginning
+        intro = text[:intro_size]
+        
+        # Get middle section (center of document)
+        middle_start = max(intro_size, (len(text) - middle_size) // 2)
+        middle = text[middle_start:middle_start + middle_size]
+        
+        # Get ending
+        ending = text[-ending_size:]
+        
+        # Combine with markers
+        sample = f"{intro}\n\n[...content continues...]\n\n{middle}\n\n[...content continues...]\n\n{ending}"
+        
+        return sample
+    
     async def analyze(self, file_path: str, file_id: str) -> Dict[str, Any]:
         """Main analysis entry point"""
         file_ext = os.path.splitext(file_path)[1].lower()
@@ -135,10 +168,20 @@ class MaterialAnalyzer:
         }
     
     async def _gemini_analyze(self, text: str, total_pages: int) -> Dict[str, Any]:
-        """Use Gemini to analyze text content and suggest video topics"""
+        """Use Gemini to analyze text content and suggest video topics
+        
+        OPTIMIZATION: Analysis only needs a representative sample of the document
+        to identify structure and topics. Using 15K chars is sufficient for most
+        documents and reduces token costs.
+        """
         
         # Determine if document is massive (warrants multiple videos)
         is_massive = total_pages >= self.MASSIVE_DOC_PAGES
+        
+        # OPTIMIZED: Use adaptive content sampling for analysis
+        # - For short docs: use all content
+        # - For long docs: use beginning (intro/abstract), middle (core content), and end (conclusions)
+        content_sample = self._get_representative_sample(text, max_chars=15000)
         
         prompt = f"""You are an expert educator preparing comprehensive educational video content with animated visuals.
 
@@ -150,7 +193,7 @@ DOCUMENT INFO:
 - {"This is a LARGE document - consider splitting into logical chapter-based videos" if is_massive else "This is a standard-sized document - create ONE comprehensive video"}
 
 CONTENT:
-{text[:20000]}
+{content_sample}
 
 {"LARGE DOCUMENT INSTRUCTIONS:" if is_massive else "STANDARD DOCUMENT INSTRUCTIONS:"}
 {'''Since this is a large document with multiple distinct chapters/sections:

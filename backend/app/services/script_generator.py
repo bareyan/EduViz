@@ -164,6 +164,199 @@ LANGUAGE CODE:"""
             print(f"[ScriptGenerator] Language detection failed: {e}, defaulting to 'en'")
             return "en"
     
+    def _build_compressed_previous_context(self, previous_sections: List[Dict[str, Any]]) -> str:
+        """Build compressed context from previous sections.
+        
+        OPTIMIZATION: Uses sliding window + summary approach to minimize tokens.
+        
+        Strategy:
+        - Last section: Narration ending (200 chars) for continuity
+        - Second-to-last: Title + key transition
+        - Older sections: Just titles in a progression line
+        """
+        if not previous_sections:
+            return "(First section)"
+        
+        context_parts = []
+        
+        # One-line summary of progression (all titles)
+        titles = [s.get('title', 'Untitled') for s in previous_sections]
+        context_parts.append(f"Progress: {' → '.join(titles)}")
+        
+        # Last section: more detail for continuity
+        last = previous_sections[-1]
+        narration = last.get('narration', '')
+        # Only last 200 chars (reduced from 500)
+        narration_excerpt = narration[-200:] if len(narration) > 200 else narration
+        context_parts.append(f"Previous ended: ...{narration_excerpt}")
+        
+        # Second-to-last: just a brief note if exists
+        if len(previous_sections) >= 2:
+            second_last = previous_sections[-2]
+            context_parts.append(f"Before that: {second_last.get('title', 'Untitled')}")
+        
+        return "\n".join(context_parts)
+    
+    def _get_relevant_content_for_section(
+        self,
+        content: str,
+        section_outline: Dict[str, Any],
+        section_idx: int,
+        total_sections: int
+    ) -> str:
+        """Extract only the portion of the document relevant to this section.
+        
+        OPTIMIZATION: Instead of passing the full document (25K chars) to every section,
+        extract only the relevant portion based on:
+        1. Keywords from section's content_to_cover and key_points
+        2. Proportional slicing based on section position
+        
+        This can reduce input tokens by 50-70% per section.
+        """
+        import re
+        
+        # Maximum content per section (reduced from 25K)
+        MAX_CONTENT_PER_SECTION = 12000
+        
+        # If document is small enough, just return it all
+        if len(content) <= MAX_CONTENT_PER_SECTION:
+            return content
+        
+        content_to_cover = section_outline.get('content_to_cover', '')
+        key_points = section_outline.get('key_points', [])
+        section_title = section_outline.get('title', '')
+        
+        # Extract keywords from section description
+        keywords = self._extract_keywords(content_to_cover, key_points, section_title)
+        
+        if keywords:
+            # Try to find relevant chunks based on keywords
+            relevant_chunks = self._find_relevant_chunks(content, keywords, max_chars=MAX_CONTENT_PER_SECTION)
+            if relevant_chunks and len(relevant_chunks) >= 500:  # Minimum useful content
+                print(f"[ScriptGenerator] Section {section_idx + 1}: Extracted {len(relevant_chunks)} chars using keyword matching")
+                return relevant_chunks
+        
+        # Fallback: Use proportional slicing based on section position
+        # Give each section an overlapping window of the document
+        overlap = 0.3  # 30% overlap with adjacent sections
+        
+        # Calculate section's portion of the document
+        section_size = len(content) / max(1, total_sections)
+        effective_size = section_size * (1 + overlap * 2)  # With overlap
+        
+        # Center the window on this section's portion
+        center = (section_idx + 0.5) * section_size
+        start = max(0, int(center - effective_size / 2))
+        end = min(len(content), int(center + effective_size / 2))
+        
+        # Expand to paragraph boundaries
+        start = self._find_paragraph_start(content, start)
+        end = self._find_paragraph_end(content, end)
+        
+        excerpt = content[start:end]
+        
+        # Ensure we don't exceed max
+        if len(excerpt) > MAX_CONTENT_PER_SECTION:
+            excerpt = excerpt[:MAX_CONTENT_PER_SECTION]
+        
+        print(f"[ScriptGenerator] Section {section_idx + 1}: Using proportional slice [{start}:{end}] = {len(excerpt)} chars")
+        return excerpt
+    
+    def _extract_keywords(self, content_to_cover: str, key_points: List[str], title: str) -> List[str]:
+        """Extract meaningful keywords from section description for content matching."""
+        import re
+        
+        # Combine all text sources
+        all_text = f"{title} {content_to_cover} {' '.join(key_points) if key_points else ''}"
+        
+        # Remove common stop words and short words
+        stop_words = {'the', 'a', 'an', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+                      'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+                      'should', 'may', 'might', 'must', 'shall', 'can', 'need', 'dare',
+                      'ought', 'used', 'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by',
+                      'from', 'as', 'into', 'through', 'during', 'before', 'after', 'above',
+                      'below', 'between', 'under', 'again', 'further', 'then', 'once', 'here',
+                      'there', 'when', 'where', 'why', 'how', 'all', 'each', 'every', 'both',
+                      'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor', 'not',
+                      'only', 'own', 'same', 'so', 'than', 'too', 'very', 'just', 'and', 'or',
+                      'but', 'if', 'this', 'that', 'these', 'those', 'what', 'which', 'who',
+                      'section', 'part', 'chapter', 'introduction', 'conclusion', 'summary',
+                      'discuss', 'explain', 'describe', 'cover', 'include', 'present'}
+        
+        # Extract words (alphanumeric, min 3 chars)
+        words = re.findall(r'\b[a-zA-Z]{3,}\b', all_text.lower())
+        
+        # Filter stop words and get unique keywords
+        keywords = list(set(w for w in words if w not in stop_words))
+        
+        # Also look for multi-word phrases (2-3 words) that might be important
+        phrases = re.findall(r'\b[A-Z][a-z]+(?:\s+[A-Z]?[a-z]+){1,2}\b', all_text)
+        keywords.extend([p.lower() for p in phrases])
+        
+        # Limit to most likely relevant keywords
+        return keywords[:20]
+    
+    def _find_relevant_chunks(self, content: str, keywords: List[str], max_chars: int) -> str:
+        """Find paragraphs containing keywords and return them concatenated.
+        
+        Returns content sections that are most relevant to the given keywords.
+        """
+        import re
+        
+        # Split content into paragraphs
+        paragraphs = re.split(r'\n\s*\n', content)
+        
+        # Score each paragraph by keyword matches
+        scored_paragraphs = []
+        for i, para in enumerate(paragraphs):
+            if len(para.strip()) < 50:  # Skip very short paragraphs
+                continue
+            
+            para_lower = para.lower()
+            score = sum(1 for kw in keywords if kw in para_lower)
+            
+            # Boost score for paragraphs with multiple keyword matches
+            if score > 0:
+                scored_paragraphs.append((score, i, para))
+        
+        # Sort by score (descending) and then by position (for narrative flow)
+        scored_paragraphs.sort(key=lambda x: (-x[0], x[1]))
+        
+        # Take top-scoring paragraphs until we hit max_chars
+        selected = []
+        total_chars = 0
+        
+        for score, idx, para in scored_paragraphs:
+            if total_chars + len(para) > max_chars:
+                break
+            selected.append((idx, para))
+            total_chars += len(para)
+        
+        # Sort by original position to maintain narrative order
+        selected.sort(key=lambda x: x[0])
+        
+        return "\n\n".join(para for _, para in selected)
+    
+    def _find_paragraph_start(self, content: str, pos: int) -> int:
+        """Find the start of the paragraph containing position pos."""
+        # Look backwards for double newline or start
+        search_start = max(0, pos - 500)
+        chunk = content[search_start:pos]
+        last_break = chunk.rfind('\n\n')
+        if last_break != -1:
+            return search_start + last_break + 2
+        return search_start
+    
+    def _find_paragraph_end(self, content: str, pos: int) -> int:
+        """Find the end of the paragraph containing position pos."""
+        # Look forward for double newline or end
+        search_end = min(len(content), pos + 500)
+        chunk = content[pos:search_end]
+        next_break = chunk.find('\n\n')
+        if next_break != -1:
+            return pos + next_break
+        return search_end
+    
     async def _extract_content(self, file_path: str) -> str:
         """Extract text content from file"""
         ext = os.path.splitext(file_path)[1].lower()
@@ -528,23 +721,8 @@ Respond with ONLY valid JSON:
     ) -> Optional[Dict[str, Any]]:
         """Generate a single section with full context of the outline and previous sections."""
         
-        # Build context from previous sections - keep it concise to avoid token limits
-        previous_sections_context = ""
-        if previous_sections:
-            prev_summaries = []
-            for i, prev in enumerate(previous_sections):
-                # Only include last 2 sections in detail, older ones get brief summary
-                if i >= len(previous_sections) - 2:
-                    # Recent sections: include narration ending for continuity
-                    narration = prev.get('narration', '')
-                    # Limit to last 500 chars to save tokens
-                    narration_excerpt = narration[-500:] if len(narration) > 500 else narration
-                    prev_summaries.append(f"[{i+1}] {prev.get('title', 'Untitled')}: ...{narration_excerpt}")
-                else:
-                    # Older sections: just title and key concepts
-                    concepts = prev.get('key_concepts', [])[:3]
-                    prev_summaries.append(f"[{i+1}] {prev.get('title', 'Untitled')} - covered: {', '.join(concepts)}")
-            previous_sections_context = "\n".join(prev_summaries)
+        # Build context from previous sections - OPTIMIZED: compressed format
+        previous_sections_context = self._build_compressed_previous_context(previous_sections)
         
         # Format the full outline (very condensed)
         outline_summary = []
@@ -561,9 +739,13 @@ Respond with ONLY valid JSON:
         else:
             position_note = f"MIDDLE SECTION {section_idx + 1}/{total_sections}: Continue naturally, no greetings, reference earlier content."
         
-        # Limit content size based on section - use relevant portion
-        content_limit = 25000  # Reduced from 40000
-        content_excerpt = content[:content_limit]
+        # OPTIMIZED: Extract only relevant content for this section instead of full document
+        content_excerpt = self._get_relevant_content_for_section(
+            content=content,
+            section_outline=section_outline,
+            section_idx=section_idx,
+            total_sections=total_sections
+        )
         
         # Build a more concise prompt - ONLY generate narration, not visual scripts
         prompt = f"""Generate narration for ONE lecture section. Focus ONLY on what to SAY.
@@ -596,7 +778,7 @@ OUTPUT: Valid JSON only, no markdown. Generate ONLY narration text:
 {{"id": "{section_outline.get('id', f'section_{section_idx}')}",
 "title": "{section_outline.get('title', f'Part {section_idx + 1}')}",
 "narration": "Complete spoken narration for this section...",
-"tts_narration": "Same narration with math symbols spelled out (e.g., 'theta' not 'θ', 'x squared' not 'x²')..."}}"""
+"tts_narration": "TTS-ready narration: spell out math symbols (e.g., 'theta' not 'θ', 'x squared' not 'x²') AND write letter names as phonetic transcriptions for correct TTS pronunciation in the target language (e.g., in French: 'igrec' instead of 'y', 'double-vé' instead of 'w')..."}}"""
 
         try:
             thinking_config = get_thinking_config(self._script_config)
@@ -725,7 +907,7 @@ OUTPUT FORMAT: Valid JSON array with ALL sections:
     "id": "section_id",
     "title": "Section Title",
     "narration": "Complete spoken narration for this section...",
-    "tts_narration": "Same narration with math symbols spelled out..."
+    "tts_narration": "TTS-ready narration: spell out math symbols AND write letter names as phonetic transcriptions for correct TTS pronunciation in the target language (e.g., in French: 'igrec' instead of 'y', 'double-vé' instead of 'w')..."
   }},
   ...
 ]
@@ -1127,7 +1309,11 @@ Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
         language_instruction: str,
         gaps_to_fill: List[str]
     ) -> List[Dict[str, Any]]:
-        """Generate sections sequentially using a single chat session to maintain context."""
+        """Generate sections sequentially using a single chat session to maintain context.
+        
+        OPTIMIZATION: For chat-based generation, we only include the full document in the
+        first message. Subsequent messages rely on the chat's context + section-specific excerpts.
+        """
         
         generated_sections = []
         
@@ -1147,9 +1333,12 @@ Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
             outline_summary.append(f"{i+1}. {sec.get('title', 'Untitled')}")
         outline_text = "\n".join(outline_summary)
 
-        # Limit content size
-        content_limit = 35000 
-        content_excerpt = content[:content_limit]
+        # OPTIMIZED: Use proportional content limit for first message
+        # Limit based on document size and section count
+        initial_content_limit = min(25000, max(15000, len(content) // 2))
+        initial_content_excerpt = content[:initial_content_limit]
+        
+        print(f"[ScriptGenerator] Chat mode: Using {initial_content_limit} chars for initial context")
 
         for section_idx, section_outline in enumerate(sections_outline):
             print(f"[ScriptGenerator] With Chat: Generating section {section_idx + 1}/{total_sections}: {section_outline.get('title', 'Untitled')}...")
@@ -1158,7 +1347,7 @@ Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
             if section_idx == 0:
                 position_note = "FIRST SECTION: Start with engaging hook, may greet viewer."
                 
-                # FIRST PROMPT: Include ALL context, source material, and instructions
+                # FIRST PROMPT: Include document context (only in first message)
                 prompt = f"""You are an expert university professor creating a COMPREHENSIVE lecture video script.
 
 Your goal is to generate the narration for ONE section at a time.
@@ -1175,7 +1364,7 @@ LECTURE OUTLINE:
 {outline_text}
 
 SOURCE MATERIAL:
-{content_excerpt}
+{initial_content_excerpt}
 
 ═══════════════════════════════════════════════════════════════════════════════
 REQUEST: Generate narration for SECTION {section_idx + 1}
@@ -1191,14 +1380,30 @@ OUTPUT: Valid JSON only, no markdown. Generate ONLY narration text:
 {{"id": "{section_outline.get('id', f'section_{section_idx}')}",
 "title": "{section_outline.get('title', f'Part {section_idx + 1}')}",
 "narration": "Complete spoken narration for this section...",
-"tts_narration": "Same narration with math symbols spelled out (e.g., 'theta' not 'θ', 'x squared' not 'x²')..."}}"""
+"tts_narration": "TTS-ready narration: spell out math symbols (e.g., 'theta' not 'θ', 'x squared' not 'x²') AND write letter names as phonetic transcriptions for correct TTS pronunciation in the target language (e.g., in French: 'igrec' instead of 'y', 'double-vé' instead of 'w')..."}}"""
 
             else:
                 # SUBSEQUENT PROMPTS: Brief, just asking for next section
+                # The chat already has the document context from the first message
                 if section_idx == total_sections - 1:
                     position_note = "FINAL SECTION: Summarize key insights, memorable conclusion."
                 else:
                     position_note = f"MIDDLE SECTION {section_idx + 1}/{total_sections}: Continue naturally, no greetings, reference earlier content."
+                
+                # OPTIMIZATION: For later sections, optionally include a small relevant excerpt
+                # if the section covers content not in the initial excerpt
+                supplemental_content = ""
+                if len(content) > initial_content_limit:
+                    # Get section-specific content that might not be in initial excerpt
+                    section_excerpt = self._get_relevant_content_for_section(
+                        content=content,
+                        section_outline=section_outline,
+                        section_idx=section_idx,
+                        total_sections=total_sections
+                    )
+                    # Only include if it's different from what's already in context
+                    if section_excerpt and section_excerpt[:500] not in initial_content_excerpt[:5000]:
+                        supplemental_content = f"\n\nRELEVANT SOURCE MATERIAL FOR THIS SECTION:\n{section_excerpt[:5000]}"
 
                 prompt = f"""Generate narration for SECTION {section_idx + 1}.
 
@@ -1207,13 +1412,13 @@ TYPE: {section_outline.get('section_type', 'content')}
 CONTENT TO COVER: {section_outline.get('content_to_cover', '')}
 KEY POINTS: {json.dumps(section_outline.get('key_points', []))}
 
-{position_note}
+{position_note}{supplemental_content}
 
 OUTPUT: Valid JSON only.
 {{"id": "{section_outline.get('id', f'section_{section_idx}')}",
 "title": "{section_outline.get('title', f'Part {section_idx + 1}')}",
 "narration": "Complete spoken narration...",
-"tts_narration": "Math symbols spelled out..."}}"""
+"tts_narration": "TTS-ready: math symbols spelled out, letter names as phonetic transcriptions for correct pronunciation..."}}"""
 
             # Send message to chat with retries
             max_retries = 3

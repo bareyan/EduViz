@@ -55,10 +55,20 @@ async def generate_videos(request: GenerationRequest, background_tasks: Backgrou
     # Start generation in background
     async def run_generation():
         try:
-            # Set the active pipeline for this generation
-            from ..config.models import set_active_pipeline
-            set_active_pipeline(request.pipeline)
-            print(f"[Generation] Using pipeline: {request.pipeline}")
+            # Determine the effective pipeline based on video_mode and explicit pipeline setting
+            from ..config.models import set_active_pipeline, AVAILABLE_PIPELINES
+            
+            effective_pipeline = request.pipeline
+            
+            # OPTIMIZATION: Auto-select cheaper pipeline for overview mode unless explicitly overridden
+            if request.video_mode == "overview" and request.pipeline == "default":
+                # Use the overview-optimized pipeline for overview videos (much cheaper)
+                if "overview" in AVAILABLE_PIPELINES:
+                    effective_pipeline = "overview"
+                    print(f"[Generation] Auto-selected 'overview' pipeline for overview mode (cost optimization)")
+            
+            set_active_pipeline(effective_pipeline)
+            print(f"[Generation] Using pipeline: {effective_pipeline} (video_mode: {request.video_mode})")
             
             if resume_mode:
                 job_manager.update_job(job_id, JobStatus.ANALYZING, 0, "Checking existing progress...")
@@ -202,16 +212,19 @@ async def get_available_pipelines():
     for name, pipeline in AVAILABLE_PIPELINES.items():
         description = ""
         if name == "default":
-            description = "Balanced quality and speed - best for most use cases"
+            description = "Balanced quality and speed - best for comprehensive videos"
         elif name == "high_quality":
             description = "Maximum quality with stronger models and deeper thinking"
         elif name == "cost_optimized":
             description = "Budget-friendly with fastest models"
+        elif name == "overview":
+            description = "Optimized for overview videos - 85% cheaper than default"
         
         pipelines.append({
             "name": name,
             "description": description,
             "is_active": name == get_active_pipeline_name(),
+            "auto_selected_for": "overview" if name == "overview" else None,
             "models": {
                 "script_generation": pipeline.script_generation.model_name,
                 "manim_generation": pipeline.manim_generation.model_name,

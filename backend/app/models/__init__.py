@@ -25,7 +25,7 @@ class GenerationRequest(BaseModel):
     language: str = "en"  # Language code for narration and content
     content_focus: str = "as_document"  # "practice", "theory", or "as_document"
     document_context: str = "auto"  # "standalone", "series", or "auto"
-    pipeline: str = "default"  # Pipeline configuration: "default", "high_quality", "cost_optimized"
+    pipeline: str = "default"  # Pipeline configuration: "default", "high_quality", "cost_optimized", "overview"
     resume_job_id: Optional[str] = None  # If provided, resume this job
 
 
