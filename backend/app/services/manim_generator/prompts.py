@@ -487,49 +487,84 @@ TOTAL DURATION: {audio_duration:.1f}s
 ════════════════════════════════════════════════════════════════════════════════
 ⚠️ CRITICAL: TIME VARIABLE DEFINITIONS (DEFINED AT THE BOTTOM!)
 ════════════════════════════════════════════════════════════════════════════════
-At the END of your visual script, provide ALL time variable definitions in seconds.
-This is the ONLY place where actual numeric times appear!
+At the END of your visual script, provide ALL time variable definitions.
+**IMPORTANT**: Define times as FUNCTIONS of segment durations, not just raw numbers!
+
+This makes timing adjustments trivial - change a segment duration and everything recalculates.
 
 **TIME VARIABLE DEFINITIONS:**
 
 ```python
-# Segment boundaries
-segment_1_begin = 0.0
-segment_1_end = 8.8
+# ═══════════════════════════════════════════════════════════════
+# SEGMENT DURATIONS (adjust these to change pacing)
+# ═══════════════════════════════════════════════════════════════
+segment_1_duration = 18.5
+segment_2_duration = 23.0
+segment_3_duration = 13.0
+# ... more segments as needed
 
-segment_2_begin = 8.8
-segment_2_end = 18.5
-
-# Individual event times
-title_appear = 0.0
-title_hide = 8.8
-
-phrase_1_begin = 0.0
-phrase_1_end = 2.5
-
-phrase_2_begin = 2.5
-phrase_2_end = 5.0
-
-eq_appear = 3.0
-arrow_appear = 4.0
-arrow_hide = 8.8
-
-hold_visuals = 5.0
-cleanup_segment_1 = 8.8
-
-# Add more variables as needed...
-
-# Total duration check
+# Verify total
 total_duration = {audio_duration:.1f}
-assert segment_N_end == total_duration, "Timeline must match total duration!"
+assert segment_1_duration + segment_2_duration + segment_3_duration == total_duration
+
+# ═══════════════════════════════════════════════════════════════
+# SEGMENT BOUNDARIES (calculated from durations)
+# ═══════════════════════════════════════════════════════════════
+segment_1_begin = 0.0
+segment_1_end = segment_1_begin + segment_1_duration
+
+segment_2_begin = segment_1_end
+segment_2_end = segment_2_begin + segment_2_duration
+
+segment_3_begin = segment_2_end
+segment_3_end = segment_3_begin + segment_3_duration
+
+# ═══════════════════════════════════════════════════════════════
+# SEGMENT 1 EVENTS (relative to segment_1_begin)
+# ═══════════════════════════════════════════════════════════════
+title_appear = segment_1_begin + 0.0
+title_write_duration = 1.5
+title_hide = segment_1_end  # Stays until segment end
+
+phrase_1_begin = segment_1_begin + 0.0
+phrase_1_end = segment_1_begin + 2.5
+
+phrase_2_begin = phrase_1_end
+phrase_2_end = segment_1_begin + 5.0
+
+eq_appear = segment_1_begin + 3.0
+eq_fade_duration = 1.0
+eq_hide = segment_2_begin + 6.5  # Stays into segment 2
+
+diagram_appear = segment_1_begin + 8.0
+diagram_create_duration = 0.8
+diagram_hide = segment_1_end  # Removed at segment boundary
+
+# ═══════════════════════════════════════════════════════════════
+# SEGMENT 2 EVENTS (relative to segment_2_begin)
+# ═══════════════════════════════════════════════════════════════
+new_title_appear = segment_2_begin + 0.5
+new_title_duration = 1.0
+
+bullet_1_appear = segment_2_begin + 2.0
+bullet_2_appear = bullet_1_appear + 1.5
+bullet_3_appear = bullet_2_appear + 1.5
+# ... etc.
+
+# ═══════════════════════════════════════════════════════════════
+# CLEANUP TIMES (organized by when objects are removed)
+# ═══════════════════════════════════════════════════════════════
+cleanup_segment_1 = segment_1_end
+cleanup_segment_2 = segment_2_end
 ```
 
 **BENEFITS OF THIS APPROACH:**
-1. Easy to adjust timing - change one variable, everything updates
-2. Clear semantic meaning - `title_appear` is more readable than `0.0s`
-3. Prevents timing conflicts - can see all times in one place
-4. Easier debugging - can verify timeline consistency
-5. Better for code generation - variables translate directly to Python
+1. **Easy adjustments**: Change `segment_1_duration = 20.0` → all events rescale automatically
+2. **Clear relationships**: See that events are relative to segment boundaries
+3. **Self-documenting**: `segment_1_begin + 3.0` shows "3 seconds into segment 1"
+4. **Validation**: Can verify segments sum to total duration
+5. **Flexible pacing**: Adjust each segment independently without breaking others
+6. **Prevents conflicts**: Can't accidentally create overlapping times across segments
 
 ---
 ## REMOVAL SCHEDULE (derived from hide_at times)
@@ -801,34 +836,45 @@ def construct(self):
     # TIMING VARIABLES (extracted from visual script)
     # ═══════════════════════════════════════════════════════════════
     # Define ALL time variables here at the top!
-    # This is the ONLY place where numeric time values appear!
+    # Times are calculated as FUNCTIONS of segment durations
     
-    # Segment boundaries
-    segment_1_begin = 0.0
-    segment_1_end = 8.8
-    segment_2_begin = 8.8
-    segment_2_end = 18.5
-    # ... etc.
+    # Segment durations (PRIMARY CONTROL for pacing)
+    segment_1_duration = 18.5
+    segment_2_duration = 23.0
+    segment_3_duration = 12.5
     
-    # Event times
-    title_appear = 0.0
-    title_hide = 8.8
-    eq_appear = 3.0
-    arrow_appear = 4.0
-    # ... etc.
-    
-    # Animation durations (for run_time parameters)
-    title_write_duration = 1.5
-    eq_fade_duration = 1.0
-    # ... etc.
-    
-    # Calculated wait times
-    wait_after_title = eq_appear - (title_appear + title_write_duration)
-    wait_after_eq = arrow_appear - (eq_appear + eq_fade_duration)
-    # ... etc.
-    
-    # Total duration verification
+    # Verify total
     total_duration = {audio_duration:.1f}
+    # assert segment_1_duration + segment_2_duration + ... == total_duration
+    
+    # Segment boundaries (calculated)
+    segment_1_begin = 0.0
+    segment_1_end = segment_1_begin + segment_1_duration
+    segment_2_begin = segment_1_end
+    segment_2_end = segment_2_begin + segment_2_duration
+    segment_3_begin = segment_2_end
+    segment_3_end = segment_3_begin + segment_3_duration
+    
+    # Segment 1 events (relative to segment_1_begin)
+    title_appear = segment_1_begin + 0.0
+    title_write_duration = 1.5
+    title_hide = segment_1_end
+    
+    eq_appear = segment_1_begin + 3.0
+    eq_fade_duration = 1.0
+    
+    diagram_appear = segment_1_begin + 8.0
+    diagram_create_duration = 0.8
+    
+    # Segment 2 events (relative to segment_2_begin)
+    new_title_appear = segment_2_begin + 0.5
+    bullet_1_appear = segment_2_begin + 2.0
+    bullet_2_appear = bullet_1_appear + 1.5
+    
+    # Calculated wait times (for clarity)
+    wait_after_title = eq_appear - (title_appear + title_write_duration)
+    wait_after_eq = diagram_appear - (eq_appear + eq_fade_duration)
+    # ... etc.
     # ═══════════════════════════════════════════════════════════════
     
     # === SEGMENT 1 OBJECTS ===
@@ -853,10 +899,11 @@ def construct(self):
 
 **KEY BENEFITS:**
 1. **Easy debugging**: See all timing in one place at the top
-2. **No magic numbers**: Every time has a meaningful variable name
-3. **Automatic wait calculation**: `wait_time = next_event - (current_event + duration)`
-4. **Easy adjustments**: Change one variable, timing updates throughout
-5. **Prevents object leaks**: Clear tracking of when objects should be cleaned up
+2. **Hierarchical timing**: Segment durations → boundaries → events (clear dependencies)
+3. **Simple adjustments**: Change segment_1_duration, all events in that segment adjust
+4. **Self-documenting**: `segment_1_begin + 3.0` means "3 seconds into segment 1"
+5. **Validation**: Can verify segments sum to total duration
+6. **Prevents object leaks**: Clear tracking of when objects should be cleaned up
 
 ════════════════════════════════════════════════════════════════════════════════
 ⚠️ POSITIONING RULES (CRITICAL - FOLLOW VISUAL SCRIPT POSITIONS!)

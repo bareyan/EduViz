@@ -13,11 +13,27 @@ from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from .code_utils import remove_markdown_blocks, ensure_manim_structure
 
+# Feature flag for diff-based correction (set to False to disable)
+USE_DIFF_BASED_CORRECTION = True
+
+# Quality to Manim output directory mapping
+QUALITY_DIR_MAP = {
+    "low": "480p15",
+    "medium": "720p30",
+    "high": "1080p60",
+    "4k": "2160p60"
+}
+
 if TYPE_CHECKING:
     from . import ManimGenerator
 
 
-def cleanup_partial_movie_files(output_dir: str, code_file: Path) -> None:
+def get_quality_subdir(quality: str) -> str:
+    """Get the Manim output subdirectory for a quality setting"""
+    return QUALITY_DIR_MAP.get(quality, "480p15")
+
+
+def cleanup_partial_movie_files(output_dir: str, code_file: Path, quality: str = "low") -> None:
     """Clean up partial movie files directory before re-rendering.
     
     This prevents Manim from having stale partial files that won't be 
@@ -25,8 +41,8 @@ def cleanup_partial_movie_files(output_dir: str, code_file: Path) -> None:
     Manim only tracks the new partial files in partial_movie_file_list.txt,
     but old files remain in the directory, causing confusion.
     """
-    # The partial movie files are in: {output_dir}/videos/{scene_file_stem}/480p15/partial_movie_files/
-    video_base = Path(output_dir) / "videos" / code_file.stem / "480p15"
+    quality_subdir = get_quality_subdir(quality)
+    video_base = Path(output_dir) / "videos" / code_file.stem / quality_subdir
     partial_dir = video_base / "partial_movie_files"
     
     if partial_dir.exists():
@@ -119,13 +135,25 @@ async def render_scene(
             # Try auto-correction if we haven't exceeded max attempts
             if attempt < generator.MAX_CORRECTION_ATTEMPTS and section:
                 print(f"[ManimGenerator] Attempting auto-correction (attempt {attempt + 1}/{generator.MAX_CORRECTION_ATTEMPTS})...")
-                corrected_code = await correct_manim_code(
-                    generator,
-                    content, 
-                    result.stderr, 
-                    section,
-                    attempt=attempt
-                )
+                
+                # Use diff-based correction if enabled (faster, cheaper)
+                if USE_DIFF_BASED_CORRECTION:
+                    from app.services.diff_correction.integration import correct_manim_code_with_diff
+                    corrected_code = await correct_manim_code_with_diff(
+                        generator,
+                        content, 
+                        result.stderr, 
+                        section,
+                        attempt=attempt
+                    )
+                else:
+                    corrected_code = await correct_manim_code(
+                        generator,
+                        content, 
+                        result.stderr, 
+                        section,
+                        attempt=attempt
+                    )
                 
                 if corrected_code:
                     # Overwrite the original file with corrected code
@@ -133,7 +161,7 @@ async def render_scene(
                         f.write(corrected_code)
                     
                     # Clean up partial movie files before re-rendering
-                    cleanup_partial_movie_files(output_dir, code_file)
+                    cleanup_partial_movie_files(output_dir, code_file, quality)
                     
                     # Try rendering again with corrected code
                     return await render_scene(
@@ -145,7 +173,8 @@ async def render_scene(
                         section,
                         attempt + 1,
                         qc_iteration,
-                        clean_retry
+                        clean_retry,
+                        quality  # Pass through quality setting
                     )
             
             # All correction attempts exhausted
@@ -157,7 +186,8 @@ async def render_scene(
                 return await render_fallback_scene(section_index, output_dir, code_file.parent)
         
         # Find the actual output file
-        video_dir = Path(output_dir) / "videos" / code_file.stem / "480p15"
+        quality_subdir = get_quality_subdir(quality)
+        video_dir = Path(output_dir) / "videos" / code_file.stem / quality_subdir
         rendered_video = None
         
         if video_dir.exists():
@@ -219,7 +249,7 @@ async def render_scene(
                                     f.write(fixed_code)
                                 
                                 # Clean up partial movie files before re-rendering
-                                cleanup_partial_movie_files(output_dir, code_file)
+                                cleanup_partial_movie_files(output_dir, code_file, quality)
                                 
                                 return await render_scene(
                                     generator,
@@ -230,7 +260,8 @@ async def render_scene(
                                     section,
                                     attempt=0,
                                     qc_iteration=qc_iteration + 1,
-                                    clean_retry=clean_retry
+                                    clean_retry=clean_retry,
+                                    quality=quality  # Pass through quality
                                 )
                             else:
                                 print("[ManimGenerator] Failed to generate visual fix, using current video")
@@ -260,7 +291,8 @@ async def render_from_code(
     generator: "ManimGenerator",
     manim_code: str,
     output_dir: str,
-    section_index: int = 0
+    section_index: int = 0,
+    quality: str = "low"
 ) -> Optional[str]:
     """Render a Manim scene from existing code (e.g., translated code)"""
     from .code_utils import fix_translated_code, extract_scene_name
@@ -299,9 +331,13 @@ async def render_from_code(
     # Render
     output_path = Path(output_dir) / f"section_{section_index}.mp4"
     
+    # Determine quality flag
+    quality_flags = {"low": "-ql", "medium": "-qm", "high": "-qh", "4k": "-qk"}
+    quality_flag = quality_flags.get(quality, "-ql")
+    
     cmd = [
         "manim",
-        "-ql",
+        quality_flag,
         "--format=mp4",
         f"--output_file=section_{section_index}",
         f"--media_dir={output_dir}",
@@ -332,7 +368,8 @@ async def render_from_code(
             return None
         
         # Find the rendered video
-        video_subdir = Path(output_dir) / "videos" / "scene" / "480p15"
+        quality_subdir = get_quality_subdir(quality)
+        video_subdir = Path(output_dir) / "videos" / "scene" / quality_subdir
         if video_subdir.exists():
             for video_file in video_subdir.glob("*.mp4"):
                 return str(video_file)

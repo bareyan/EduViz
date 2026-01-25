@@ -124,22 +124,22 @@ class PipelineModels:
         model_name="gemini-3-flash-preview",
         thinking_level=ThinkingLevel.MEDIUM,
         description="Generate Manim animation code",
-        max_correction_attempts=1
+        max_correction_attempts=5  # Increased: diff-based corrections are cheap
     ))
     
-    # Step 6a: Code Correction (Primary)
-    # Fix errors in generated Manim code - first attempts
+    # Step 6a: Code Correction (Primary - Diff-based)
+    # Fix errors using SEARCH/REPLACE blocks - needs good format compliance
     code_correction: ModelConfig = field(default_factory=lambda: ModelConfig(
-        model_name="gemini-flash-lite-latest",
+        model_name="gemini-2.5-flash",  # Better format compliance than flash-lite
         thinking_level=None,
-        description="Fast code error correction"
+        description="Diff-based code error correction"
     ))
     
     # Step 6b: Code Correction (Strong Fallback)
     # Fix errors when primary correction fails - final attempts
     code_correction_strong: ModelConfig = field(default_factory=lambda: ModelConfig(
-        model_name="gemini-3-flash-preview",
-        thinking_level=ThinkingLevel.MEDIUM,
+        model_name="gemini-2.5-flash",  # Same model, used on retries
+        thinking_level=ThinkingLevel.MEDIUM,  # Enable thinking for complex fixes
         description="Stronger model for complex code fixes"
     ))
     
@@ -229,7 +229,8 @@ COST_OPTIMIZED_PIPELINE = PipelineModels(
         description="Budget analysis"
     ),
     script_generation=ModelConfig(
-        model_name="gemini-2.5-flash",
+        model_name="gemini-3-flash-preview",
+        thinking_level=ThinkingLevel.LOW,
         description="Cost-effective script generation"
     ),
     language_detection=ModelConfig(
@@ -241,21 +242,21 @@ COST_OPTIMIZED_PIPELINE = PipelineModels(
         description="Budget translation"
     ),
     visual_script_generation=ModelConfig(
-        model_name="gemini-flash-lite-latest",
+        model_name="gemini-2.0-flash",
         description="Budget visual script generation",
     ),
     manim_generation=ModelConfig(
-        model_name="gemini-flash-lite-latest",
+        model_name="gemini-2.0-flash",
         description="Budget Manim generation",
         max_correction_attempts=3
     ),
     code_correction=ModelConfig(
-        model_name="gemini-flash-lite-latest",
+        model_name="gemini-2.0-flash",
         max_correction_attempts=3,
         description="Budget code correction"
     ),
     code_correction_strong=ModelConfig(
-        model_name="gemini-2.5-flash",
+        model_name="gemini-2.0-flash",
         description="Fallback code correction"
     ),
     visual_qc=ModelConfig(
