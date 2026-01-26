@@ -47,20 +47,11 @@ async def generate_videos(request: GenerationRequest, background_tasks: Backgrou
     # Start generation in background
     async def run_generation():
         try:
-            # Determine the effective pipeline based on video_mode and explicit pipeline setting
-            from ..config.models import set_active_pipeline, AVAILABLE_PIPELINES
+            # Set the pipeline configuration
+            from ..config.models import set_active_pipeline
 
-            effective_pipeline = request.pipeline
-
-            # OPTIMIZATION: Auto-select cheaper pipeline for overview mode unless explicitly overridden
-            if request.video_mode == "overview" and request.pipeline == "default":
-                # Use the overview-optimized pipeline for overview videos (much cheaper)
-                if "overview" in AVAILABLE_PIPELINES:
-                    effective_pipeline = "overview"
-                    print("[Generation] Auto-selected 'overview' pipeline for overview mode (cost optimization)")
-
-            set_active_pipeline(effective_pipeline)
-            print(f"[Generation] Using pipeline: {effective_pipeline} (video_mode: {request.video_mode})")
+            set_active_pipeline(request.pipeline)
+            print(f"[Generation] Using pipeline: {request.pipeline} (video_mode: {request.video_mode})")
 
             if resume_mode:
                 job_manager.update_job(job_id, JobStatus.ANALYZING, 0, "Checking existing progress...")
@@ -120,6 +111,7 @@ async def generate_videos(request: GenerationRequest, background_tasks: Backgrou
                     voice=request.voice,
                     style=request.style,
                     language=request.language,
+                    video_mode=request.video_mode,
                     resume=resume_mode,
                     progress_callback=lambda p, bp=base_progress: update_progress(p, bp)
                 )

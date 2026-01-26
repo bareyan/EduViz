@@ -88,6 +88,7 @@ class VideoGenerator:
         voice: str = "en-US-Neural2-J",
         style: str = "default",
         language: str = "en",
+        video_mode: str = "comprehensive",
         resume: bool = False,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         max_concurrent_sections: int = 3
@@ -110,6 +111,7 @@ class VideoGenerator:
             voice: Voice identifier for TTS
             style: Style identifier for TTS
             language: Language code (e.g., "en", "es")
+            video_mode: "comprehensive" for detailed videos, "overview" for short summaries
             resume: Whether to resume from existing progress
             progress_callback: Optional callback for progress updates
             max_concurrent_sections: Maximum sections to process in parallel
@@ -142,6 +144,7 @@ class VideoGenerator:
                     "resume": resume,
                     "voice": voice,
                     "language": language,
+                    "video_mode": video_mode,
                     "max_concurrent": max_concurrent_sections
                 })
 
@@ -165,11 +168,12 @@ class VideoGenerator:
                     tracker.report_stage_progress("script", 100, "Loaded existing script")
                     script = tracker.load_script()
                 else:
-                    logger.info("Generating new script")
+                    logger.info(f"Generating new script (video_mode: {video_mode})")
                     script = await self._generate_script(
                         job_id=job_id,
                         material_path=material_path,
                         language=language,
+                        video_mode=video_mode,
                         tracker=tracker
                     )
                     tracker.save_script(script)
@@ -283,26 +287,38 @@ class VideoGenerator:
         job_id: str,
         material_path: Optional[str],
         language: str,
+        video_mode: str,
         tracker: ProgressTracker
     ) -> Dict[str, Any]:
         """
         Generate script from material (internal helper)
         
         Coordinates script generator with progress reporting.
+        
+        Args:
+            job_id: Unique job identifier
+            material_path: Path to source material
+            language: Language code
+            video_mode: "comprehensive" or "overview"
+            tracker: Progress tracker instance
         """
         if not material_path:
             raise ValueError("material_path required for new jobs")
 
         tracker.report_stage_progress("script", 0, "Generating script...")
 
-        logger.info("Generating script from material", extra={"material_path": material_path})
+        logger.info("Generating script from material", extra={
+            "material_path": material_path,
+            "video_mode": video_mode
+        })
         
         # Generate script directly from material
         # The script generator handles content extraction and processing internally
         script = await self.script_generator.generate_script(
             file_path=material_path,
             topic={"title": "Educational Content", "description": ""},
-            language=language
+            language=language,
+            video_mode=video_mode,
         )
 
         tracker.report_stage_progress("script", 100, "Script generated")

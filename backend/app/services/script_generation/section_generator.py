@@ -1,9 +1,10 @@
 """
-Section generation (Phase 2)
+Section generation (Phase 2 for Comprehensive mode)
 
-Handles generating sections from an outline, either all at once (overview)
-or sequentially with context (comprehensive). Also handles narration
-segmentation and script validation.
+Handles generating sections sequentially with context from previous sections.
+For overview mode, see overview_generator.py which uses single-prompt generation.
+
+Also handles narration segmentation and script validation (shared by all modes).
 """
 
 import asyncio
@@ -28,18 +29,13 @@ class SectionGenerator:
         language_name: str,
         language_instruction: str,
     ) -> List[Dict[str, Any]]:
+        """Generate sections from an outline (comprehensive mode only).
+        
+        Note: Overview mode now uses OverviewGenerator for single-prompt generation.
+        This method is only called for comprehensive mode.
+        """
         sections_outline = outline.get("sections_outline", [])
         gaps_to_fill = outline.get("document_analysis", {}).get("gaps_to_fill", [])
-
-        if video_mode == "overview":
-            return await self._generate_all_sections_at_once(
-                sections_outline=sections_outline,
-                full_outline=outline,
-                content=content,
-                language_name=language_name,
-                language_instruction=language_instruction,
-                gaps_to_fill=gaps_to_fill,
-            )
 
         return await self._generate_sections_sequentially(
             sections_outline=sections_outline,
@@ -49,158 +45,6 @@ class SectionGenerator:
             language_instruction=language_instruction,
             gaps_to_fill=gaps_to_fill,
         )
-
-    async def _generate_all_sections_at_once(
-        self,
-        sections_outline: List[Dict[str, Any]],
-        full_outline: Dict[str, Any],
-        content: str,
-        language_name: str,
-        language_instruction: str,
-        gaps_to_fill: List[str],
-    ) -> List[Dict[str, Any]]:
-        sections_summary = []
-        for i, sec in enumerate(sections_outline):
-            sections_summary.append(
-                f"{i + 1}. [{sec.get('id', f'section_{i}')}] {sec.get('title', f'Part {i+1}')}: "
-                f"{sec.get('content_to_cover', 'Cover this topic')}"
-            )
-        sections_summary_str = "\n".join(sections_summary)
-
-        content_excerpt = content[:8000] if len(content) > 8000 else content
-
-        objectives_str = "\n".join(f"- {obj}" for obj in full_outline.get("learning_objectives", []))
-        if not objectives_str:
-            objectives_str = "- Understand the key concepts from the material"
-
-        prompt = f"""You are an expert educator creating a CONCISE VIDEO OVERVIEW script.
-{language_instruction}
-
-Generate ALL sections for this video in ONE response. Keep each section brief and focused.
-
-OVERVIEW TITLE: {full_outline.get('title', 'Educational Content')}
-
-LEARNING OBJECTIVES:
-{objectives_str}
-
-SECTIONS TO GENERATE:
-{sections_summary_str}
-
-SOURCE MATERIAL:
-{content_excerpt}
-
-IMPORTANT - OVERVIEW MODE GUIDELINES:
-- Keep narrations CONCISE (30-90 seconds per section typically)
-- Focus on KEY POINTS only, not exhaustive detail
-- Each section should flow naturally into the next
-- Use clear, engaging language suitable for a summary video
-- Total video should be around {len(sections_outline) * 45} seconds
-
-OUTPUT FORMAT: Valid JSON array with ALL sections:
-[
-  {{
-    "id": "section_id",
-    "title": "Section Title",
-    "narration": "Complete spoken narration for this section...",
-    "tts_narration": "TTS-ready narration: spell out math symbols AND write letter names as phonetic transcriptions for correct TTS pronunciation in the target language (e.g., in French: 'igrec' instead of 'y', 'double-ve' instead of 'w')..."
-  }},
-  ...
-]
-
-Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
-
-        # Define response schema for structured JSON array output
-        response_schema = {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "id": {"type": "string"},
-                    "title": {"type": "string"},
-                    "narration": {"type": "string"},
-                    "tts_narration": {"type": "string"}
-                },
-                "required": ["id", "title", "narration", "tts_narration"]
-            }
-        }
-
-        try:
-            print(f"[SectionGen] Generating all {len(sections_outline)} sections at once...")
-            
-            # Try with thinking_config first
-            try:
-                config = self.base.types.GenerateContentConfig(
-                    thinking_config=self.base.types.ThinkingConfig(thinking_level="LOW"),
-                    max_output_tokens=16384,
-                    response_mime_type="application/json",
-                    response_schema=response_schema,
-                )
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.base.client.models.generate_content,
-                        model=self.base.MODEL,
-                        contents=prompt,
-                        config=config,
-                    ),
-                    timeout=180,
-                )
-            except Exception as e:
-                error_msg = str(e)
-                if "thinking_level is not supported" in error_msg or "thinking_config" in error_msg.lower():
-                    print(f"[SectionGen] Model doesn't support thinking_config, retrying without it...")
-                    config = self.base.types.GenerateContentConfig(
-                        max_output_tokens=16384,
-                        response_mime_type="application/json",
-                        response_schema=response_schema,
-                    )
-                    response = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            self.base.client.models.generate_content,
-                            model=self.base.MODEL,
-                            contents=prompt,
-                            config=config,
-                        ),
-                        timeout=180,
-                    )
-                else:
-                    raise
-            
-            self.base.cost_tracker.track_usage(response, self.base.MODEL)
-
-            if not response or not getattr(response, "text", None) or not response.text.strip():
-                print("[SectionGen] ERROR: Empty response from API")
-                return self._fallback_sections(sections_outline)
-
-            print(f"[SectionGen] Received response, length: {len(response.text)} chars")
-            sections = parse_json_array_response(response.text)
-            if not sections:
-                print("[SectionGen] ERROR: Failed to parse JSON from response")
-                print(f"[SectionGen] Response text preview: {response.text[:500]}...")
-                return self._fallback_sections(sections_outline)
-
-            print(f"[SectionGen] Successfully parsed {len(sections)} sections")
-            for i, section in enumerate(sections):
-                section["id"] = section.get(
-                    "id",
-                    sections_outline[i].get("id", f"section_{i}") if i < len(sections_outline) else f"section_{i}",
-                )
-                section["title"] = section.get(
-                    "title",
-                    sections_outline[i].get("title", f"Part {i + 1}") if i < len(sections_outline) else f"Part {i + 1}",
-                )
-                if not section.get("tts_narration"):
-                    section["tts_narration"] = section.get("narration", "")
-
-            return sections
-
-        except asyncio.TimeoutError:
-            print("[SectionGen] ERROR: Request timed out after 180 seconds")
-            return self._fallback_sections(sections_outline)
-        except Exception as e:
-            print(f"[SectionGen] ERROR: Exception during generation: {type(e).__name__}: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return self._fallback_sections(sections_outline)
 
     async def _generate_sections_sequentially(
         self,

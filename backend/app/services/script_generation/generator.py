@@ -1,7 +1,10 @@
 """
 Script generation coordinator
 
-Combines outline generation (Phase 1) and section generation (Phase 2).
+Supports two modes:
+- Overview: Single-prompt generation for short ~5 minute videos
+- Comprehensive: Two-phase approach (outline + sections) for detailed lectures
+
 Maintains the public ScriptGenerator interface used elsewhere.
 """
 
@@ -10,6 +13,7 @@ from typing import Dict, Any, Optional
 from .base import BaseScriptGenerator
 from .outline_builder import OutlineBuilder
 from .section_generator import SectionGenerator
+from .overview_generator import OverviewGenerator
 
 
 class ScriptGenerator:
@@ -34,6 +38,7 @@ class ScriptGenerator:
         self.base = BaseScriptGenerator(cost_tracker)
         self.outline_builder = OutlineBuilder(self.base)
         self.section_generator = SectionGenerator(self.base)
+        self.overview_generator = OverviewGenerator(self.base)
 
     async def generate_script(
         self,
@@ -53,6 +58,36 @@ class ScriptGenerator:
         language_name = self.LANGUAGE_NAMES.get(output_language, "English")
         detected_language_name = self.LANGUAGE_NAMES.get(detected_language, "English")
         language_instruction = self._build_language_instruction(output_language, detected_language, detected_language_name, language_name)
+
+        # OVERVIEW MODE: Single-prompt generation for short ~5 minute videos
+        if video_mode == "overview":
+            print("[ScriptGenerator] Using OVERVIEW mode - single-prompt generation")
+            script = await self.overview_generator.generate_overview_script(
+                content=content,
+                topic=topic,
+                language_name=language_name,
+                language_instruction=language_instruction,
+            )
+            
+            # Duration estimation from narration length
+            for section in script.get("sections", []):
+                narration_len = len(section.get("narration", ""))
+                section["duration_seconds"] = max(30, int(narration_len / self.base.chars_per_second))
+            
+            script["total_duration_seconds"] = sum(s.get("duration_seconds", 0) for s in script.get("sections", []))
+            
+            # Segment narration for TTS
+            script = self.section_generator.segment_narrations(script)
+            
+            # Metadata
+            script["output_language"] = output_language
+            script["source_language"] = detected_language
+            script["video_mode"] = video_mode
+            script["cost_summary"] = self.base.cost_tracker.get_summary()
+            
+            return script
+
+        # COMPREHENSIVE MODE: Two-phase approach (outline + sections)
         context_instructions = self._build_context_instructions(document_context)
 
         # Phase 1: Outline
