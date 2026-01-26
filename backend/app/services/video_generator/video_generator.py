@@ -288,27 +288,20 @@ class VideoGenerator:
         """
         Generate script from material (internal helper)
         
-        Coordinates analyzer and script generator with progress reporting.
+        Coordinates script generator with progress reporting.
         """
-        # Analyze material
         if not material_path:
             raise ValueError("material_path required for new jobs")
 
-        tracker.report_stage_progress("analysis", 0, "Analyzing material...")
-
-        logger.info("Analyzing material", extra={"material_path": material_path})
-        # Generate a file_id from job_id for analysis tracking
-        file_id = f"job-{job_id}"
-        analysis_result = await self.analyzer.analyze(material_path, file_id)
-
-        tracker.report_stage_progress("analysis", 100, "Analysis complete")
-
-        # Generate script
         tracker.report_stage_progress("script", 0, "Generating script...")
 
-        logger.info("Generating script from analysis")
+        logger.info("Generating script from material", extra={"material_path": material_path})
+        
+        # Generate script directly from material
+        # The script generator handles content extraction and processing internally
         script = await self.script_generator.generate_script(
-            analysis=analysis_result,
+            file_path=material_path,
+            topic={"title": "Educational Content", "description": ""},
             language=language
         )
 

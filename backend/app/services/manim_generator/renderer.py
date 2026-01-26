@@ -87,7 +87,7 @@ async def render_scene(
     Path(output_dir) / f"section_{section_index}.mp4"
 
     # Get the actual class name from the file
-    with open(code_file, "r") as f:
+    with open(code_file, "r", encoding="utf-8") as f:
         content = f.read()
 
     # Extract class name
@@ -160,7 +160,7 @@ async def render_scene(
 
                 if corrected_code:
                     # Overwrite the original file with corrected code
-                    with open(code_file, "w") as f:
+                    with open(code_file, "w", encoding="utf-8") as f:
                         f.write(corrected_code)
 
                     # Clean up partial movie files before re-rendering
@@ -263,7 +263,7 @@ async def render_scene(
 
                             if fixed_code:
                                 print("[ManimGenerator] Applying visual QC fix and re-rendering...")
-                                with open(code_file, "w") as f:
+                                with open(code_file, "w", encoding="utf-8") as f:
                                     f.write(fixed_code)
 
                                 # Clean up partial movie files before re-rendering
@@ -336,7 +336,7 @@ async def render_from_code(
     # Write the code to a file
     code_file = Path(output_dir) / "scene.py"
 
-    with open(code_file, "w") as f:
+    with open(code_file, "w", encoding="utf-8") as f:
         f.write(manim_code)
 
     # Check for Python syntax errors before rendering
@@ -428,7 +428,7 @@ class FallbackSection{section_index}(Scene):
 '''
 
     fallback_file = code_dir / f"fallback_{section_index}.py"
-    with open(fallback_file, "w") as f:
+    with open(fallback_file, "w", encoding="utf-8") as f:
         f.write(fallback_code)
 
     cmd = [

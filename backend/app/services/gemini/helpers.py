@@ -123,7 +123,14 @@ async def generate_content_with_images(
     # Add images
     for image_bytes in image_bytes_list[:5]:  # Limit to 5 images
         try:
-            parts.append(types_module.Part.from_bytes(data=image_bytes, mime_type="image/png"))
+            # Try Vertex AI method first
+            parts.append(types_module.Part.from_data(data=image_bytes, mime_type="image/png"))
+        except AttributeError:
+            try:
+                # Fallback to Gemini API method
+                parts.append(types_module.Part.from_bytes(data=image_bytes, mime_type="image/png"))
+            except Exception:
+                pass
         except Exception:
             pass
 

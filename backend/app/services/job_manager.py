@@ -62,7 +62,7 @@ class JobManager:
         """Load jobs from disk on startup"""
         for job_file in self._storage_dir.glob("*.json"):
             try:
-                with open(job_file, "r") as f:
+                with open(job_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     job = Job.from_dict(data)
                     self._jobs[job.id] = job
@@ -93,8 +93,8 @@ class JobManager:
         """Save a job to disk"""
         job_file = self._storage_dir / f"{job.id}.json"
         try:
-            with open(job_file, "w") as f:
-                json.dump(job.to_dict(), f, indent=2)
+            with open(job_file, "w", encoding="utf-8") as f:
+                json.dump(job.to_dict(), f, indent=2, ensure_ascii=False)
         except Exception as e:
             print(f"Error saving job {job.id}: {e}")
 

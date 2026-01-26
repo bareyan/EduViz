@@ -130,7 +130,7 @@ async def create_translation(job_id: str, request: TranslationRequest, backgroun
             )
 
             translated_script_path = translation_dir / "script.json"
-            with open(translated_script_path, "w") as f:
+            with open(translated_script_path, "w", encoding="utf-8") as f:
                 json.dump(translated_script, f, indent=2, ensure_ascii=False)
 
             print("[Translation] Script translated, now generating video...")
@@ -255,7 +255,7 @@ async def generate_translated_video(
                 )
 
                 translated_manim_path = os.path.join(section_dir, "scene.py")
-                with open(translated_manim_path, "w") as f:
+                with open(translated_manim_path, "w", encoding="utf-8") as f:
                     f.write(translated_manim)
 
                 video_path = await manim_gen.render_from_code(
@@ -342,7 +342,7 @@ async def generate_translated_video(
         final_video = os.path.join(output_dir, "final_video.mp4")
 
         concat_file = os.path.join(output_dir, "concat.txt")
-        with open(concat_file, "w") as f:
+        with open(concat_file, "w", encoding="utf-8") as f:
             for video in section_videos:
                 f.write(f"file '{video}'\n")
 

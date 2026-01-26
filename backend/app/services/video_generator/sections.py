@@ -170,13 +170,17 @@ async def process_single_subsection(
         video_path = manim_result.get("video_path") if isinstance(manim_result, dict) else manim_result
         if video_path and os.path.exists(video_path):
             result["video_path"] = video_path
+        else:
+            print(f"⚠️ Manim returned no video for section {section_index}: {video_path}")
         if isinstance(manim_result, dict):
             if manim_result.get("manim_code_path"):
                 result["manim_code_path"] = manim_result["manim_code_path"]
             if manim_result.get("manim_code"):
                 result["manim_code"] = manim_result["manim_code"]
     except Exception as e:
-        print(f"Manim error for section {section_index}: {e}")
+        import traceback
+        print(f"❌ Manim error for section {section_index}: {e}")
+        traceback.print_exc()
 
     return result
 
@@ -525,7 +529,7 @@ async def merge_subsections(
     final_audio = output_dir / "audio.mp3"
 
     concat_file = output_dir / "concat_list.txt"
-    with open(concat_file, "w") as f:
+    with open(concat_file, "w", encoding="utf-8") as f:
         for clip in merged_clips:
             f.write(f"file '{clip}'\n")
 

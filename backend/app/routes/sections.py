@@ -166,7 +166,7 @@ async def update_section_code(job_id: str, section_id: str, request: CodeUpdateR
 
     filename = scene_file or "scene_0.py"
     code_path = sections_dir / filename
-    with open(code_path, "w") as f:
+    with open(code_path, "w", encoding="utf-8") as f:
         f.write(code)
 
     # Update script.json if present

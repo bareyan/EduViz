@@ -76,7 +76,8 @@ def sanitize_filename(filename: str) -> str:
     # Strip whitespace
     filename = filename.strip()
 
-    if not filename:
+    # Reject filenames that are only dots (., .., ..., etc)
+    if not filename or filename.replace('.', '') == '':
         logger.warning("Filename sanitization resulted in empty string", extra={
             "original": original_filename
         })
@@ -229,11 +230,15 @@ def secure_file_path(
         # Sanitize each component
         sanitized_parts = []
         for part in path_parts:
-            # Remove path separators from each component
-            part = part.replace('/', '').replace('\\', '')
-            # Remove dangerous patterns
-            part = part.replace('..', '').replace('.', '')
-            if part:
+            # Reject any part that contains traversal attempts
+            if '..' in part or '/' in part or '\\' in part:
+                logger.warning("Path traversal attempt blocked", extra={
+                    "base_dir": str(base_dir),
+                    "suspicious_part": part
+                })
+                return None
+            # Skip if empty or only dots
+            if part and part.replace('.', '') != '':
                 sanitized_parts.append(part)
 
         if not sanitized_parts:

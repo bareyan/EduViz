@@ -90,7 +90,7 @@ async def concatenate_audio_files(
 
     # Create concat file list
     concat_list_path = Path(output_path).parent / "concat_audio_list.txt"
-    with open(concat_list_path, 'w') as f:
+    with open(concat_list_path, 'w', encoding="utf-8") as f:
         for audio_path in audio_paths:
             f.write(f"file '{audio_path}'\n")
 
@@ -308,7 +308,7 @@ async def concatenate_videos(videos: List[str], output_path: str):
 
     # Create concat file
     concat_file = Path(output_path).parent / "concat_list.txt"
-    with open(concat_file, "w") as f:
+    with open(concat_file, "w", encoding="utf-8") as f:
         for video in videos:
             f.write(f"file '{video}'\n")
 

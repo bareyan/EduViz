@@ -239,7 +239,7 @@ class VideoProcessor:
         output_dir = Path(output_path).parent
         concat_file = output_dir / "concat_list.txt"
 
-        with open(concat_file, "w") as f:
+        with open(concat_file, "w", encoding="utf-8") as f:
             for video_path in video_paths:
                 # FFmpeg concat requires absolute paths
                 abs_path = Path(video_path).resolve()

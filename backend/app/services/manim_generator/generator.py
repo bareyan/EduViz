@@ -193,7 +193,7 @@ class ManimGenerator:
         # Create the full scene file with theme enforcement
         full_code = create_scene_file(manim_code, section_id, target_duration, style)
 
-        with open(code_file, "w") as f:
+        with open(code_file, "w", encoding="utf-8") as f:
             f.write(full_code)
 
         # Render the scene
@@ -229,7 +229,7 @@ class ManimGenerator:
                 self.stats["failed_sections"].append(section_index)
 
         # Re-read the final code
-        with open(code_file, "r") as f:
+        with open(code_file, "r", encoding="utf-8") as f:
             final_code = f.read()
 
         return {
@@ -299,7 +299,7 @@ class ManimGenerator:
             script_file = Path(output_dir) / f"visual_script_{section_index}.md"
             if script_file.exists():
                 print(f"[ManimGenerator] ♻️ Reusing existing visual script from {script_file}")
-                with open(script_file, "r") as f:
+                with open(script_file, "r", encoding="utf-8") as f:
                     visual_script = f.read().strip()
                 print(f"[ManimGenerator] Loaded existing visual script: {len(visual_script)} chars")
 
@@ -331,7 +331,7 @@ class ManimGenerator:
                 # Save visual script IMMEDIATELY after generation (before analysis)
                 if output_dir and visual_script:
                     script_file = Path(output_dir) / f"visual_script_{section_index}.md"
-                    with open(script_file, "w") as f:
+                    with open(script_file, "w", encoding="utf-8") as f:
                         f.write(visual_script)
                     print(f"[ManimGenerator] Visual script saved to {script_file}")
 
@@ -397,7 +397,7 @@ class ManimGenerator:
                     # Save analysis report
                     if output_dir:
                         analysis_file = Path(output_dir) / f"visual_script_analysis_{section_index}.json"
-                        with open(analysis_file, "w") as f:
+                        with open(analysis_file, "w", encoding="utf-8") as f:
                             json.dump(analysis_result, f, indent=2)
                         print(f"[ManimGenerator] Analysis saved to {analysis_file}")
 
@@ -406,7 +406,7 @@ class ManimGenerator:
                     # Save raw response for debugging
                     if output_dir:
                         analysis_file = Path(output_dir) / f"visual_script_analysis_{section_index}.txt"
-                        with open(analysis_file, "w") as f:
+                        with open(analysis_file, "w", encoding="utf-8") as f:
                             f.write(analysis_text)
 
             except asyncio.TimeoutError:

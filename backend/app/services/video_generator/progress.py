@@ -129,7 +129,7 @@ class ProgressTracker:
         if script_path.exists():
             result.has_script = True
             try:
-                with open(script_path) as f:
+                with open(script_path, encoding="utf-8") as f:
                     result.script = json.load(f)
                 result.total_sections = len(result.script.get("sections", []))
                 logger.debug(f"Found existing script with {result.total_sections} sections", extra={
@@ -244,8 +244,8 @@ class ProgressTracker:
         script_path = self.job_dir / "script.json"
 
         try:
-            with open(script_path, "w") as f:
-                json.dump(script, f, indent=2)
+            with open(script_path, "w", encoding="utf-8") as f:
+                json.dump(script, f, indent=2, ensure_ascii=False)
 
             logger.debug(f"Saved script.json with {len(script.get('sections', []))} sections", extra={
                 "section_count": len(script.get("sections", [])),
@@ -274,7 +274,7 @@ class ProgressTracker:
             raise FileNotFoundError(f"Script not found: {script_path}")
 
         try:
-            with open(script_path) as f:
+            with open(script_path, encoding="utf-8") as f:
                 script = json.load(f)
 
             logger.debug(f"Loaded script.json with {len(script.get('sections', []))} sections")

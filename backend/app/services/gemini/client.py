@@ -24,6 +24,8 @@ class GenerationConfig:
     thinking_config: Optional[Dict[str, str]] = None
     response_mime_type: Optional[str] = None
     response_schema: Optional[Any] = None
+    system_instruction: Optional[Any] = None
+    media_resolution: Optional[str] = None
 
 
 class UnifiedGeminiClient:
@@ -110,6 +112,13 @@ class UnifiedGeminiClient:
     def _create_vertex_types_wrapper(self):
         """Create a wrapper that provides Gemini API-like types for Vertex AI"""
         from vertexai.generative_models import Part, Content
+        try:
+            # Try to import Schema from Vertex AI
+            from vertexai.generative_models._generative_models import Schema, Type
+        except ImportError:
+            # Fallback if not available
+            Schema = None
+            Type = None
 
         class VertexTypesWrapper:
             """Wrapper to make Vertex AI types compatible with Gemini API code"""
@@ -119,6 +128,12 @@ class UnifiedGeminiClient:
         # Set class attributes dynamically
         VertexTypesWrapper.Part = Part
         VertexTypesWrapper.Content = Content
+        
+        # Add Schema and Type if available
+        if Schema:
+            VertexTypesWrapper.Schema = Schema
+        if Type:
+            VertexTypesWrapper.Type = Type
 
         # For backward compatibility with code that checks types.GenerateContentConfig
         @staticmethod
@@ -225,11 +240,25 @@ class VertexAIModels:
 
         config = config or GenerationConfig()
 
+        # Handle both GenerationConfig object and dict (from wrapper)
+        if isinstance(config, dict):
+            # Convert dict back to GenerationConfig
+            config = GenerationConfig(**config)
+
         # Convert model name to Vertex AI format if needed
         model = self._convert_model_name(model)
 
-        # Create model instance
-        model_instance = GenerativeModel(model)
+        # Extract system_instruction if present in config
+        system_instruction = None
+        if hasattr(config, 'system_instruction'):
+            system_instruction = config.system_instruction
+
+        # Create model instance with system instruction if provided
+        model_kwargs = {"model_name": model}
+        if system_instruction:
+            model_kwargs["system_instruction"] = system_instruction
+
+        model_instance = GenerativeModel(**model_kwargs)
 
         # Build generation config
         gen_config_dict = {
@@ -238,6 +267,13 @@ class VertexAIModels:
             "top_k": config.top_k,
             "max_output_tokens": config.max_output_tokens,
         }
+
+        # Add response format if specified (Vertex AI supports this)
+        if config.response_mime_type:
+            gen_config_dict["response_mime_type"] = config.response_mime_type
+
+        if config.response_schema:
+            gen_config_dict["response_schema"] = config.response_schema
 
         vertex_config = VertexGenerationConfig(**gen_config_dict)
 

@@ -5,7 +5,7 @@ Models for job status, progress tracking, and resumable jobs.
 """
 
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Union
 from .sections import SectionProgress
 
 
@@ -39,5 +39,5 @@ class JobResponse(BaseModel):
     status: str
     progress: float
     message: str
-    result: Optional[dict] = None
+    result: Optional[Union[dict, list]] = None
     details: Optional[DetailedProgress] = None

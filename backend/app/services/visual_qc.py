@@ -528,11 +528,18 @@ REMEMBER: When in doubt, check if the issue persists in a "settled" state. Only 
                 video_bytes = f.read()
 
             # Create video part for Gemini
-            # Note: video_metadata is not supported in from_bytes, fps is inferred from the video
-            video_part = self.types.Part.from_bytes(
-                data=video_bytes,
-                mime_type="video/mp4"
-            )
+            # Vertex AI uses from_data(), Gemini API uses from_bytes()
+            try:
+                video_part = self.types.Part.from_data(
+                    data=video_bytes,
+                    mime_type="video/mp4"
+                )
+            except AttributeError:
+                # Fallback for Gemini API
+                video_part = self.types.Part.from_bytes(
+                    data=video_bytes,
+                    mime_type="video/mp4"
+                )
 
             # Create content with video and prompt
             contents = [
