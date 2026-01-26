@@ -89,7 +89,8 @@ class DiffCorrector:
         Returns:
             Fixed code if successful, None otherwise
         """
-        from google.genai import types
+        # Use generator's types module (supports both API and Vertex AI)
+        types = self.generator.types
         
         self.stats['diff_attempts'] += 1
         

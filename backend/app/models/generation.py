@@ -1,0 +1,40 @@
+"""
+API schemas for generation endpoints
+
+Request/Response models for video generation operations.
+"""
+
+from pydantic import BaseModel
+from typing import List, Optional
+
+
+class GenerationRequest(BaseModel):
+    """Request to generate video(s) from analyzed content"""
+    file_id: str
+    analysis_id: str
+    selected_topics: List[int]  # List of topic indices to generate
+    style: str = "3blue1brown"
+    max_video_length: int = 20  # Max minutes per video
+    voice: str = "en-US-GuyNeural"  # Edge TTS voice
+    video_mode: str = "comprehensive"  # "comprehensive" or "overview"
+    language: str = "en"  # Language code for narration and content
+    content_focus: str = "as_document"  # "practice", "theory", or "as_document"
+    document_context: str = "auto"  # "standalone", "series", or "auto"
+    pipeline: str = "default"  # Pipeline configuration
+    resume_job_id: Optional[str] = None  # If provided, resume this job
+
+
+class GeneratedVideo(BaseModel):
+    """A generated video section"""
+    section_id: str
+    title: str
+    duration_seconds: int
+    video_path: str
+    narration: str
+
+
+class GenerationResponse(BaseModel):
+    """Response after initiating generation"""
+    job_id: str
+    status: str
+    message: str

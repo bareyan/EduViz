@@ -10,13 +10,8 @@ import re
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 
-# Gemini
-try:
-    from google import genai
-    from google.genai import types
-except ImportError:
-    genai = None
-    types = None
+# Unified Gemini client (works with both API and Vertex AI)
+from app.services.gemini_client import create_client, get_types_module
 
 # Model configuration
 from app.config.models import get_model_config
@@ -54,12 +49,9 @@ class TranslationService:
     }
     
     def __init__(self):
-        self.client = None
-        api_key = os.getenv("GEMINI_API_KEY")
-        if genai and api_key:
-            self.client = genai.Client(api_key=api_key)
-        else:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
+        # Unified client automatically detects Gemini API vs Vertex AI
+        self.client = create_client()
+        self.types = get_types_module()
     
     async def translate_script(
         self,

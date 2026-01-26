@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime
 
 from ..analyzer import MaterialAnalyzer
-from ..script_generator import ScriptGenerator
+from ..script_generation import ScriptGenerator
 from ..manim_generator import ManimGenerator
 from ..tts_engine import TTSEngine
 

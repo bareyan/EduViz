@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from .code_utils import remove_markdown_blocks, ensure_manim_structure
+from ..gemini_utils import generate_content_with_text, generate_structured_output
 
 # Feature flag for diff-based correction (set to False to disable)
 USE_DIFF_BASED_CORRECTION = True
@@ -468,9 +469,9 @@ async def correct_manim_code(
     attempt: int = 0
 ) -> Optional[str]:
     """Use Gemini to fix errors in the Manim code"""
-    from google.genai import types
     from .prompts import CORRECTION_SYSTEM_INSTRUCTION, build_correction_prompt
     from app.config.models import get_model_config, get_thinking_config
+    from app.services.gemini_client import get_types_module
     
     # Get model configs from centralized configuration
     correction_config = get_model_config("code_correction")
@@ -489,37 +490,23 @@ async def correct_manim_code(
 
     # Use thinking config from centralized configuration if model supports it
     thinking_config = get_thinking_config(model_config)
-    if thinking_config:
-        config = types.GenerateContentConfig(
-            system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
-            thinking_config=types.ThinkingConfig(thinking_level=thinking_config["thinking_level"]),
-        )
-    else:
-        config = types.GenerateContentConfig(
-            system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
-        )
 
     try:
-        response = await asyncio.to_thread(
-            generator.client.models.generate_content,
+        corrected = await generate_content_with_text(
+            client=generator.client,
             model=model_to_use,
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=prompt)]
-                )
-            ],
-            config=config
+            prompt=prompt,
+            system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
+            thinking_config=thinking_config,
+            types_module=get_types_module(),
+            cost_tracker=generator.cost_tracker,
         )
         
-        generator.cost_tracker.track_usage(response, model_to_use)
-
-        
-        if not response or not response.text:
+        if not corrected:
             print("[ManimGenerator] Empty response from correction model")
             return None
         
-        corrected = response.text.strip()
+        corrected = corrected.strip()
         corrected = remove_markdown_blocks(corrected)
         
         if ensure_manim_structure(corrected):
@@ -540,9 +527,9 @@ async def generate_visual_fix(
     section: Dict[str, Any] = None
 ) -> Optional[str]:
     """Generate fixed Manim code based on visual QC error report"""
-    from google.genai import types
     from .prompts import build_visual_fix_prompt
     from app.config.models import get_model_config, get_thinking_config
+    from app.services.gemini_client import get_types_module
     
     if not error_report:
         return None
@@ -559,31 +546,22 @@ async def generate_visual_fix(
     
     # Get thinking config from centralized configuration
     thinking_config = get_thinking_config(strong_config)
-    if thinking_config:
-        config = types.GenerateContentConfig(
-            thinking_config=types.ThinkingConfig(thinking_level=thinking_config["thinking_level"]),
-        )
-    else:
-        config = None
 
     try:
-        response = await asyncio.to_thread(
-            generator.client.models.generate_content,
+        fixed_code = await generate_content_with_text(
+            client=generator.client,
             model=model_to_use,
-            contents=prompt,
-            config=config
+            prompt=prompt,
+            thinking_config=thinking_config,
+            types_module=get_types_module(),
+            cost_tracker=generator.cost_tracker,
         )
         
-        try:
-            generator.cost_tracker.track_usage(response, model_to_use)
-        except Exception:
-            pass
-        
-        if not response or not response.text:
+        if not fixed_code:
             print(f"[ManimGenerator] Visual fix: Empty response")
             return None
         
-        fixed_code = response.text.strip()
+        fixed_code = fixed_code.strip()
         fixed_code = remove_markdown_blocks(fixed_code)
         
         if "from manim import" not in fixed_code:
@@ -693,38 +671,28 @@ async def fix_render_error(
     section: Dict[str, Any] = None
 ) -> Optional[str]:
     """Fix a render error in the code using Gemini"""
-    from google.genai import types
     from .prompts import RENDER_FIX_SYSTEM_INSTRUCTION, build_render_fix_prompt
+    from app.services.gemini_client import get_types_module
     
     # Build prompt with timing info if section is available
     prompt = build_render_fix_prompt(code, error_message, section)
 
     try:
-        response = await asyncio.to_thread(
-            generator.client.models.generate_content,
+        fixed_code = await generate_content_with_text(
+            client=generator.client,
             model=generator.CORRECTION_MODEL,
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=prompt)]
-                )
-            ],
-            config=types.GenerateContentConfig(
-                system_instruction=RENDER_FIX_SYSTEM_INSTRUCTION,
-                temperature=0.1,
-                max_output_tokens=8192
-            )
+            prompt=prompt,
+            system_instruction=RENDER_FIX_SYSTEM_INSTRUCTION,
+            temperature=0.1,
+            max_output_tokens=8192,
+            types_module=get_types_module(),
+            cost_tracker=generator.cost_tracker,
         )
         
-        try:
-            generator.cost_tracker.track_usage(response, generator.CORRECTION_MODEL)
-        except Exception:
-            pass
-        
-        if not response or not response.text:
+        if not fixed_code:
             return None
         
-        fixed_code = response.text.strip()
+        fixed_code = fixed_code.strip()
         fixed_code = remove_markdown_blocks(fixed_code)
         
         if "from manim import" not in fixed_code:

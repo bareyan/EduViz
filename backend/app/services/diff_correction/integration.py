@@ -123,7 +123,8 @@ async def _try_structured_correction(
     
     This guarantees the response format matches our schema.
     """
-    from google.genai import types
+    # Use generator's types module (supports both API and Vertex AI)
+    types = generator.types
     
     # Build prompt for structured output
     prompt = build_structured_prompt(code, error_message, section)
@@ -244,7 +245,8 @@ async def _try_text_based_correction(
     
     Traditional approach - parses blocks from free-form text response.
     """
-    from google.genai import types
+    # Use generator's types module (supports both API and Vertex AI)
+    types = generator.types
     
     # Build prompt with retry emphasis
     prompt = build_diff_correction_prompt(code, error_message, section)

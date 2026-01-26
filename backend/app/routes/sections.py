@@ -327,8 +327,8 @@ async def recompile_job(job_id: str, background_tasks: BackgroundTasks):
 async def fix_section_code(job_id: str, section_id: str, request: FixCodeRequest):
     """Use Gemini to fix/improve Manim code based on prompt and optional frame context"""
     import base64
-    from google import genai
-    from google.genai import types
+    from app.services.gemini_client import create_client, get_types_module
+    from app.services.gemini_utils import generate_content_with_images
     
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
@@ -348,7 +348,8 @@ async def fix_section_code(job_id: str, section_id: str, request: FixCodeRequest
                     section_info = section
                     break
     
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    client = create_client()
+    types = get_types_module()
     
     system_prompt = """You are an expert Manim animator, skilled at creating beautiful 3Blue1Brown-style mathematical animations.
 Your task is to fix or improve the provided Manim code based on the user's request.
@@ -375,32 +376,30 @@ USER REQUEST: {request.prompt if request.prompt else 'Please review and fix any 
 
 Please provide the fixed/improved Manim code."""
 
-    parts = []
+    # Extract image bytes from base64 frames
+    image_bytes_list = []
     for i, frame_data in enumerate(request.frames[:5]):
         try:
             if "base64," in frame_data:
                 base64_data = frame_data.split("base64,")[1]
                 image_bytes = base64.b64decode(base64_data)
-                try:
-                    parts.append(types.Part.from_bytes(data=image_bytes, mime_type="image/png"))
-                except Exception:
-                    pass
+                image_bytes_list.append(image_bytes)
         except Exception as e:
             print(f"Error processing frame {i}: {e}")
 
-    parts.append(types.Part.from_text(text=user_prompt))
-    
     try:
-        response = client.models.generate_content(
+        fixed_code = await generate_content_with_images(
+            client=client,
             model="gemini-3-flash-preview",
-            contents=[types.Content(role="user", parts=parts)],
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.3,
-            )
+            prompt=user_prompt,
+            image_bytes_list=image_bytes_list,
+            system_instruction=system_prompt,
+            temperature=0.3,
+            types_module=types,
         )
         
-        fixed_code = response.text
+        if not fixed_code:
+            raise HTTPException(status_code=500, detail="Failed to generate fixed code")
         
         if "```python" in fixed_code:
             fixed_code = fixed_code.split("```python")[1].split("```")[0].strip()
@@ -409,6 +408,8 @@ Please provide the fixed/improved Manim code."""
         
         return {"fixed_code": fixed_code}
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gemini error: {str(e)}")
 

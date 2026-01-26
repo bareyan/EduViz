@@ -14,16 +14,13 @@ from typing import Dict, Any, List, Optional, Tuple
 from pathlib import Path
 import asyncio
 
-# Gemini SDK
+# Gemini SDK - Unified client for both API and Vertex AI
 try:
-    from google import genai
-    from google.genai import types
+    from app.services.gemini_client import create_client, get_types_module
     GEMINI_AVAILABLE = True
 except ImportError:
-    genai = None
-    types = None
     GEMINI_AVAILABLE = False
-    print("[VisualQC] Warning: google-genai package not installed. Run: pip install google-genai")
+    print("[VisualQC] Warning: gemini_client not available")
 
 # Model configuration
 from app.config.models import get_model_config
@@ -128,16 +125,13 @@ You MUST distinguish between:
             model: Model name (default: gemini-2.0-flash-lite)
         """
         if not GEMINI_AVAILABLE:
-            raise ImportError("google-genai package required. Install with: pip install google-genai")
+            raise ImportError("gemini_client required")
         
         self.model = model or self.DEFAULT_MODEL
         
-        # Initialize Gemini client
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
-        
-        self.client = genai.Client(api_key=api_key)
+        # Initialize unified Gemini client (works with both API and Vertex AI)
+        self.client = create_client()
+        self.types = get_types_module()
         print(f"[VisualQC] Initialized with model: {self.model} (video mode, {self.TARGET_HEIGHT}p @ {self.TARGET_FPS}fps)")
         
         # Token usage tracking

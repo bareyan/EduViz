@@ -11,13 +11,8 @@ import asyncio
 from typing import Dict, Any, Optional, Tuple
 from pathlib import Path
 
-# Gemini
-try:
-    from google import genai
-    from google.genai import types
-except ImportError:
-    genai = None
-    types = None
+# Unified Gemini client (works with both API and Vertex AI)
+from app.services.gemini_client import create_client, get_types_module, GenerationConfig as UnifiedGenerationConfig
 
 # Model configuration
 from app.config.models import (
@@ -75,37 +70,26 @@ class ManimGenerator:
     MAX_QC_ITERATIONS = 3  # Allow up to 3 fix attempts before accepting
     
     def __init__(self):
-        self.client = None
-        api_key = os.getenv("GEMINI_API_KEY")
-        if genai and api_key:
-            self.client = genai.Client(api_key=api_key)
-        else:
-            raise ValueError("GEMINI_API_KEY environment variable is required")
+        # Unified client automatically detects Gemini API vs Vertex AI
+        self.client = create_client()
+        self.types = get_types_module()
         
         # Generation config from centralized config
         thinking_config = get_thinking_config(self._manim_config)
         script_thinking_config = get_thinking_config(self._visual_script_config)
         
-        if types:
-            if thinking_config:
-                self.generation_config = types.GenerateContentConfig(
-                    thinking_config=types.ThinkingConfig(
-                        thinking_level=thinking_config["thinking_level"],
-                    ),
-                )
-            else:
-                self.generation_config = None
-                
-            if script_thinking_config:
-                self.visual_script_generation_config = types.GenerateContentConfig(
-                    thinking_config=types.ThinkingConfig(
-                        thinking_level=script_thinking_config["thinking_level"],
-                    ),
-                )
-            else:
-                self.visual_script_generation_config = None
+        if thinking_config:
+            self.generation_config = UnifiedGenerationConfig(
+                thinking_config=thinking_config,
+            )
         else:
             self.generation_config = None
+            
+        if script_thinking_config:
+            self.visual_script_generation_config = UnifiedGenerationConfig(
+                thinking_config=script_thinking_config,
+            )
+        else:
             self.visual_script_generation_config = None
         
         # Initialize cost tracker
@@ -380,7 +364,7 @@ class ManimGenerator:
             try:
                 # Use structured output config if schema is available
                 if analysis_schema:
-                    analysis_config = types.GenerateContentConfig(
+                    analysis_config = self.types.GenerateContentConfig(
                         response_mime_type="application/json",
                         response_schema=analysis_schema
                     )

@@ -21,7 +21,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create directories
-RUN mkdir -p uploads outputs
+RUN mkdir -p uploads outputs job_data
 
 # Expose port
 EXPOSE 8000

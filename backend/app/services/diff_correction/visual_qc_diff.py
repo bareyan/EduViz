@@ -116,7 +116,8 @@ async def _try_structured_visual_correction(
     """
     Try visual correction using Gemini's structured JSON output.
     """
-    from google.genai import types
+    # Use generator's types module (supports both API and Vertex AI)
+    types = generator.types
     from app.config.models import get_model_config
     
     # Get correction model config
@@ -235,7 +236,8 @@ async def _try_text_based_visual_correction(
     """
     Try visual correction using text-based SEARCH/REPLACE blocks.
     """
-    from google.genai import types
+    # Use generator's types module (supports both API and Vertex AI)
+    types = generator.types
     from app.config.models import get_model_config
     
     # Get model - use stronger model on retries
