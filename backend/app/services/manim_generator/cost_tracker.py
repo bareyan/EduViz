@@ -157,3 +157,25 @@ class CostTracker:
         
         print(f"\n💵 Total Cost:        ${summary['total_cost_usd']:.4f}")
         print("=" * 60 + "\n")
+
+
+def track_cost_safely(cost_tracker, response, model_name: str) -> None:
+    """Safely track API usage cost without raising exceptions.
+    
+    This is a convenience wrapper that handles the common pattern:
+        try:
+            cost_tracker.track_usage(response, model)
+        except Exception:
+            pass
+    
+    Args:
+        cost_tracker: CostTracker instance (or None)
+        response: API response object
+        model_name: Name of the model used
+    """
+    if cost_tracker is None:
+        return
+    try:
+        cost_tracker.track_usage(response, model_name)
+    except Exception:
+        pass

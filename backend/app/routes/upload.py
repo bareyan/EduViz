@@ -1,60 +1,132 @@
 """
-Upload and analysis routes
+Upload routes with security hardening
+
+Implements:
+- Filename sanitization (path traversal prevention)
+- File size limits
+- Rate limiting ready
+- Input validation
+
+Delegates file handling to FileUploadUseCase (clean separation of concerns).
 """
 
 import os
-import uuid
 from fastapi import APIRouter, UploadFile, File, HTTPException
 
-from ..config import UPLOAD_DIR, ALLOWED_MIME_TYPES, ALLOWED_EXTENSIONS
-from ..models import AnalysisRequest
-from ..services.analyzer import MaterialAnalyzer
+from ..services.use_cases import FileUploadUseCase, FileUploadRequest
+from ..core import find_uploaded_file
+from ..core import sanitize_filename, validate_job_id
+from ..core import get_logger
+
+logger = get_logger(__name__, component="upload_routes")
 
 router = APIRouter(tags=["upload"])
 
-# Initialize analyzer
-analyzer = MaterialAnalyzer()
+# Security configuration
+MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", 50 * 1024 * 1024))  # 50MB default
 
 
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """Upload a PDF, image, or text file for analysis"""
+    """
+    Upload a PDF, image, or text file for analysis
     
-    # Validate file type
-    file_ext = os.path.splitext(file.filename)[1].lower() if file.filename else ""
-    
-    if file.content_type not in ALLOWED_MIME_TYPES and file_ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File type {file.content_type} not supported. Use PDF, images, LaTeX, or text files."
-        )
-    
-    # Generate unique file ID
-    file_id = str(uuid.uuid4())
-    file_extension = os.path.splitext(file.filename)[1]
-    saved_path = UPLOAD_DIR / f"{file_id}{file_extension}"
-    
-    # Save file
-    content = await file.read()
-    with open(saved_path, "wb") as f:
-        f.write(content)
-    
-    return {
-        "file_id": file_id,
-        "filename": file.filename,
-        "size": len(content),
-        "type": file.content_type
-    }
+    Security measures:
+    - Filename sanitization (prevents path traversal)
+    - File size limit (prevents DoS)
+    - Content type validation (in use case)
+    """
+    try:
+        # Security: Sanitize filename before processing
+        original_filename = file.filename
+        file.filename = sanitize_filename(file.filename)
+        
+        if file.filename != original_filename:
+            logger.info("Filename sanitized for security", extra={
+                "original": original_filename,
+                "sanitized": file.filename
+            })
+        
+        # Security: Check file size by reading in chunks
+        size = 0
+        chunks = []
+        async for chunk in file.file:
+            size += len(chunk)
+            if size > MAX_UPLOAD_SIZE:
+                logger.warning(f"File too large", extra={
+                    "size": size,
+                    "max_size": MAX_UPLOAD_SIZE,
+                    "filename": file.filename
+                })
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"File too large. Maximum size: {MAX_UPLOAD_SIZE / (1024*1024):.0f}MB"
+                )
+            chunks.append(chunk)
+        
+        # Reconstruct file content
+        content = b''.join(chunks)
+        
+        # Reset file for use case
+        import io
+        file.file = io.BytesIO(content)
+        
+        logger.info(f"File upload initiated", extra={
+            "filename": file.filename,
+            "size": size,
+            "content_type": file.content_type
+        })
+        
+        use_case = FileUploadUseCase()
+        response = await use_case.execute(FileUploadRequest(file=file))
+        
+        logger.info(f"File upload completed", extra={
+            "file_id": response.file_id,
+            "filename": response.filename
+        })
+        
+        return {
+            "file_id": response.file_id,
+            "filename": response.filename,
+            "size": response.size,
+            "type": response.content_type
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Upload failed", extra={
+            "filename": file.filename,
+            "error": str(e)
+        }, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")
 
 
 @router.delete("/file/{file_id}")
 async def delete_file(file_id: str):
-    """Delete an uploaded file"""
+    """
+    Delete an uploaded file
     
-    for ext in ALLOWED_EXTENSIONS:
-        potential_path = UPLOAD_DIR / f"{file_id}{ext}"
-        if potential_path.exists():
-            potential_path.unlink()
-            return {"status": "deleted", "file_id": file_id}
+    Security: Validates file_id format before file operations
+    """
+    # Security: Validate file_id format (should be UUID)
+    if not validate_job_id(file_id):
+        logger.warning(f"Invalid file_id format in delete request", extra={
+            "file_id": file_id
+        })
+        raise HTTPException(status_code=400, detail="Invalid file ID format")
     
-    raise HTTPException(status_code=404, detail="File not found")
+    try:
+        file_path = find_uploaded_file(file_id)
+        os.remove(file_path)
+        
+        logger.info(f"File deleted", extra={"file_id": file_id})
+        
+        return {"status": "deleted", "file_id": file_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Delete failed", extra={
+            "file_id": file_id,
+            "error": str(e)
+        }, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")

@@ -10,7 +10,7 @@ import shutil
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
 from pathlib import Path
 
-from .audio_video_utils import (
+from .ffmpeg import (
     get_audio_duration,
     get_media_duration,
     concatenate_audio_files,

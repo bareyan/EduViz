@@ -5,8 +5,9 @@ Base analyzer class with shared logic for all analysis types
 import asyncio
 from typing import Dict, Any
 from app.config.models import get_model_config
-from app.services.gemini_client import create_client, get_types_module
-from app.services.parse_utils import parse_json_response
+from app.services.gemini import get_gemini_client, get_types_module
+from app.services.parsing import parse_json_response
+create_client = get_gemini_client
 
 
 class BaseAnalyzer:

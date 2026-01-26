@@ -1,10 +1,9 @@
 """
-Section management and editing routes
+Section management and editing routes with security hardening
 """
 
 import os
 import re
-import json
 import subprocess
 import shutil
 from typing import List
@@ -14,6 +13,11 @@ from pydantic import BaseModel
 
 from ..config import OUTPUT_DIR, GEMINI_API_KEY
 from ..services.job_manager import JobManager, JobStatus, get_job_manager
+from ..core import load_script, load_section_script, save_script
+from ..core import validate_job_id, validate_section_index, validate_path_within_directory
+from ..core import get_logger
+
+logger = get_logger(__name__, component="sections_routes")
 
 router = APIRouter(tags=["sections"])
 
@@ -31,21 +35,38 @@ class FixCodeRequest(BaseModel):
 
 @router.get("/job/{job_id}/sections")
 async def get_job_sections(job_id: str):
-    """Get all section files for a job (for editing)"""
+    """
+    Get all section files for a job (for editing)
+    
+    Security: Validates job_id and ensures paths stay within OUTPUT_DIR
+    """
+    # Security: Validate job_id format
+    if not validate_job_id(job_id):
+        logger.warning(f"Invalid job_id format", extra={"job_id": job_id})
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+    
     job_dir = OUTPUT_DIR / job_id
     sections_dir = job_dir / "sections"
+    
+    # Security: Validate paths stay within OUTPUT_DIR
+    if not validate_path_within_directory(job_dir, OUTPUT_DIR):
+        logger.warning(f"Path traversal attempt in get_job_sections", extra={
+            "job_id": job_id,
+            "job_dir": str(job_dir)
+        })
+        raise HTTPException(status_code=403, detail="Access denied")
     
     if not sections_dir.exists():
         raise HTTPException(status_code=404, detail="Sections not found")
     
     # Load script.json for metadata and ordering
     script_sections = []
-    script_path = job_dir / "script.json"
-    if script_path.exists():
-        with open(script_path, "r") as f:
-            script = json.load(f)
-            script_sections = script.get("sections", [])
-            script_sections = sorted(script_sections, key=lambda s: s.get("order", float('inf')))
+    try:
+        script = load_script(job_id)
+        script_sections = script.get("sections", [])
+        script_sections = sorted(script_sections, key=lambda s: s.get("order", float('inf')))
+    except HTTPException:
+        pass
     
     existing_folders = {f for f in os.listdir(sections_dir) if (sections_dir / f).is_dir()}
     
@@ -56,11 +77,25 @@ async def get_job_sections(job_id: str):
         section_id = script_section.get("id")
         if section_id and section_id in existing_folders:
             section_path = sections_dir / section_id
+            
+            # Security: Validate section path
+            if not validate_path_within_directory(section_path, sections_dir):
+                logger.warning(f"Invalid section path", extra={
+                    "section_id": section_id,
+                    "section_path": str(section_path)
+                })
+                continue
+            
             section_info = script_section.copy()
             section_info["files"] = {}
             
             for f in os.listdir(section_path):
                 full_path = section_path / f
+                
+                # Security: Validate file path
+                if not validate_path_within_directory(full_path, section_path):
+                    continue
+                
                 if f.endswith(".py"):
                     section_info["files"][f] = str(full_path)
                     if not section_info.get("manim_code"):
@@ -76,10 +111,20 @@ async def get_job_sections(job_id: str):
     
     for section_folder in sorted(existing_folders - processed_ids):
         section_path = sections_dir / section_folder
+        
+        # Security: Validate section path
+        if not validate_path_within_directory(section_path, sections_dir):
+            continue
+        
         section_info = {"id": section_folder, "files": {}}
         
         for f in os.listdir(section_path):
             full_path = section_path / f
+            
+            # Security: Validate file path
+            if not validate_path_within_directory(full_path, section_path):
+                continue
+            
             if f.endswith(".py"):
                 section_info["files"][f] = str(full_path)
                 if not section_info.get("manim_code"):
@@ -97,7 +142,15 @@ async def get_job_sections(job_id: str):
 
 @router.put("/job/{job_id}/section/{section_id}/code")
 async def update_section_code(job_id: str, section_id: str, request: CodeUpdateRequest):
-    """Update the Manim code for a section"""
+    """
+    Update the Manim code for a section
+    
+    Security: Validates job_id and section_id formats
+    """
+    # Security: Validate job_id format
+    if not validate_job_id(job_id):
+        logger.warning(f"Invalid job_id format", extra={"job_id": job_id})
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
     sections_dir = OUTPUT_DIR / job_id / "sections" / section_id
     
     if not sections_dir.exists():
@@ -116,19 +169,21 @@ async def update_section_code(job_id: str, section_id: str, request: CodeUpdateR
     with open(code_path, "w") as f:
         f.write(code)
     
-    # Update script.json
-    script_path = OUTPUT_DIR / job_id / "script.json"
-    if script_path.exists():
-        with open(script_path, "r") as f:
-            script = json.load(f)
-        
+    # Update script.json if present
+    try:
+        script = load_script(job_id)
+    except HTTPException as exc:
+        if exc.status_code == 404:
+            script = None
+        else:
+            raise
+    
+    if script:
         for section in script.get("sections", []):
             if section.get("id") == section_id:
                 section["manim_code"] = code
                 break
-        
-        with open(script_path, "w") as f:
-            json.dump(script, f, indent=2)
+        save_script(job_id, script)
     
     return {"message": "Code updated successfully"}
 
@@ -181,18 +236,19 @@ async def recompile_job(job_id: str, background_tasks: BackgroundTasks):
         try:
             get_job_manager().update_job(job_id, JobStatus.COMPOSING_VIDEO, 50, "Recompiling video...")
             
-            script_path = job_dir / "script.json"
             ordered_sections = []
-            if script_path.exists():
-                try:
-                    with open(script_path, "r") as sf:
-                        script = json.load(sf)
-                        ordered_sections = sorted(
-                            script.get("sections", []),
-                            key=lambda s: s.get("order", 0)
-                        )
-                except Exception as e:
-                    print(f"Error reading script.json: {e}")
+            try:
+                script = load_script(job_id)
+                ordered_sections = sorted(
+                    script.get("sections", []),
+                    key=lambda s: s.get("order", 0)
+                )
+            except HTTPException as exc:
+                # Fall back to directory listing when script is missing or unreadable
+                if exc.status_code != 404:
+                    print(f"Error reading script.json: {exc.detail}")
+            except Exception as e:
+                print(f"Error reading script.json: {e}")
 
             if not ordered_sections:
                 for section_folder in sorted(os.listdir(sections_dir)):
@@ -327,8 +383,8 @@ async def recompile_job(job_id: str, background_tasks: BackgroundTasks):
 async def fix_section_code(job_id: str, section_id: str, request: FixCodeRequest):
     """Use Gemini to fix/improve Manim code based on prompt and optional frame context"""
     import base64
-    from app.services.gemini_client import create_client, get_types_module
-    from app.services.gemini_utils import generate_content_with_images
+    from app.services.gemini.client import create_client, get_types_module
+    from app.services.gemini.helpers import generate_content_with_images
     
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")
@@ -338,15 +394,10 @@ async def fix_section_code(job_id: str, section_id: str, request: FixCodeRequest
         raise HTTPException(status_code=404, detail="Section not found")
     
     # Load section metadata
-    script_path = OUTPUT_DIR / job_id / "script.json"
-    section_info = {}
-    if script_path.exists():
-        with open(script_path, "r") as f:
-            script = json.load(f)
-            for section in script.get("sections", []):
-                if section.get("id") == section_id:
-                    section_info = section
-                    break
+    try:
+        section_info = load_section_script(job_id, section_id)
+    except HTTPException:
+        section_info = {}
     
     client = create_client()
     types = get_types_module()
@@ -500,18 +551,20 @@ async def regenerate_section(job_id: str, section_id: str):
         if not video_found and not output_video.exists():
             raise HTTPException(status_code=500, detail="Manim did not produce a video file")
         
-        script_path = OUTPUT_DIR / job_id / "script.json"
-        if script_path.exists():
-            with open(script_path, "r") as f:
-                script = json.load(f)
-            
+        try:
+            script = load_script(job_id)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                script = None
+            else:
+                raise
+        
+        if script:
             for section in script.get("sections", []):
                 if section.get("id") == section_id:
                     section["video"] = str(output_video)
                     break
-            
-            with open(script_path, "w") as f:
-                json.dump(script, f, indent=2)
+            save_script(job_id, script)
         
         return {
             "message": "Section regenerated successfully",

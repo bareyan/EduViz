@@ -7,11 +7,12 @@ import uuid
 import traceback
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 
-from ..config import UPLOAD_DIR, OUTPUT_DIR, ALLOWED_EXTENSIONS
+from ..config import UPLOAD_DIR, OUTPUT_DIR
 from ..models import GenerationRequest, JobResponse, ResumeInfo
-from ..services.analyzer import MaterialAnalyzer
+from ..services.analysis import MaterialAnalyzer
 from ..services.video_generator import VideoGenerator
 from ..services.job_manager import get_job_manager, JobStatus
+from ..core import find_uploaded_file
 
 router = APIRouter(tags=["generation"])
 
@@ -26,16 +27,8 @@ async def generate_videos(request: GenerationRequest, background_tasks: Backgrou
     
     job_manager = get_job_manager()
     
-    # Find the uploaded file
-    file_path = None
-    for ext in ALLOWED_EXTENSIONS:
-        potential_path = UPLOAD_DIR / f"{request.file_id}{ext}"
-        if potential_path.exists():
-            file_path = str(potential_path)
-            break
-    
-    if not file_path:
-        raise HTTPException(status_code=404, detail="File not found")
+    # Find the uploaded file using shared helper
+    file_path = find_uploaded_file(request.file_id)
     
     # Determine if we're resuming or creating a new job
     resume_mode = False

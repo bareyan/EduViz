@@ -290,6 +290,10 @@ def create_client(api_key: Optional[str] = None) -> UnifiedGeminiClient:
     return UnifiedGeminiClient(api_key=api_key)
 
 
+# Alias for backward compatibility
+get_gemini_client = create_client
+
+
 def get_types_module():
     """
     Get the types module for the active backend.

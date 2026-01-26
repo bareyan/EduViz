@@ -16,7 +16,8 @@ import asyncio
 
 # Gemini SDK - Unified client for both API and Vertex AI
 try:
-    from app.services.gemini_client import create_client, get_types_module
+    from app.services.gemini import get_gemini_client, get_types_module
+    create_client = get_gemini_client
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False

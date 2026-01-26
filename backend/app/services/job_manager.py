@@ -4,23 +4,13 @@ Job Manager - Track video generation jobs with file-based persistence
 
 import os
 import json
-from enum import Enum
 from dataclasses import dataclass, field, asdict
 from typing import Dict, Optional, Any, List
 from datetime import datetime
 from pathlib import Path
 
-
-class JobStatus(Enum):
-    PENDING = "pending"
-    ANALYZING = "analyzing"
-    GENERATING_SCRIPT = "generating_script"
-    CREATING_ANIMATIONS = "creating_animations"
-    SYNTHESIZING_AUDIO = "synthesizing_audio"
-    COMPOSING_VIDEO = "composing_video"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    INTERRUPTED = "interrupted"
+# Use centralized JobStatus from models
+from app.models.status import JobStatus
 
 
 @dataclass

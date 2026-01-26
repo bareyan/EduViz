@@ -11,7 +11,9 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 # Unified Gemini client (works with both API and Vertex AI)
-from app.services.gemini_client import create_client, get_types_module
+from app.services.gemini import get_gemini_client, get_types_module
+from app.core import LANGUAGE_NAMES
+create_client = get_gemini_client
 
 # Model configuration
 from app.config.models import get_model_config
@@ -23,30 +25,6 @@ class TranslationService:
     # Model configuration - loaded from centralized config
     _config = get_model_config("translation")
     MODEL = _config.model_name
-    
-    # Language mappings
-    LANGUAGE_NAMES = {
-        "en": "English",
-        "fr": "French",
-        "es": "Spanish",
-        "de": "German",
-        "it": "Italian",
-        "pt": "Portuguese",
-        "zh": "Chinese",
-        "ja": "Japanese",
-        "ko": "Korean",
-        "ar": "Arabic",
-        "ru": "Russian",
-        "hy": "Armenian",
-        "hi": "Hindi",
-        "tr": "Turkish",
-        "pl": "Polish",
-        "nl": "Dutch",
-        "sv": "Swedish",
-        "da": "Danish",
-        "no": "Norwegian",
-        "fi": "Finnish",
-    }
     
     def __init__(self):
         # Unified client automatically detects Gemini API vs Vertex AI
@@ -75,8 +53,8 @@ class TranslationService:
         if not source_language:
             source_language = script.get("source_language", script.get("language", "en"))
         
-        target_name = self.LANGUAGE_NAMES.get(target_language, target_language)
-        source_name = self.LANGUAGE_NAMES.get(source_language, source_language)
+        target_name = LANGUAGE_NAMES.get(target_language, target_language)
+        source_name = LANGUAGE_NAMES.get(source_language, source_language)
         
         print(f"[TranslationService] Translating from {source_name} to {target_name}")
         
@@ -206,8 +184,8 @@ class TranslationService:
         if not texts:
             return []
         
-        source_name = self.LANGUAGE_NAMES.get(source_language, source_language)
-        target_name = self.LANGUAGE_NAMES.get(target_language, target_language)
+        source_name = LANGUAGE_NAMES.get(source_language, source_language)
+        target_name = LANGUAGE_NAMES.get(target_language, target_language)
         
         # Build numbered text blocks
         texts_block = ""
@@ -464,8 +442,8 @@ OUTPUT (same format, translated):
         if not texts:
             return []
         
-        source_name = self.LANGUAGE_NAMES.get(source_language, source_language)
-        target_name = self.LANGUAGE_NAMES.get(target_language, target_language)
+        source_name = LANGUAGE_NAMES.get(source_language, source_language)
+        target_name = LANGUAGE_NAMES.get(target_language, target_language)
         
         # Build numbered text blocks
         texts_block = ""
@@ -538,8 +516,8 @@ TRANSLATIONS (same format):
             # Even for same language, still need to clean up LaTeX for TTS
             return self._convert_latex_to_spoken(text)
         
-        source_name = self.LANGUAGE_NAMES.get(source_language, source_language)
-        target_name = self.LANGUAGE_NAMES.get(target_language, target_language)
+        source_name = LANGUAGE_NAMES.get(source_language, source_language)
+        target_name = LANGUAGE_NAMES.get(target_language, target_language)
         
         prompt = f"""You are converting educational text for text-to-speech. Translate from {source_name} to {target_name} and convert ALL math to spoken words.
 
@@ -712,8 +690,8 @@ SPOKEN {target_name.upper()} VERSION:"""
         if source_language == target_language:
             return items
         
-        source_name = self.LANGUAGE_NAMES.get(source_language, source_language)
-        target_name = self.LANGUAGE_NAMES.get(target_language, target_language)
+        source_name = LANGUAGE_NAMES.get(source_language, source_language)
+        target_name = LANGUAGE_NAMES.get(target_language, target_language)
         
         # Join items with special separator
         separator = "\n---ITEM---\n"

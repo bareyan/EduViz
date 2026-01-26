@@ -14,11 +14,10 @@ Code Generation & Rendering:
 	- video_generator: Video rendering and generation
     
 LLM Integration:
-	- gemini_client: Unified Gemini API client
-	- gemini_utils: Shared Gemini API utilities
+	- gemini/: Unified Gemini API client and helpers
     
-Utilities:
-	- parse_utils: JSON/code parsing utilities
+Support Services:
+	- parsing/: JSON/code parsing utilities
 	- job_manager: Job status and progress tracking
 	- translation_service: Video translation
 	- tts_engine: Text-to-speech

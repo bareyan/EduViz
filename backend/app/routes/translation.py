@@ -13,7 +13,7 @@ from ..config import OUTPUT_DIR
 from ..services.translation_service import get_translation_service
 from ..services.tts_engine import TTSEngine
 from ..services.manim_generator import ManimGenerator
-from ..utils import get_media_duration
+from ..core import get_media_duration
 
 router = APIRouter(tags=["translation"])
 

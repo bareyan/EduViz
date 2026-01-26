@@ -5,9 +5,12 @@ FastAPI application for generating 3Blue1Brown-style educational videos
 This is the main entry point that wires together all routes and services.
 """
 
-from fastapi import FastAPI
+import os
+import uuid
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 from .config import (
     API_TITLE, 
@@ -24,6 +27,24 @@ from .routes import (
     sections_router,
     translation_router,
 )
+from .core import setup_logging, get_logger, set_request_id, clear_context
+
+# Initialize logging
+log_level = os.getenv("LOG_LEVEL", "INFO")
+log_file = os.getenv("LOG_FILE")
+use_json_logs = os.getenv("JSON_LOGS", "false").lower() == "true"
+
+setup_logging(
+    level=log_level,
+    log_file=Path(log_file) if log_file else None,
+    use_json=use_json_logs
+)
+
+logger = get_logger(__name__, service="api")
+logger.info("Starting MathViz Backend API", extra={
+    "log_level": log_level,
+    "json_logs": use_json_logs
+})
 
 # Create FastAPI app
 app = FastAPI(
@@ -31,6 +52,31 @@ app = FastAPI(
     description=API_DESCRIPTION,
     version=API_VERSION
 )
+
+
+@app.middleware("http")
+async def add_request_correlation(request: Request, call_next):
+    """Add correlation ID to all requests for tracing"""
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    set_request_id(request_id)
+    
+    logger.info(f"{request.method} {request.url.path}", extra={
+        "method": request.method,
+        "path": request.url.path,
+        "client": request.client.host if request.client else None
+    })
+    
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    
+    logger.info(f"Response: {response.status_code}", extra={
+        "status_code": response.status_code,
+        "method": request.method,
+        "path": request.url.path
+    })
+    
+    clear_context()
+    return response
 
 # CORS middleware for frontend
 app.add_middleware(

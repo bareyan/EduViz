@@ -36,7 +36,7 @@ async def generate_content_with_text(
         Generated text or None if generation fails
     """
     if types_module is None:
-        from app.services.gemini_client import get_types_module
+        from .client import get_types_module
         types_module = get_types_module()
     
     # Build config
@@ -115,7 +115,7 @@ async def generate_content_with_images(
         Generated text or None if generation fails
     """
     if types_module is None:
-        from app.services.gemini_client import get_types_module
+        from .client import get_types_module
         types_module = get_types_module()
     
     parts = []
@@ -196,7 +196,7 @@ async def generate_structured_output(
         Generated JSON text or None if generation fails
     """
     if types_module is None:
-        from app.services.gemini_client import get_types_module
+        from .client import get_types_module
         types_module = get_types_module()
     
     config = types_module.GenerateContentConfig(

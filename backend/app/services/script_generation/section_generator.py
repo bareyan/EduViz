@@ -10,7 +10,7 @@ import asyncio
 import json
 from typing import Dict, Any, List, Optional
 
-from app.services.parse_utils import parse_json_array_response
+from app.services.parsing import parse_json_array_response
 from .base import BaseScriptGenerator
 
 

@@ -14,9 +14,9 @@ except ImportError:
     fitz = None
 
 from app.config.models import get_model_config, get_thinking_config
-from app.services.gemini_client import create_client, get_types_module, GenerationConfig as UnifiedGenerationConfig
+from app.services.gemini.client import create_client, get_types_module, GenerationConfig as UnifiedGenerationConfig
 from app.services.manim_generator.cost_tracker import CostTracker
-from app.services.parse_utils import parse_json_response
+from app.services.parsing import parse_json_response
 
 
 class BaseScriptGenerator:

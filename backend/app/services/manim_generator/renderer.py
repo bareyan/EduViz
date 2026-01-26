@@ -11,8 +11,8 @@ import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
-from .code_utils import remove_markdown_blocks, ensure_manim_structure
-from ..gemini_utils import generate_content_with_text, generate_structured_output
+from .code_helpers import remove_markdown_blocks, ensure_manim_structure
+from ..gemini.helpers import generate_content_with_text, generate_structured_output
 
 # Feature flag for diff-based correction (set to False to disable)
 USE_DIFF_BASED_CORRECTION = True
@@ -313,7 +313,7 @@ async def render_from_code(
     quality: str = "low"
 ) -> Optional[str]:
     """Render a Manim scene from existing code (e.g., translated code)"""
-    from .code_utils import fix_translated_code, extract_scene_name
+    from .code_helpers import fix_translated_code, extract_scene_name
     
     # Validate the code has basic structure
     if not manim_code or len(manim_code.strip()) < 50:
@@ -471,7 +471,7 @@ async def correct_manim_code(
     """Use Gemini to fix errors in the Manim code"""
     from .prompts import CORRECTION_SYSTEM_INSTRUCTION, build_correction_prompt
     from app.config.models import get_model_config, get_thinking_config
-    from app.services.gemini_client import get_types_module
+    from app.services.gemini import get_types_module
     
     # Get model configs from centralized configuration
     correction_config = get_model_config("code_correction")
@@ -529,7 +529,7 @@ async def generate_visual_fix(
     """Generate fixed Manim code based on visual QC error report"""
     from .prompts import build_visual_fix_prompt
     from app.config.models import get_model_config, get_thinking_config
-    from app.services.gemini_client import get_types_module
+    from app.services.gemini import get_types_module
     
     if not error_report:
         return None
@@ -590,7 +590,7 @@ async def validate_and_fix_code(
     max_attempts: int = 3
 ) -> Optional[str]:
     """Test-render code and fix any errors"""
-    from .code_utils import extract_scene_name
+    from .code_helpers import extract_scene_name
     
     for attempt in range(max_attempts):
         scene_name = extract_scene_name(code)
@@ -672,7 +672,7 @@ async def fix_render_error(
 ) -> Optional[str]:
     """Fix a render error in the code using Gemini"""
     from .prompts import RENDER_FIX_SYSTEM_INSTRUCTION, build_render_fix_prompt
-    from app.services.gemini_client import get_types_module
+    from app.services.gemini import get_types_module
     
     # Build prompt with timing info if section is available
     prompt = build_render_fix_prompt(code, error_message, section)
