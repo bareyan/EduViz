@@ -8,7 +8,7 @@ Falls back to full regeneration if diff approach fails.
 import asyncio
 from typing import Optional, Dict, Any, TYPE_CHECKING
 
-from .parser import find_search_replace_blocks, extract_blocks_from_fenced
+from .parser import extract_blocks_from_fenced
 from .applier import apply_all_blocks, validate_syntax
 from .prompts import DIFF_CORRECTION_SYSTEM, build_diff_correction_prompt
 
@@ -25,9 +25,9 @@ class DiffCorrector:
         max_diff_attempts: Max attempts using diff approach before fallback
         enable_fallback: Whether to fallback to full regeneration
     """
-    
+
     def __init__(
-        self, 
+        self,
         generator: "ManimGenerator",
         max_diff_attempts: int = 5,
         enable_fallback: bool = True
@@ -35,7 +35,7 @@ class DiffCorrector:
         self.generator = generator
         self.max_diff_attempts = max_diff_attempts
         self.enable_fallback = enable_fallback
-        
+
         # Stats tracking
         self.stats = {
             'diff_attempts': 0,
@@ -43,7 +43,7 @@ class DiffCorrector:
             'fallback_attempts': 0,
             'fallback_successes': 0,
         }
-    
+
     async def correct_code(
         self,
         original_code: str,
@@ -69,14 +69,14 @@ class DiffCorrector:
             if result:
                 self.stats['diff_successes'] += 1
                 return result
-        
+
         # Fallback to full regeneration if enabled
         if self.enable_fallback:
             print(f"[DiffCorrector] Diff approach failed after {attempt} attempts, falling back...")
             return await self._fallback_full_correction(original_code, error_message, section)
-        
+
         return None
-    
+
     async def _try_diff_correction(
         self,
         code: str,
@@ -91,19 +91,19 @@ class DiffCorrector:
         """
         # Use generator's types module (supports both API and Vertex AI)
         types = self.generator.types
-        
+
         self.stats['diff_attempts'] += 1
-        
+
         # Build prompt
         prompt = build_diff_correction_prompt(code, error_message, section)
-        
+
         # Configure for fast, focused response
         config = types.GenerateContentConfig(
             system_instruction=DIFF_CORRECTION_SYSTEM,
             temperature=0.1,
             max_output_tokens=2048,  # Diffs are small
         )
-        
+
         try:
             response = await asyncio.to_thread(
                 self.generator.client.models.generate_content,
@@ -116,64 +116,64 @@ class DiffCorrector:
                 ],
                 config=config
             )
-            
+
             # Track cost
             try:
                 self.generator.cost_tracker.track_usage(response, self.generator.CORRECTION_MODEL)
             except Exception:
                 pass
-            
+
             if not response or not response.text:
                 print("[DiffCorrector] Empty response from LLM")
                 return None
-            
+
             response_text = response.text
-            
+
             # Parse SEARCH/REPLACE blocks
             blocks = extract_blocks_from_fenced(response_text)
-            
+
             if not blocks:
                 # Log preview to help debug why no blocks were found
                 preview = response_text[:300].replace('\n', ' ')
-                print(f"[DiffCorrector] No SEARCH/REPLACE blocks found in response")
+                print("[DiffCorrector] No SEARCH/REPLACE blocks found in response")
                 print(f"[DiffCorrector] Response preview: {preview}...")
-                
+
                 # Check if response contains the markers at all
                 has_search = "<<<" in response_text and "SEARCH" in response_text.upper()
                 has_replace = ">>>" in response_text and "REPLACE" in response_text.upper()
                 if has_search or has_replace:
-                    print(f"[DiffCorrector] Response has markers but parsing failed - check format")
-                
+                    print("[DiffCorrector] Response has markers but parsing failed - check format")
+
                 return None
-            
+
             print(f"[DiffCorrector] Found {len(blocks)} SEARCH/REPLACE block(s)")
-            
+
             # Apply blocks
             new_code, successes, errors = apply_all_blocks(code, blocks)
-            
+
             for msg in successes:
                 print(f"[DiffCorrector] ✓ {msg}")
             for msg in errors:
                 print(f"[DiffCorrector] ✗ {msg}")
-            
+
             # Check if any blocks applied
             if not successes:
                 print("[DiffCorrector] No blocks applied successfully")
                 return None
-            
+
             # Validate syntax
             syntax_error = validate_syntax(new_code)
             if syntax_error:
                 print(f"[DiffCorrector] Syntax error after applying fixes: {syntax_error}")
                 return None
-            
+
             print(f"[DiffCorrector] ✓ Code fixed successfully ({len(successes)} changes)")
             return new_code
-            
+
         except Exception as e:
             print(f"[DiffCorrector] Error during correction: {e}")
             return None
-    
+
     async def _fallback_full_correction(
         self,
         code: str,
@@ -186,10 +186,10 @@ class DiffCorrector:
         Uses the existing correct_manim_code function from renderer.
         """
         self.stats['fallback_attempts'] += 1
-        
+
         # Import here to avoid circular dependency
         from app.services.manim_generator.renderer import correct_manim_code
-        
+
         result = await correct_manim_code(
             self.generator,
             code,
@@ -197,31 +197,31 @@ class DiffCorrector:
             section or {},
             attempt=0  # Reset attempt for full correction
         )
-        
+
         if result:
             self.stats['fallback_successes'] += 1
-        
+
         return result
-    
+
     def get_stats(self) -> Dict[str, Any]:
         """Get correction statistics"""
         total_attempts = self.stats['diff_attempts'] + self.stats['fallback_attempts']
         total_successes = self.stats['diff_successes'] + self.stats['fallback_successes']
-        
+
         return {
             **self.stats,
             'total_attempts': total_attempts,
             'total_successes': total_successes,
             'diff_success_rate': (
-                self.stats['diff_successes'] / self.stats['diff_attempts'] 
+                self.stats['diff_successes'] / self.stats['diff_attempts']
                 if self.stats['diff_attempts'] > 0 else 0
             ),
             'overall_success_rate': (
-                total_successes / total_attempts 
+                total_successes / total_attempts
                 if total_attempts > 0 else 0
             ),
         }
-    
+
     def print_stats(self):
         """Print correction statistics"""
         stats = self.get_stats()

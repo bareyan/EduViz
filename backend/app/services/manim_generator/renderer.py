@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from .code_helpers import remove_markdown_blocks, ensure_manim_structure
-from ..gemini.helpers import generate_content_with_text, generate_structured_output
+from ..gemini.helpers import generate_content_with_text
 
 # Feature flag for diff-based correction (set to False to disable)
 USE_DIFF_BASED_CORRECTION = True
@@ -47,15 +47,15 @@ def cleanup_partial_movie_files(output_dir: str, code_file: Path, quality: str =
     quality_subdir = get_quality_subdir(quality)
     video_base = Path(output_dir) / "videos" / code_file.stem / quality_subdir
     partial_dir = video_base / "partial_movie_files"
-    
+
     if partial_dir.exists():
         print(f"[ManimGenerator] Cleaning up partial movie files before re-render: {partial_dir}")
         try:
             shutil.rmtree(partial_dir)
-            print(f"[ManimGenerator] ✅ Partial movie files cleaned up")
+            print("[ManimGenerator] ✅ Partial movie files cleaned up")
         except Exception as e:
             print(f"[ManimGenerator] ⚠️ Failed to clean up partial movie files: {e}")
-    
+
     # Also remove any existing combined video to force fresh concatenation
     for existing_video in video_base.glob("*.mp4"):
         try:
@@ -83,18 +83,18 @@ async def render_scene(
     - If clean_retry < MAX_CLEAN_RETRIES: returns None to trigger clean regeneration
     - If clean_retry >= MAX_CLEAN_RETRIES: uses fallback scene as last resort
     """
-    
-    output_path = Path(output_dir) / f"section_{section_index}.mp4"
-    
+
+    Path(output_dir) / f"section_{section_index}.mp4"
+
     # Get the actual class name from the file
     with open(code_file, "r") as f:
         content = f.read()
-    
+
     # Extract class name
     match = re.search(r"class (\w+)\(Scene\)", content)
     if match:
         scene_name = match.group(1)
-    
+
     # Determine quality flag
     # -ql: Low quality (480p15)
     # -qm: Medium quality (720p30)
@@ -118,7 +118,7 @@ async def render_scene(
         str(code_file),
         scene_name
     ]
-    
+
     try:
         result = await asyncio.to_thread(
             subprocess.run,
@@ -127,51 +127,51 @@ async def render_scene(
             text=True,
             timeout=300  # 5 minute timeout per section
         )
-        
+
         if result.returncode != 0:
             qc_note = f" (QC iteration {qc_iteration})" if qc_iteration > 0 else ""
             retry_note = f" (clean retry {clean_retry})" if clean_retry > 0 else ""
             print(f"[ManimGenerator] Render error for section {section_index}{qc_note}{retry_note} (attempt {attempt + 1}):")
             # Print last 1500 chars of error
             print(result.stderr[-1500:] if len(result.stderr) > 1500 else result.stderr)
-            
+
             # Try auto-correction if we haven't exceeded max attempts
             if attempt < generator.MAX_CORRECTION_ATTEMPTS and section:
                 print(f"[ManimGenerator] Attempting auto-correction (attempt {attempt + 1}/{generator.MAX_CORRECTION_ATTEMPTS})...")
-                
+
                 # Use diff-based correction if enabled (faster, cheaper)
                 if USE_DIFF_BASED_CORRECTION:
                     from app.services.diff_correction.integration import correct_manim_code_with_diff
                     corrected_code = await correct_manim_code_with_diff(
                         generator,
-                        content, 
-                        result.stderr, 
+                        content,
+                        result.stderr,
                         section,
                         attempt=attempt
                     )
                 else:
                     corrected_code = await correct_manim_code(
                         generator,
-                        content, 
-                        result.stderr, 
+                        content,
+                        result.stderr,
                         section,
                         attempt=attempt
                     )
-                
+
                 if corrected_code:
                     # Overwrite the original file with corrected code
                     with open(code_file, "w") as f:
                         f.write(corrected_code)
-                    
+
                     # Clean up partial movie files before re-rendering
                     cleanup_partial_movie_files(output_dir, code_file, quality)
-                    
+
                     # Try rendering again with corrected code
                     return await render_scene(
                         generator,
-                        code_file, 
-                        scene_name, 
-                        output_dir, 
+                        code_file,
+                        scene_name,
+                        output_dir,
                         section_index,
                         section,
                         attempt + 1,
@@ -179,7 +179,7 @@ async def render_scene(
                         clean_retry,
                         quality  # Pass through quality setting
                     )
-            
+
             # All correction attempts exhausted
             if clean_retry < generator.MAX_CLEAN_RETRIES:
                 print(f"[ManimGenerator] ❌ All {generator.MAX_CORRECTION_ATTEMPTS} correction attempts failed - will try clean regeneration")
@@ -187,17 +187,17 @@ async def render_scene(
             else:
                 print(f"[ManimGenerator] ❌ All correction attempts failed on clean retry {clean_retry}, using fallback scene")
                 return await render_fallback_scene(section_index, output_dir, code_file.parent)
-        
+
         # Find the actual output file
         quality_subdir = get_quality_subdir(quality)
         video_dir = Path(output_dir) / "videos" / code_file.stem / quality_subdir
         rendered_video = None
-        
+
         if video_dir.exists():
             videos = list(video_dir.glob("*.mp4"))
             if videos:
                 rendered_video = str(videos[0])
-        
+
         # Try alternate paths if not found
         if not rendered_video:
             for pattern in ["**/*.mp4"]:
@@ -205,17 +205,17 @@ async def render_scene(
                 if videos:
                     rendered_video = str(videos[0])
                     break
-        
+
         if not rendered_video:
             print(f"Could not find rendered video for section {section_index}")
             return None
-        
+
         # Visual Quality Control - Always run QC if enabled
         if generator.visual_qc and section:
             can_still_fix = qc_iteration < generator.MAX_QC_ITERATIONS
             status_label = f"(fix attempt {qc_iteration + 1}/{generator.MAX_QC_ITERATIONS})" if can_still_fix else "(final verification)"
             print(f"[ManimGenerator] Running Visual QC {status_label}...")
-            
+
             try:
                 if not await generator.visual_qc.check_model_available():
                     print("[ManimGenerator] Visual QC model not available, skipping QC")
@@ -225,21 +225,21 @@ async def render_scene(
                         section,
                         qc_iteration=qc_iteration
                     )
-                    
+
                     # Clean up temporary video after analysis
                     if qc_result.get("temp_video_path"):
                         generator.visual_qc.cleanup_frames(temp_video_path=qc_result["temp_video_path"])
-                    
+
                     if qc_result.get("status") == "issues" and qc_result.get("error_report"):
                         error_report = qc_result.get("error_report")
-                        print(f"[ManimGenerator] Found visual issues:")
+                        print("[ManimGenerator] Found visual issues:")
                         for line in error_report.split('\n'):
                             print(f"[ManimGenerator]   {line}")
-                        
+
                         # Only attempt fix if we haven't exhausted our fix attempts
                         if can_still_fix:
                             print(f"[ManimGenerator] Generating visual fix (attempt {qc_iteration + 1}/{generator.MAX_QC_ITERATIONS})...")
-                            
+
                             # Try diff-based visual QC correction first (cheaper, faster)
                             fixed_code = None
                             if USE_DIFF_BASED_VISUAL_QC:
@@ -250,7 +250,7 @@ async def render_scene(
                                     error_report,
                                     section=section
                                 )
-                            
+
                             # Fall back to full regeneration if diff failed
                             if not fixed_code:
                                 print("[ManimGenerator] Diff-based fix failed, using full regeneration...")
@@ -260,15 +260,15 @@ async def render_scene(
                                     error_report,
                                     section=section
                                 )
-                            
+
                             if fixed_code:
-                                print(f"[ManimGenerator] Applying visual QC fix and re-rendering...")
+                                print("[ManimGenerator] Applying visual QC fix and re-rendering...")
                                 with open(code_file, "w") as f:
                                     f.write(fixed_code)
-                                
+
                                 # Clean up partial movie files before re-rendering
                                 cleanup_partial_movie_files(output_dir, code_file, quality)
-                                
+
                                 return await render_scene(
                                     generator,
                                     code_file,
@@ -286,13 +286,13 @@ async def render_scene(
                         else:
                             print(f"[ManimGenerator] ⚠️ Max QC fix attempts ({generator.MAX_QC_ITERATIONS}) exhausted - accepting video with remaining issues")
                     else:
-                        print(f"[ManimGenerator] ✅ Visual QC passed - no issues detected")
-            
+                        print("[ManimGenerator] ✅ Visual QC passed - no issues detected")
+
             except Exception as qc_error:
                 print(f"[ManimGenerator] Visual QC error (non-fatal): {qc_error}")
-        
+
         return rendered_video
-        
+
     except subprocess.TimeoutExpired:
         print(f"Manim rendering timed out for section {section_index}")
         if clean_retry < generator.MAX_CLEAN_RETRIES:
@@ -314,45 +314,45 @@ async def render_from_code(
 ) -> Optional[str]:
     """Render a Manim scene from existing code (e.g., translated code)"""
     from .code_helpers import fix_translated_code, extract_scene_name
-    
+
     # Validate the code has basic structure
     if not manim_code or len(manim_code.strip()) < 50:
-        print(f"[ManimGenerator] Code too short or empty, skipping render")
+        print("[ManimGenerator] Code too short or empty, skipping render")
         return None
-    
+
     # Fix common translation issues
     manim_code = fix_translated_code(manim_code)
-    
+
     # Ensure imports are present
     if "from manim import" not in manim_code and "import manim" not in manim_code:
         manim_code = "from manim import *\n\n" + manim_code
-    
+
     # Extract scene name from code
     scene_name = extract_scene_name(manim_code)
     if not scene_name:
-        print(f"[ManimGenerator] No Scene class found in code, skipping render")
+        print("[ManimGenerator] No Scene class found in code, skipping render")
         return None
-    
+
     # Write the code to a file
-    code_file = Path(output_dir) / f"scene.py"
-    
+    code_file = Path(output_dir) / "scene.py"
+
     with open(code_file, "w") as f:
         f.write(manim_code)
-    
+
     # Check for Python syntax errors before rendering
     try:
         compile(manim_code, str(code_file), 'exec')
     except SyntaxError as e:
         print(f"[ManimGenerator] Syntax error in translated code: {e}")
         return None
-    
+
     # Render
     output_path = Path(output_dir) / f"section_{section_index}.mp4"
-    
+
     # Determine quality flag
     quality_flags = {"low": "-ql", "medium": "-qm", "high": "-qh", "4k": "-qk"}
     quality_flag = quality_flags.get(quality, "-ql")
-    
+
     cmd = [
         "manim",
         quality_flag,
@@ -362,7 +362,7 @@ async def render_from_code(
         str(code_file),
         scene_name
     ]
-    
+
     try:
         result = await asyncio.to_thread(
             subprocess.run,
@@ -371,7 +371,7 @@ async def render_from_code(
             text=True,
             timeout=300
         )
-        
+
         if result.returncode != 0:
             stderr = result.stderr
             if "Error" in stderr or "Exception" in stderr:
@@ -384,25 +384,25 @@ async def render_from_code(
             else:
                 print(f"[ManimGenerator] Render failed: {stderr[:300]}")
             return None
-        
+
         # Find the rendered video
         quality_subdir = get_quality_subdir(quality)
         video_subdir = Path(output_dir) / "videos" / "scene" / quality_subdir
         if video_subdir.exists():
             for video_file in video_subdir.glob("*.mp4"):
                 return str(video_file)
-        
+
         if output_path.exists():
             return str(output_path)
-        
+
         for subdir in Path(output_dir).rglob("*.mp4"):
             return str(subdir)
-        
-        print(f"[ManimGenerator] Video file not found in expected locations")
+
+        print("[ManimGenerator] Video file not found in expected locations")
         return None
-        
+
     except subprocess.TimeoutExpired:
-        print(f"[ManimGenerator] Render timed out after 300 seconds")
+        print("[ManimGenerator] Render timed out after 300 seconds")
         return None
     except Exception as e:
         print(f"[ManimGenerator] Render exception: {e}")
@@ -415,7 +415,7 @@ async def render_fallback_scene(
     code_dir: Path
 ) -> Optional[str]:
     """Render a simple fallback scene if the generated one fails"""
-    
+
     fallback_code = f'''"""Fallback scene"""
 from manim import *
 
@@ -426,11 +426,11 @@ class FallbackSection{section_index}(Scene):
         self.wait(2)
         self.play(FadeOut(text))
 '''
-    
+
     fallback_file = code_dir / f"fallback_{section_index}.py"
     with open(fallback_file, "w") as f:
         f.write(fallback_code)
-    
+
     cmd = [
         "manim",
         "-ql",
@@ -440,21 +440,21 @@ class FallbackSection{section_index}(Scene):
         str(fallback_file),
         f"FallbackSection{section_index}"
     ]
-    
+
     try:
-        result = await asyncio.to_thread(
+        await asyncio.to_thread(
             subprocess.run,
             cmd,
             capture_output=True,
             text=True,
             timeout=180
         )
-        
+
         for pattern in ["**/*.mp4"]:
             videos = list(Path(output_dir).glob(pattern))
             if videos:
                 return str(videos[0])
-        
+
         return None
     except Exception as e:
         print(f"Fallback render also failed: {e}")
@@ -472,19 +472,19 @@ async def correct_manim_code(
     from .prompts import CORRECTION_SYSTEM_INSTRUCTION, build_correction_prompt
     from app.config.models import get_model_config, get_thinking_config
     from app.services.gemini import get_types_module
-    
+
     # Get model configs from centralized configuration
     correction_config = get_model_config("code_correction")
     correction_strong_config = get_model_config("code_correction_strong")
-    
+
     # Use stronger model on last attempt
     is_last_attempt = attempt >= generator.MAX_CORRECTION_ATTEMPTS - 1
     model_config = correction_strong_config if is_last_attempt else correction_config
     model_to_use = model_config.model_name
-    
+
     if is_last_attempt:
         print(f"[ManimGenerator] Using stronger model ({model_to_use}) for final fix attempt")
-    
+
     # Build prompt using the prompts module
     prompt = build_correction_prompt(original_code, error_message, section)
 
@@ -501,20 +501,20 @@ async def correct_manim_code(
             types_module=get_types_module(),
             cost_tracker=generator.cost_tracker,
         )
-        
+
         if not corrected:
             print("[ManimGenerator] Empty response from correction model")
             return None
-        
+
         corrected = corrected.strip()
         corrected = remove_markdown_blocks(corrected)
-        
+
         if ensure_manim_structure(corrected):
             return corrected
         else:
             print("Corrected code missing basic Manim structure")
             return None
-            
+
     except Exception as e:
         print(f"Error during code correction: {e}")
         return None
@@ -530,20 +530,20 @@ async def generate_visual_fix(
     from .prompts import build_visual_fix_prompt
     from app.config.models import get_model_config, get_thinking_config
     from app.services.gemini import get_types_module
-    
+
     if not error_report:
         return None
-    
+
     if not section:
         section = {}
-    
+
     # Get strong model config for visual fixes
     strong_config = get_model_config("code_correction_strong")
     model_to_use = strong_config.model_name
-    
+
     # Build prompt using the prompts module
     prompt = build_visual_fix_prompt(original_code, error_report, section)
-    
+
     # Get thinking config from centralized configuration
     thinking_config = get_thinking_config(strong_config)
 
@@ -556,28 +556,28 @@ async def generate_visual_fix(
             types_module=get_types_module(),
             cost_tracker=generator.cost_tracker,
         )
-        
+
         if not fixed_code:
-            print(f"[ManimGenerator] Visual fix: Empty response")
+            print("[ManimGenerator] Visual fix: Empty response")
             return None
-        
+
         fixed_code = fixed_code.strip()
         fixed_code = remove_markdown_blocks(fixed_code)
-        
+
         if "from manim import" not in fixed_code:
             fixed_code = "from manim import *\n\n" + fixed_code
-        
+
         if not ensure_manim_structure(fixed_code):
             print("[ManimGenerator] Visual fix missing required structure")
             return None
-        
+
         fixed_code = fixed_code.replace('\r\n', '\n')
-        
+
         # Validate the fix
         fixed_code = await validate_and_fix_code(generator, fixed_code, section)
-        
+
         return fixed_code
-    
+
     except Exception as e:
         print(f"[ManimGenerator] Error generating visual fix: {e}")
         return None
@@ -591,20 +591,20 @@ async def validate_and_fix_code(
 ) -> Optional[str]:
     """Test-render code and fix any errors"""
     from .code_helpers import extract_scene_name
-    
+
     for attempt in range(max_attempts):
         scene_name = extract_scene_name(code)
         if not scene_name:
-            print(f"[ManimGenerator] No Scene class found in visual fix code")
+            print("[ManimGenerator] No Scene class found in visual fix code")
             return None
-        
+
         # Create temp file for test render
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
             f.write(code)
             temp_file = f.name
-        
+
         temp_output = tempfile.mkdtemp(prefix='manim_test_')
-        
+
         try:
             cmd = [
                 "manim",
@@ -614,7 +614,7 @@ async def validate_and_fix_code(
                 temp_file,
                 scene_name
             ]
-            
+
             result = await asyncio.to_thread(
                 subprocess.run,
                 cmd,
@@ -622,7 +622,7 @@ async def validate_and_fix_code(
                 text=True,
                 timeout=120
             )
-            
+
             if result.returncode == 0:
                 print(f"[ManimGenerator] ✓ Visual fix validated (attempt {attempt + 1})")
                 try:
@@ -631,24 +631,24 @@ async def validate_and_fix_code(
                 except:
                     pass
                 return code
-            
+
             error_msg = result.stderr[-2000:] if len(result.stderr) > 2000 else result.stderr
             print(f"[ManimGenerator] Visual fix render error (attempt {attempt + 1}/{max_attempts}):")
             error_lines = [l for l in error_msg.split('\n') if l.strip() and not l.strip().startswith('─')]
             print('\n'.join(error_lines[-10:]))
-            
+
             if attempt < max_attempts - 1:
-                print(f"[ManimGenerator] Attempting to fix render error...")
+                print("[ManimGenerator] Attempting to fix render error...")
                 fixed_code = await fix_render_error(generator, code, error_msg, section)
-                
+
                 if fixed_code:
                     code = fixed_code
                 else:
-                    print(f"[ManimGenerator] Could not generate fix, aborting")
+                    print("[ManimGenerator] Could not generate fix, aborting")
                     break
-            
+
         except subprocess.TimeoutExpired:
-            print(f"[ManimGenerator] Test render timed out")
+            print("[ManimGenerator] Test render timed out")
             break
         except Exception as e:
             print(f"[ManimGenerator] Test render error: {e}")
@@ -659,7 +659,7 @@ async def validate_and_fix_code(
                 shutil.rmtree(temp_output, ignore_errors=True)
             except:
                 pass
-    
+
     print(f"[ManimGenerator] ⚠️ Could not validate visual fix after {max_attempts} attempts")
     return None
 
@@ -673,7 +673,7 @@ async def fix_render_error(
     """Fix a render error in the code using Gemini"""
     from .prompts import RENDER_FIX_SYSTEM_INSTRUCTION, build_render_fix_prompt
     from app.services.gemini import get_types_module
-    
+
     # Build prompt with timing info if section is available
     prompt = build_render_fix_prompt(code, error_message, section)
 
@@ -688,18 +688,18 @@ async def fix_render_error(
             types_module=get_types_module(),
             cost_tracker=generator.cost_tracker,
         )
-        
+
         if not fixed_code:
             return None
-        
+
         fixed_code = fixed_code.strip()
         fixed_code = remove_markdown_blocks(fixed_code)
-        
+
         if "from manim import" not in fixed_code:
             fixed_code = "from manim import *\n\n" + fixed_code
-        
+
         return fixed_code
-    
+
     except Exception as e:
         print(f"[ManimGenerator] Error fixing render error: {e}")
         return None

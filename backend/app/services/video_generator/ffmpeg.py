@@ -2,11 +2,10 @@
 Audio and video utilities for ffmpeg operations
 """
 
-import os
 import asyncio
 import subprocess
 import shutil
-from typing import List, Optional
+from typing import List
 from pathlib import Path
 
 
@@ -59,7 +58,7 @@ async def generate_silence(output_path: str, duration: float) -> None:
         cmd = [
             "ffmpeg",
             "-f", "lavfi",
-            "-i", f"anullsrc=r=44100:cl=stereo",
+            "-i", "anullsrc=r=44100:cl=stereo",
             "-t", str(duration),
             "-q:a", "9",
             "-y",
@@ -84,17 +83,17 @@ async def concatenate_audio_files(
     """Concatenate multiple audio files into one using ffmpeg"""
     if not audio_paths:
         return False
-    
+
     if len(audio_paths) == 1:
         shutil.copy(audio_paths[0], output_path)
         return True
-    
+
     # Create concat file list
     concat_list_path = Path(output_path).parent / "concat_audio_list.txt"
     with open(concat_list_path, 'w') as f:
         for audio_path in audio_paths:
             f.write(f"file '{audio_path}'\n")
-    
+
     cmd = [
         "ffmpeg", "-y",
         "-f", "concat",
@@ -103,7 +102,7 @@ async def concatenate_audio_files(
         "-c", "copy",
         output_path
     ]
-    
+
     try:
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -111,11 +110,11 @@ async def concatenate_audio_files(
             stderr=asyncio.subprocess.PIPE
         )
         _, stderr = await asyncio.wait_for(process.communicate(), timeout=120)
-        
+
         if process.returncode != 0:
             print(f"Audio concatenation failed: {stderr.decode()[:500]}")
             return False
-        
+
         return Path(output_path).exists()
     except Exception as e:
         print(f"Error concatenating audio: {e}")
@@ -185,7 +184,7 @@ def build_retime_merge_cmd(
         ]
 
     duration_diff = abs(video_duration - audio_duration)
-    
+
     # If durations are close enough, just merge directly
     if duration_diff < 0.1:
         return [
@@ -243,25 +242,25 @@ async def combine_sections(
     
     IMPORTANT: Never trim video. Retiming is used to match audio length.
     """
-    
+
     # First, merge each video with its audio
     merged_sections = []
-    
+
     for i, (video, audio) in enumerate(zip(videos, audios)):
         merged_path = Path(sections_dir) / f"merged_{i}.mp4"
-        
+
         if audio is None:
             # No audio for this section - just copy the video
             print(f"Section {i}: No audio, using video as-is")
             merged_sections.append(video)
             continue
-        
+
         # Get audio duration first
         audio_duration = await get_media_duration(audio)
         video_duration = await get_media_duration(video)
-        
+
         print(f"Section {i}: Video={video_duration:.1f}s, Audio={audio_duration:.1f}s")
-        
+
         # CRITICAL: Never trim video. Retiming is used to match audio length.
         cmd = build_retime_merge_cmd(
             video_path=video,
@@ -270,7 +269,7 @@ async def combine_sections(
             audio_duration=audio_duration,
             output_path=str(merged_path)
         )
-        
+
         try:
             result = await asyncio.to_thread(
                 subprocess.run,
@@ -281,7 +280,7 @@ async def combine_sections(
             )
             if result.returncode != 0:
                 print(f"FFmpeg error section {i}: {result.stderr}")
-            
+
             if merged_path.exists():
                 merged_sections.append(str(merged_path))
             else:
@@ -291,7 +290,7 @@ async def combine_sections(
             print(f"Error merging section {i}: {e}")
             # Use original video if merge fails
             merged_sections.append(video)
-    
+
     # Now concatenate all merged sections
     if merged_sections:
         await concatenate_videos(merged_sections, output_path)
@@ -299,20 +298,20 @@ async def combine_sections(
 
 async def concatenate_videos(videos: List[str], output_path: str):
     """Concatenate multiple videos into one"""
-    
+
     if not videos:
         return
-    
+
     if len(videos) == 1:
         shutil.copy(videos[0], output_path)
         return
-    
+
     # Create concat file
     concat_file = Path(output_path).parent / "concat_list.txt"
     with open(concat_file, "w") as f:
         for video in videos:
             f.write(f"file '{video}'\n")
-    
+
     cmd = [
         "ffmpeg", "-y",
         "-f", "concat",
@@ -321,7 +320,7 @@ async def concatenate_videos(videos: List[str], output_path: str):
         "-c", "copy",
         output_path
     ]
-    
+
     try:
         result = await asyncio.to_thread(
             subprocess.run,
@@ -330,7 +329,7 @@ async def concatenate_videos(videos: List[str], output_path: str):
             text=True,
             timeout=300
         )
-        
+
         if result.returncode != 0:
             print(f"Concat error: {result.stderr}")
             # Try re-encoding

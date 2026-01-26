@@ -10,19 +10,18 @@ from .prompts import get_theme_setup_code
 
 def clean_code(code: str) -> str:
     """Clean up generated code while preserving nested indentation"""
-    
+
     # Remove markdown code blocks
     if code.startswith("```"):
         lines = code.split("\n")
         lines = [l for l in lines if not l.strip().startswith("```")]
         code = "\n".join(lines)
-    
+
     # Remove any class definitions or imports that might have slipped in
     lines = code.split("\n")
     cleaned_lines = []
     skip_until_construct = False
-    in_construct = False
-    
+
     for line in lines:
         stripped = line.strip()
         # Skip import lines
@@ -35,15 +34,14 @@ def clean_code(code: str) -> str:
         if skip_until_construct:
             if "def construct" in line:
                 skip_until_construct = False
-                in_construct = True
             continue
         cleaned_lines.append(line)
-    
+
     code = "\n".join(cleaned_lines)
-    
+
     # Normalize indentation while PRESERVING relative indentation
     lines = code.split("\n")
-    
+
     # Find the minimum non-zero indentation to understand the base level
     min_indent = float('inf')
     for line in lines:
@@ -53,10 +51,10 @@ def clean_code(code: str) -> str:
             indent = len(normalized_line) - len(normalized_line.lstrip())
             if indent > 0:
                 min_indent = min(min_indent, indent)
-    
+
     if min_indent == float('inf'):
         min_indent = 0
-    
+
     # Re-indent: shift everything so base level is 8 spaces (inside construct)
     indented_lines = []
     for line in lines:
@@ -65,19 +63,19 @@ def clean_code(code: str) -> str:
             normalized_line = line.replace('\t', '    ')
             current_indent = len(normalized_line) - len(normalized_line.lstrip())
             content = normalized_line.lstrip()
-            
+
             # Calculate relative indentation (how many levels above base)
             if min_indent > 0:
                 relative_indent = current_indent - min_indent
             else:
                 relative_indent = current_indent
-            
+
             # New indent: 8 spaces (base) + relative indentation
             new_indent = 8 + max(0, relative_indent)
             indented_lines.append(" " * new_indent + content)
         else:
             indented_lines.append("")
-    
+
     return "\n".join(indented_lines)
 
 
@@ -91,28 +89,28 @@ def normalize_indentation(code: str) -> str:
     """
     lines = code.split('\n')
     normalized_lines = []
-    
+
     for line in lines:
         if not line.strip():
             # Empty line
             normalized_lines.append('')
             continue
-        
+
         # Count leading whitespace
         stripped = line.lstrip()
         leading = line[:len(line) - len(stripped)]
-        
+
         # Replace tabs with 4 spaces
         leading = leading.replace('\t', '    ')
-        
+
         # Count the indentation level (how many 4-space units)
         # Handle cases where spaces might not be exact multiples of 4
         space_count = len(leading)
         indent_level = (space_count + 2) // 4  # Round to nearest 4
-        
+
         # Reconstruct with clean 4-space indentation
         normalized_lines.append('    ' * indent_level + stripped)
-    
+
     return '\n'.join(normalized_lines)
 
 
@@ -124,7 +122,7 @@ def strip_theme_code_from_content(code: str) -> str:
     """
     lines = code.split('\n')
     filtered_lines = []
-    
+
     for line in lines:
         # Skip lines that set background_color (we enforce this at scene level)
         if 'background_color' in line and ('camera' in line or 'self.camera' in line):
@@ -133,7 +131,7 @@ def strip_theme_code_from_content(code: str) -> str:
         if re.match(r'^\s*self\.camera\.background_color\s*=', line.strip()):
             continue
         filtered_lines.append(line)
-    
+
     return '\n'.join(filtered_lines)
 
 
@@ -143,13 +141,13 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
     The theme is enforced at the scene level to ensure consistency across all sections.
     Any theme-related code in the AI-generated content is stripped to prevent conflicts.
     """
-    
+
     # Strip any theme code from the AI-generated content
     code = strip_theme_code_from_content(code)
-    
+
     # Normalize indentation to fix any tab/space issues from AI generation
     normalized_code = normalize_indentation(code)
-    
+
     # Ensure the code has proper base indentation for inside construct()
     # The code should already have 8 spaces, but let's make sure
     lines = normalized_code.split('\n')
@@ -163,18 +161,18 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
                 line = '        ' + line.lstrip()
         indented_lines.append(line)
     normalized_code = '\n'.join(indented_lines)
-    
+
     # Sanitize section_id for class name
     class_name = "".join(word.title() for word in section_id.split("_"))
-    
+
     # Calculate generous padding to ensure we meet target duration
     # Since Gemini often underestimates timing, we add significant buffer
     # This wait will be at the end after all animations, showing final state
     padding_wait = max(3, duration * 0.25)  # At least 3 seconds or 25% of duration
-    
+
     # Get theme setup code
     theme_setup = get_theme_setup_code(style)
-    
+
     scene_code = f'''"""Auto-generated Manim scene for section: {section_id}"""
 from manim import *
 
@@ -200,10 +198,10 @@ class Scene{class_name}(Scene):
 
 def fix_translated_code(code: str) -> str:
     """Fix common issues in translated Manim code"""
-    
+
     lines = code.split('\n')
     fixed_lines = []
-    
+
     for i, line in enumerate(lines):
         # Fix: First line is a bare comment without quotes (should be docstring or comment)
         # Pattern: starts with text like "Auto-generated..." without # or """
@@ -216,7 +214,7 @@ def fix_translated_code(code: str) -> str:
             elif not line.strip().startswith('class'):
                 fixed_lines.append(f'# {line}')
                 continue
-        
+
         # Fix: Unquoted text that should be a comment
         # (lines that are just plain text, not code)
         stripped = line.strip()
@@ -227,11 +225,11 @@ def fix_translated_code(code: str) -> str:
                     # Looks like plain text, make it a comment
                     fixed_lines.append(f'# {line}')
                     continue
-        
+
         fixed_lines.append(line)
-    
+
     result = '\n'.join(fixed_lines)
-    
+
     # Ensure the code starts with proper import if missing
     if 'from manim import' not in result and 'import manim' not in result:
         # Find where to insert import (after any docstrings/comments at top)
@@ -242,10 +240,10 @@ def fix_translated_code(code: str) -> str:
                 if not (stripped.startswith('"""') or stripped.endswith('"""')):
                     insert_pos = i
                     break
-        
+
         fixed_lines.insert(insert_pos, 'from manim import *\n')
         result = '\n'.join(fixed_lines)
-    
+
     return result
 
 
@@ -274,7 +272,7 @@ def remove_markdown_blocks(code: str) -> str:
 def ensure_manim_structure(code: str) -> bool:
     """Check if code has basic Manim structure"""
     return (
-        "from manim import" in code and 
-        "class " in code and 
+        "from manim import" in code and
+        "class " in code and
         "def construct" in code
     )

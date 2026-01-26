@@ -38,6 +38,6 @@ from .job_manager import JobManager
 
 __all__ = [
 	"MaterialAnalyzer",
-	"ScriptGenerator", 
+	"ScriptGenerator",
 	"JobManager",
 ]

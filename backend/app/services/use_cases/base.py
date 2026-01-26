@@ -55,7 +55,7 @@ class UseCase(ABC, Generic[RequestT, ResponseT]):
         ...         # Implementation
         ...         pass
     """
-    
+
     @abstractmethod
     async def execute(self, request: RequestT) -> ResponseT:
         """

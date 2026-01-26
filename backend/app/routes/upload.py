@@ -40,20 +40,20 @@ async def upload_file(file: UploadFile = File(...)):
         # Security: Sanitize filename before processing
         original_filename = file.filename
         file.filename = sanitize_filename(file.filename)
-        
+
         if file.filename != original_filename:
             logger.info("Filename sanitized for security", extra={
                 "original": original_filename,
                 "sanitized": file.filename
             })
-        
+
         # Security: Check file size by reading in chunks
         size = 0
         chunks = []
         async for chunk in file.file:
             size += len(chunk)
             if size > MAX_UPLOAD_SIZE:
-                logger.warning(f"File too large", extra={
+                logger.warning("File too large", extra={
                     "size": size,
                     "max_size": MAX_UPLOAD_SIZE,
                     "filename": file.filename
@@ -63,28 +63,28 @@ async def upload_file(file: UploadFile = File(...)):
                     detail=f"File too large. Maximum size: {MAX_UPLOAD_SIZE / (1024*1024):.0f}MB"
                 )
             chunks.append(chunk)
-        
+
         # Reconstruct file content
         content = b''.join(chunks)
-        
+
         # Reset file for use case
         import io
         file.file = io.BytesIO(content)
-        
-        logger.info(f"File upload initiated", extra={
+
+        logger.info("File upload initiated", extra={
             "filename": file.filename,
             "size": size,
             "content_type": file.content_type
         })
-        
+
         use_case = FileUploadUseCase()
         response = await use_case.execute(FileUploadRequest(file=file))
-        
-        logger.info(f"File upload completed", extra={
+
+        logger.info("File upload completed", extra={
             "file_id": response.file_id,
             "filename": response.filename
         })
-        
+
         return {
             "file_id": response.file_id,
             "filename": response.filename,
@@ -94,7 +94,7 @@ async def upload_file(file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Upload failed", extra={
+        logger.error("Upload failed", extra={
             "filename": file.filename,
             "error": str(e)
         }, exc_info=True)
@@ -110,22 +110,22 @@ async def delete_file(file_id: str):
     """
     # Security: Validate file_id format (should be UUID)
     if not validate_job_id(file_id):
-        logger.warning(f"Invalid file_id format in delete request", extra={
+        logger.warning("Invalid file_id format in delete request", extra={
             "file_id": file_id
         })
         raise HTTPException(status_code=400, detail="Invalid file ID format")
-    
+
     try:
         file_path = find_uploaded_file(file_id)
         os.remove(file_path)
-        
-        logger.info(f"File deleted", extra={"file_id": file_id})
-        
+
+        logger.info("File deleted", extra={"file_id": file_id})
+
         return {"status": "deleted", "file_id": file_id}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Delete failed", extra={
+        logger.error("Delete failed", extra={
             "file_id": file_id,
             "error": str(e)
         }, exc_info=True)

@@ -38,25 +38,25 @@ async def generate_content_with_text(
     if types_module is None:
         from .client import get_types_module
         types_module = get_types_module()
-    
+
     # Build config
     config_kwargs = {
         "temperature": temperature,
     }
-    
+
     if system_instruction:
         config_kwargs["system_instruction"] = system_instruction
-    
+
     if max_output_tokens:
         config_kwargs["max_output_tokens"] = max_output_tokens
-    
+
     if thinking_config:
         config_kwargs["thinking_config"] = types_module.ThinkingConfig(
             thinking_level=thinking_config.get("thinking_level", "LOW")
         )
-    
+
     config = types_module.GenerateContentConfig(**config_kwargs)
-    
+
     try:
         response = await asyncio.to_thread(
             client.models.generate_content,
@@ -69,18 +69,18 @@ async def generate_content_with_text(
             ],
             config=config
         )
-        
+
         if cost_tracker:
             try:
                 cost_tracker.track_usage(response, model)
             except Exception:
                 pass
-        
+
         if not response or not response.text:
             return None
-        
+
         return response.text
-        
+
     except asyncio.TimeoutError:
         return None
     except Exception:
@@ -117,32 +117,32 @@ async def generate_content_with_images(
     if types_module is None:
         from .client import get_types_module
         types_module = get_types_module()
-    
+
     parts = []
-    
+
     # Add images
     for image_bytes in image_bytes_list[:5]:  # Limit to 5 images
         try:
             parts.append(types_module.Part.from_bytes(data=image_bytes, mime_type="image/png"))
         except Exception:
             pass
-    
+
     # Add text prompt
     parts.append(types_module.Part.from_text(text=prompt))
-    
+
     # Build config
     config_kwargs = {
         "temperature": temperature,
     }
-    
+
     if system_instruction:
         config_kwargs["system_instruction"] = system_instruction
-    
+
     if max_output_tokens:
         config_kwargs["max_output_tokens"] = max_output_tokens
-    
+
     config = types_module.GenerateContentConfig(**config_kwargs)
-    
+
     try:
         response = await asyncio.to_thread(
             client.models.generate_content,
@@ -152,18 +152,18 @@ async def generate_content_with_images(
             ],
             config=config
         )
-        
+
         if cost_tracker:
             try:
                 cost_tracker.track_usage(response, model)
             except Exception:
                 pass
-        
+
         if not response or not response.text:
             return None
-        
+
         return response.text
-        
+
     except asyncio.TimeoutError:
         return None
     except Exception:
@@ -198,14 +198,14 @@ async def generate_structured_output(
     if types_module is None:
         from .client import get_types_module
         types_module = get_types_module()
-    
+
     config = types_module.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=response_schema,
         system_instruction=system_instruction,
         temperature=temperature,
     )
-    
+
     try:
         response = await asyncio.to_thread(
             client.models.generate_content,
@@ -218,18 +218,18 @@ async def generate_structured_output(
             ],
             config=config
         )
-        
+
         if cost_tracker:
             try:
                 cost_tracker.track_usage(response, model)
             except Exception:
                 pass
-        
+
         if not response or not response.text:
             return None
-        
+
         return response.text
-        
+
     except asyncio.TimeoutError:
         return None
     except Exception:

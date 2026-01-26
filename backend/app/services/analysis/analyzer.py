@@ -21,13 +21,13 @@ class MaterialAnalyzer:
     - Images (PNG, JPG, WebP, GIF) → ImageAnalyzer
     - Text files (.txt, .tex) → TextAnalyzer
     """
-    
+
     def __init__(self):
         # Initialize specialized analyzers
         self.pdf_analyzer = PDFAnalyzer()
         self.image_analyzer = ImageAnalyzer()
         self.text_analyzer = TextAnalyzer()
-    
+
     async def analyze(self, file_path: str, file_id: str) -> Dict[str, Any]:
         """
         Main analysis entry point
@@ -45,7 +45,7 @@ class MaterialAnalyzer:
             ValueError: If file type is not supported
         """
         file_ext = os.path.splitext(file_path)[1].lower()
-        
+
         if file_ext == ".pdf":
             return await self.pdf_analyzer.analyze(file_path, file_id)
         elif file_ext in [".png", ".jpg", ".jpeg", ".webp", ".gif"]:

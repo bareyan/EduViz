@@ -5,7 +5,6 @@ Separated from orchestration logic for better testability and single responsibil
 """
 
 import asyncio
-import subprocess
 from typing import List, Optional
 from pathlib import Path
 
@@ -26,11 +25,11 @@ class VideoProcessor:
     
     This class is stateless and can be safely shared across operations.
     """
-    
+
     def __init__(self):
         """Initialize video processor"""
         logger.info("Initialized VideoProcessor")
-    
+
     async def combine_sections(
         self,
         videos: List[str],
@@ -64,19 +63,19 @@ class VideoProcessor:
                 error_msg = f"Mismatch: {len(videos)} videos but {len(audios)} audios"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
-            
+
             sections_path = Path(sections_dir)
             merged_videos = []
-            
+
             logger.info(f"Processing {len(videos)} video sections", extra={
                 "section_count": len(videos),
                 "output_path": output_path
             })
-            
+
             # Step 1: Merge each video with its audio
             for i, (video_path, audio_path) in enumerate(zip(videos, audios)):
                 merged_path = sections_path / f"merged_{i}.mp4"
-                
+
                 if merged_path.exists():
                     logger.debug(f"Section {i} already merged, skipping", extra={
                         "section_index": i,
@@ -84,7 +83,7 @@ class VideoProcessor:
                     })
                     merged_videos.append(str(merged_path))
                     continue
-                
+
                 try:
                     if audio_path:
                         await self._merge_video_audio(video_path, audio_path, str(merged_path), i)
@@ -94,13 +93,13 @@ class VideoProcessor:
                             "section_index": i
                         })
                         await self._copy_video(video_path, str(merged_path))
-                    
+
                     merged_videos.append(str(merged_path))
                     logger.debug(f"Merged section {i}/{len(videos)}", extra={
                         "section_index": i,
                         "total_sections": len(videos)
                     })
-                
+
                 except Exception as e:
                     logger.error(f"Failed to merge section {i}", extra={
                         "section_index": i,
@@ -109,7 +108,7 @@ class VideoProcessor:
                         "audio_path": audio_path
                     }, exc_info=True)
                     raise RuntimeError(f"Failed to merge section {i}: {e}") from e
-            
+
             # Step 2: Concatenate all merged videos
             if merged_videos:
                 logger.info(f"Concatenating {len(merged_videos)} merged sections")
@@ -119,7 +118,7 @@ class VideoProcessor:
                 error_msg = "No merged videos to concatenate"
                 logger.error(error_msg)
                 raise ValueError(error_msg)
-    
+
     async def concatenate_videos(
         self,
         video_paths: List[str],
@@ -138,7 +137,7 @@ class VideoProcessor:
         """
         with LogTimer(logger, f"concatenate_videos ({len(video_paths)} videos)"):
             await self._concatenate_videos(video_paths, output_path)
-    
+
     async def _merge_video_audio(
         self,
         video_path: str,
@@ -164,14 +163,14 @@ class VideoProcessor:
             "-loglevel", "error",
             output_path
         ]
-        
+
         logger.debug(f"Merging video+audio for section {section_index}", extra={
             "command": " ".join(cmd),
             "video_path": video_path,
             "audio_path": audio_path,
             "output_path": output_path
         })
-        
+
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -179,7 +178,7 @@ class VideoProcessor:
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
-            
+
             if process.returncode != 0:
                 error_output = stderr.decode() if stderr else "Unknown error"
                 logger.error(f"FFmpeg merge failed for section {section_index}", extra={
@@ -187,13 +186,13 @@ class VideoProcessor:
                     "stderr": error_output
                 })
                 raise RuntimeError(f"FFmpeg failed: {error_output}")
-            
+
         except Exception as e:
             logger.error(f"Failed to execute FFmpeg merge for section {section_index}", extra={
                 "error": str(e)
             }, exc_info=True)
             raise
-    
+
     async def _copy_video(self, input_path: str, output_path: str) -> None:
         """Copy video file without audio"""
         cmd = [
@@ -205,22 +204,22 @@ class VideoProcessor:
             "-loglevel", "error",
             output_path
         ]
-        
+
         logger.debug("Copying video without audio", extra={
             "input": input_path,
             "output": output_path
         })
-        
+
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
         await process.communicate()
-        
+
         if process.returncode != 0:
             raise RuntimeError(f"Failed to copy video: {input_path}")
-    
+
     async def _concatenate_videos(self, video_paths: List[str], output_path: str) -> None:
         """
         Concatenate videos using FFmpeg concat demuxer
@@ -230,26 +229,26 @@ class VideoProcessor:
         """
         if not video_paths:
             raise ValueError("No videos to concatenate")
-        
+
         logger.debug(f"Concatenating {len(video_paths)} videos", extra={
             "video_count": len(video_paths),
             "output": output_path
         })
-        
+
         # Create concat file
         output_dir = Path(output_path).parent
         concat_file = output_dir / "concat_list.txt"
-        
+
         with open(concat_file, "w") as f:
             for video_path in video_paths:
                 # FFmpeg concat requires absolute paths
                 abs_path = Path(video_path).resolve()
                 f.write(f"file '{abs_path}'\n")
-        
+
         logger.debug(f"Created concat file with {len(video_paths)} entries", extra={
             "concat_file": str(concat_file)
         })
-        
+
         cmd = [
             "ffmpeg",
             "-y",
@@ -260,7 +259,7 @@ class VideoProcessor:
             "-loglevel", "error",
             output_path
         ]
-        
+
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -268,7 +267,7 @@ class VideoProcessor:
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
-            
+
             if process.returncode != 0:
                 error_output = stderr.decode() if stderr else "Unknown error"
                 logger.error("FFmpeg concatenation failed", extra={
@@ -277,13 +276,13 @@ class VideoProcessor:
                     "video_count": len(video_paths)
                 })
                 raise RuntimeError(f"FFmpeg concatenation failed: {error_output}")
-            
+
             logger.debug("Successfully concatenated videos")
-            
-        except Exception as e:
+
+        except Exception:
             logger.error("Failed to concatenate videos", exc_info=True)
             raise
-        
+
         finally:
             # Cleanup concat file
             if concat_file.exists():
@@ -292,7 +291,7 @@ class VideoProcessor:
 
 
 # Backward compatibility exports
-async def combine_sections(videos: List[str], audios: List[Optional[str]], 
+async def combine_sections(videos: List[str], audios: List[Optional[str]],
                           output_path: str, sections_dir: str) -> None:
     """Backward compatibility wrapper"""
     processor = VideoProcessor()

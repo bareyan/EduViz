@@ -9,8 +9,7 @@ This module provides common utilities for:
 
 import json
 import re
-from typing import Dict, Any, List, Optional, Tuple
-from pathlib import Path
+from typing import Dict, Any, List, Optional
 
 
 # ============================================================================
@@ -30,7 +29,7 @@ def fix_json_escapes(text: str) -> str:
         Fixed text with valid JSON escape sequences
     """
     # Valid JSON escapes: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
-    
+
     # First, temporarily replace valid escapes
     valid_escapes = {
         '\\"': '<<QUOTE>>',
@@ -42,23 +41,23 @@ def fix_json_escapes(text: str) -> str:
         '\\r': '<<RETURN>>',
         '\\t': '<<TAB>>',
     }
-    
+
     for old, new in valid_escapes.items():
         text = text.replace(old, new)
-    
+
     # Handle unicode escapes \uXXXX
     text = re.sub(r'\\u([0-9a-fA-F]{4})', r'<<UNICODE_\1>>', text)
-    
+
     # Now escape any remaining backslashes (invalid escapes)
     text = text.replace('\\', '\\\\')
-    
+
     # Restore valid escapes
     for old, new in valid_escapes.items():
         text = text.replace(new, old)
-    
+
     # Restore unicode escapes
     text = re.sub(r'<<UNICODE_([0-9a-fA-F]{4})>>', r'\\u\1', text)
-    
+
     return text
 
 
@@ -79,29 +78,29 @@ def parse_json_response(text: str, default: Optional[Dict[str, Any]] = None) -> 
     """
     if default is None:
         default = {}
-    
+
     text = text.strip()
-    
+
     # Remove markdown code blocks if present
     if text.startswith("```"):
         lines = text.split("\n")
         # Remove lines that are code fence markers
         lines = [l for l in lines if not l.strip().startswith("```")]
         text = "\n".join(lines)
-    
+
     # Try direct parse
     try:
         return json.loads(text)
     except json.JSONDecodeError:
         pass
-    
+
     # Try fixing escape sequences
     try:
         fixed_text = fix_json_escapes(text)
         return json.loads(fixed_text)
     except json.JSONDecodeError:
         pass
-    
+
     # Last resort: try to extract JSON using regex
     try:
         # Match either {...} or [...]
@@ -111,7 +110,7 @@ def parse_json_response(text: str, default: Optional[Dict[str, Any]] = None) -> 
             return json.loads(json_str)
     except json.JSONDecodeError:
         pass
-    
+
     return default
 
 
@@ -130,15 +129,15 @@ def parse_json_array_response(text: str, default: Optional[List[Dict[str, Any]]]
     """
     if default is None:
         default = []
-    
+
     text = text.strip()
-    
+
     # Remove markdown code blocks
     if text.startswith("```"):
         lines = text.split("\n")
         lines = [l for l in lines if not l.strip().startswith("```")]
         text = "\n".join(lines)
-    
+
     # Try direct parse
     try:
         result = json.loads(text)
@@ -147,7 +146,7 @@ def parse_json_array_response(text: str, default: Optional[List[Dict[str, Any]]]
         return default
     except json.JSONDecodeError:
         pass
-    
+
     # Try fixing escape sequences
     try:
         fixed_text = fix_json_escapes(text)
@@ -157,7 +156,7 @@ def parse_json_array_response(text: str, default: Optional[List[Dict[str, Any]]]
         return default
     except json.JSONDecodeError:
         pass
-    
+
     # Last resort: extract array
     try:
         match = re.search(r'\[[\s\S]*\]', text)
@@ -167,7 +166,7 @@ def parse_json_array_response(text: str, default: Optional[List[Dict[str, Any]]]
                 return result
     except json.JSONDecodeError:
         pass
-    
+
     return default
 
 
@@ -186,12 +185,12 @@ def extract_markdown_code_blocks(text: str, language: str = "python") -> List[st
         List of code block contents
     """
     blocks = []
-    
+
     # Pattern for fenced code blocks with optional language
     pattern = rf'```{language}?\n(.*?)```'
     matches = re.findall(pattern, text, re.DOTALL)
     blocks.extend(matches)
-    
+
     return blocks
 
 
@@ -208,7 +207,7 @@ def remove_markdown_wrappers(text: str) -> str:
         lines = text.split("\n")
         lines = [l for l in lines if not l.strip().startswith("```")]
         text = "\n".join(lines)
-    
+
     return text.strip()
 
 

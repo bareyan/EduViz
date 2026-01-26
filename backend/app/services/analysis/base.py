@@ -2,7 +2,6 @@
 Base analyzer class with shared logic for all analysis types
 """
 
-import asyncio
 from typing import Dict, Any
 from app.config.models import get_model_config
 from app.services.gemini import get_gemini_client, get_types_module
@@ -12,16 +11,16 @@ create_client = get_gemini_client
 
 class BaseAnalyzer:
     """Base class with shared analysis functionality"""
-    
+
     # Model configuration - loaded from centralized config
     _config = get_model_config("analysis")
     MODEL = _config.model_name
-    
+
     def __init__(self):
         # Unified client automatically detects Gemini API vs Vertex AI
         self.client = create_client()
         self.types = get_types_module()
-    
+
     def _get_representative_sample(self, text: str, max_chars: int = 15000) -> str:
         """Extract a representative sample from the document for analysis.
         
@@ -34,27 +33,27 @@ class BaseAnalyzer:
         """
         if len(text) <= max_chars:
             return text
-        
+
         # Calculate section sizes
         intro_size = int(max_chars * 0.4)
         middle_size = int(max_chars * 0.4)
         ending_size = max_chars - intro_size - middle_size
-        
+
         # Get beginning
         intro = text[:intro_size]
-        
+
         # Get middle section (center of document)
         middle_start = max(intro_size, (len(text) - middle_size) // 2)
         middle = text[middle_start:middle_start + middle_size]
-        
+
         # Get ending
         ending = text[-ending_size:]
-        
+
         # Combine with markers
         sample = f"{intro}\n\n[...content continues...]\n\n{middle}\n\n[...content continues...]\n\n{ending}"
-        
+
         return sample
-    
+
     def _parse_json_response(self, text: str) -> Dict[str, Any]:
         """Parse JSON from Gemini response using shared utilities"""
         result = parse_json_response(text)

@@ -184,7 +184,7 @@ THEME_CONFIGS = {
 
 def get_language_instructions(language: str) -> str:
     """Get language-specific instructions for Manim code generation"""
-    
+
     if language in NON_LATIN_SCRIPTS:
         script_name = NON_LATIN_SCRIPTS[language]
         return f"""
@@ -227,7 +227,7 @@ WRONG (DO NOT DO):
 """
     elif language != 'en':
         # Latin script but non-English (French, German, Spanish, etc.)
-        return f"""
+        return """
 ════════════════════════════════════════════════════════════════════════════════
 NOTE: NON-ENGLISH LATIN TEXT
 ════════════════════════════════════════════════════════════════════════════════
@@ -235,7 +235,7 @@ Text is in a non-English language with accented characters.
 
 Rules:
 - Text() handles accented characters correctly: Text("Théorème", font_size=32)
-- MathTex is ONLY for mathematical notation: MathTex(r"\\frac{{x}}{{y}}").scale(0.7)
+- MathTex is ONLY for mathematical notation: MathTex(r"\\frac{x}{y}").scale(0.7)
 - NEVER put non-math words inside MathTex - it will fail on accented chars
 - Keep math and text as separate objects positioned with .next_to()
 - Use smaller fonts to accommodate longer words: font_size=24 for body text
@@ -258,7 +258,7 @@ def get_animation_guidance(animation_type: str) -> str:
 def get_theme_setup_code(style: str) -> str:
     """Get the theme setup code that runs at the start of construct()"""
     config = THEME_CONFIGS.get(style, THEME_CONFIGS['3b1b'])
-    
+
     if config['background']:
         return f'''        # === THEME: {config['comment']} ===
         self.camera.background_color = {config['background']}
@@ -278,13 +278,13 @@ def build_visual_script_prompt(
     timing_context: str
 ) -> str:
     """Build prompt for Shot 1: Generate detailed visual script/storyboard"""
-    
+
     title = section.get('title', 'Untitled')
     narration = section.get('narration', section.get('tts_narration', ''))
     visual_description = section.get('visual_description', '')
     animation_type = section.get('animation_type', 'text')
     key_concepts = section.get('key_concepts', section.get('key_equations', []))
-    
+
     # Format key concepts
     if isinstance(key_concepts, list) and key_concepts:
         concepts_str = "\n".join(f"  - {c}" for c in key_concepts)
@@ -292,7 +292,7 @@ def build_visual_script_prompt(
         concepts_str = f"  - {key_concepts}"
     else:
         concepts_str = "  (None specified)"
-    
+
     return f"""You are an expert educational video storyboard designer. Create a detailed VISUAL SCRIPT for a Manim animation.
 
 ════════════════════════════════════════════════════════════════════════════════
@@ -603,7 +603,7 @@ def get_visual_script_analysis_schema():
     """
     try:
         from google import genai
-        
+
         return genai.types.Schema(
             type=genai.types.Type.OBJECT,
             required=["status", "issues_found", "fixes"],
@@ -673,7 +673,7 @@ def build_visual_script_analysis_prompt(
     This is a lightweight check that validates the visual script and outputs
     structured JSON with any fixes needed for the Manim code generator.
     """
-    
+
     return f"""You are an expert visual layout validator for Manim animations. Quickly check this visual script for spatial safety issues.
 
 ════════════════════════════════════════════════════════════════════════════════
@@ -754,10 +754,10 @@ def build_code_from_script_prompt(
         type_guidance: Animation type guidance
         spatial_fixes: Optional list of spatial fixes from analysis phase
     """
-    
-    title = section.get('title', 'Untitled')
+
+    section.get('title', 'Untitled')
     narration = section.get('narration', section.get('tts_narration', ''))
-    
+
     # Build spatial fixes section if provided
     spatial_fixes_section = ""
     if spatial_fixes and len(spatial_fixes) > 0:
@@ -769,7 +769,7 @@ def build_code_from_script_prompt(
             desc = fix.get('description', '')
             instruction = fix.get('fix_instruction', '')
             fixes_text.append(f"  - [{severity}] {obj_id}: {issue} - {desc}\n    → FIX: {instruction}")
-        
+
         spatial_fixes_section = f"""
 ════════════════════════════════════════════════════════════════════════════════
 ⚠️ SPATIAL FIXES REQUIRED (from layout analysis)
@@ -781,7 +781,7 @@ when generating code. Apply these fixes to avoid overflow/overlap problems:
 
 Apply these fixes when positioning objects. The visual script positions may need adjustment.
 """
-    
+
     return f"""You are an expert Manim Community Edition programmer. Generate Python code for the construct(self) method body.
 
 ════════════════════════════════════════════════════════════════════════════════
@@ -934,7 +934,7 @@ Size rules - STANDARDIZED (SMALLER TO PREVENT OVERFLOW):
 LaTeX vs Text Rules - STRICT ENFORCEMENT:
 1. **Math Mode**: ALWAYS use `MathTex(r"...")` for anything that is a variable, number, or formula.
    - ❌ WRONG: `Text("x = 5")`, `Text("alpha")`, `Text("30%")`, `Text("H2O")`, `Text("v_0")`
-   - ✅ CORRECT: `MathTex(r"x = 5")`, `MathTex(r"\alpha")`, `MathTex(r"30\%")`, `MathTex(r"H_2O")`, `MathTex(r"v_0")`
+   - ✅ CORRECT: `MathTex(r"x = 5")`, `MathTex(r"\alpha")`, `MathTex(r"30\\%")`, `MathTex(r"H_2O")`, `MathTex(r"v_0")`
    - **MANDATORY**: Even single variables like "x" MUST be `MathTex(r"x")`.
 2. **Plain Text**: Use `Text("...")` for descriptions and sentences.
    - Example: `Text("The limit diverges")`
@@ -1039,10 +1039,10 @@ def build_timing_context(section: Dict[str, Any], narration_segments: List[Dict]
     IMPORTANT: Includes FULL narration text for each segment, not truncated,
     so Gemini can understand what visuals to create for each timing segment.
     """
-    
+
     is_unified_section = section.get('is_unified_section', False)
     is_segment = section.get('is_segment', False)
-    
+
     # Build subsection timing from narration_segments
     subsection_lines = []
     cumulative_time = 0.0
@@ -1052,16 +1052,16 @@ def build_timing_context(section: Dict[str, Any], narration_segments: List[Dict]
         end_time = seg.get('end_time', cumulative_time + seg_duration)
         seg_text = seg.get('text', '')  # Full text, not truncated!
         seg_visual = seg.get('visual_description', '')
-        
+
         line = f"  SEGMENT {len(subsection_lines) + 1}: [{start_time:.1f}s - {end_time:.1f}s] ({seg_duration:.1f}s)"
         if seg_visual:
             line += f"\n    Visual Focus: {seg_visual}"
         line += f"\n    Narration: \"{seg_text}\""
         subsection_lines.append(line)
         cumulative_time = end_time
-    
+
     subsection_timing_str = "\n\n".join(subsection_lines) if subsection_lines else "Single continuous segment"
-    
+
     if is_unified_section:
         # Unified section with multiple segments - use segment_timing if available
         segment_timing = section.get('segment_timing', [])
@@ -1076,14 +1076,14 @@ def build_timing_context(section: Dict[str, Any], narration_segments: List[Dict]
                 timing_lines.append(line)
             return "\n\n".join(timing_lines)
         return subsection_timing_str
-        
+
     elif is_segment:
         # Individual segment within a larger section
         seg_idx = section.get('segment_index', 0)
         total_segs = section.get('total_segments', 1)
         is_first = seg_idx == 0
         is_last = seg_idx == total_segs - 1
-        
+
         context = f"Segment {seg_idx + 1} of {total_segs}\n"
         if is_first:
             context += "  → This is the FIRST segment: Include section title animation\n"
@@ -1107,13 +1107,13 @@ def build_generation_prompt(
     type_guidance: str
 ) -> str:
     """Build the comprehensive Manim code generation prompt"""
-    
+
     title = section.get('title', 'Untitled')
     narration = section.get('narration', section.get('tts_narration', ''))
     visual_description = section.get('visual_description', '')
     animation_type = section.get('animation_type', 'text')
     key_concepts = section.get('key_concepts', section.get('key_equations', []))
-    
+
     # Format key concepts nicely
     if isinstance(key_concepts, list) and key_concepts:
         concepts_str = "\n".join(f"  - {c}" for c in key_concepts)
@@ -1121,7 +1121,7 @@ def build_generation_prompt(
         concepts_str = f"  - {key_concepts}"
     else:
         concepts_str = "  (None specified)"
-    
+
     return f"""You are an expert Manim Community Edition programmer. Generate Python code for the construct(self) method body.
 
 ════════════════════════════════════════════════════════════════════════════════
@@ -1412,10 +1412,10 @@ def build_correction_prompt(
     section: Dict[str, Any]
 ) -> str:
     """Build the prompt for fixing Manim code errors"""
-    
+
     # Get duration info
     duration = section.get('duration_seconds', section.get('target_duration', section.get('total_duration', 30)))
-    
+
     # Build timing context for fix - include FULL segment text for proper timing
     timing_context = ""
     if section.get('is_unified_section', False):
@@ -1441,7 +1441,7 @@ def build_correction_prompt(
                 timing_lines.append(line)
                 cumulative = end_time
             timing_context = f"\n════════════════════════════════════════════════════════════════\nTIMING BREAKDOWN (Total: {duration:.1f}s) - Sync visuals to these segments:\n════════════════════════════════════════════════════════════════\n" + "\n\n".join(timing_lines)
-    
+
     return f"""Fix the following Manim code error:
 
 ⚠️ TARGET DURATION: {duration:.1f} seconds - animations + waits MUST sum to this!
@@ -1471,11 +1471,11 @@ def build_visual_fix_prompt(
     section: Dict[str, Any]
 ) -> str:
     """Build the prompt for fixing visual layout issues detected by QC"""
-    
+
     section_title = section.get('title', 'Untitled')
     duration = section.get('duration_seconds', section.get('target_duration', section.get('total_duration', 30)))
     narration = section.get('narration', section.get('tts_narration', ''))[:500]
-    
+
     # Build FULL timing context with complete segment text
     timing_context = ""
     if section.get('is_unified_section', False):
@@ -1609,15 +1609,15 @@ OUTPUT: Complete fixed Python file only."""
 
 def build_render_fix_prompt(code: str, error_message: str, section: Optional[Dict[str, Any]] = None) -> str:
     """Build a simpler prompt for fixing render/syntax errors"""
-    
+
     # Build timing context if section is provided
     timing_info = ""
     duration = 30  # default
-    
+
     if section:
         duration = section.get('duration_seconds', section.get('target_duration', section.get('total_duration', 30)))
         timing_info = f"\n⚠️ TARGET DURATION: {duration:.1f}s - animations + waits must total this!\n"
-        
+
         if section.get('is_unified_section', False):
             segment_timing = section.get('segment_timing', [])
             if segment_timing:
@@ -1635,7 +1635,7 @@ def build_render_fix_prompt(code: str, error_message: str, section: Optional[Dic
                     timing_lines.append(f"  SEGMENT {i+1}: [{cumulative:.1f}s-{cumulative+seg_dur:.1f}s] \"{seg.get('text', '')}\"")
                     cumulative += seg_dur
                 timing_info += "\nSEGMENT TIMING:\n" + "\n".join(timing_lines) + "\n"
-    
+
     return f"""Fix this Manim code error:
 {timing_info}
 CODE:

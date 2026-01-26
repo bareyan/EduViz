@@ -4,13 +4,9 @@ Analyzes video segments for overlaps, off-screen elements, and visual issues
 Uses structured output for reliable error detection
 """
 
-import os
 import subprocess
-import tempfile
-import re
 import json
-import base64
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 import asyncio
 
@@ -33,23 +29,23 @@ class VisualQualityController:
     Sends downscaled 480p video at 1fps for efficient analysis
     Uses structured output for reliable error detection
     """
-    
+
     # Model configuration - loaded from centralized config
     _config = get_model_config("visual_qc")
     DEFAULT_MODEL = _config.model_name
-    
+
     # Video processing settings
     TARGET_HEIGHT = 480  # 480p
     TARGET_FPS = 1  # 1 frame per second for analysis
-    
+
     MAX_QC_ITERATIONS = 3  # Maximum times to retry fixing visual issues
-    
+
     # Pricing for gemini-2.0-flash-lite (per 1M tokens)
     PRICING = {
         "input": 0.075,      # $0.075 per 1M input tokens (includes video tokens)
         "output": 0.30,      # $0.30 per 1M output tokens
     }
-    
+
     # System instruction for strict visual error detection
     SYSTEM_INSTRUCTION = """You are an expert visual quality control inspector for educational Manim animation videos.
 
@@ -127,14 +123,14 @@ You MUST distinguish between:
         """
         if not GEMINI_AVAILABLE:
             raise ImportError("gemini_client required")
-        
+
         self.model = model or self.DEFAULT_MODEL
-        
+
         # Initialize unified Gemini client (works with both API and Vertex AI)
         self.client = create_client()
         self.types = get_types_module()
         print(f"[VisualQC] Initialized with model: {self.model} (video mode, {self.TARGET_HEIGHT}p @ {self.TARGET_FPS}fps)")
-        
+
         # Token usage tracking
         self.usage_stats = {
             "input_tokens": 0,
@@ -142,59 +138,59 @@ You MUST distinguish between:
             "videos_processed": 0,
             "total_cost": 0.0
         }
-        
+
         # Error tracking for debugging
         self.error_frames: List[Dict[str, Any]] = []
         self.errors_dir: Optional[Path] = None
-        
+
         # Create structured output schema (lazy initialization)
         self._error_schema = None
-    
+
     @property
     def error_schema(self):
         """Lazily create the structured output schema for error detection"""
         if self._error_schema is None:
-            self._error_schema = genai.types.Schema(
-                type=genai.types.Type.OBJECT,
+            self._error_schema = self.types.Schema(
+                type=self.types.Type.OBJECT,
                 required=["errors_detected", "error_descriptions"],
                 properties={
-                    "errors_detected": genai.types.Schema(
-                        type=genai.types.Type.BOOLEAN,
+                    "errors_detected": self.types.Schema(
+                        type=self.types.Type.BOOLEAN,
                         description="True if any PERSISTENT visual errors were detected (lasting 2+ seconds in static state), False if video is clean or only has transient animation artifacts"
                     ),
-                    "error_descriptions": genai.types.Schema(
-                        type=genai.types.Type.ARRAY,
+                    "error_descriptions": self.types.Schema(
+                        type=self.types.Type.ARRAY,
                         description="List of PERSISTENT errors only (ignore transient animation artifacts)",
-                        items=genai.types.Schema(
-                            type=genai.types.Type.OBJECT,
+                        items=self.types.Schema(
+                            type=self.types.Type.OBJECT,
                             required=["start_second", "end_second", "duration_seconds", "is_during_animation", "location", "error_type", "description"],
                             properties={
-                                "start_second": genai.types.Schema(
-                                    type=genai.types.Type.NUMBER,
+                                "start_second": self.types.Schema(
+                                    type=self.types.Type.NUMBER,
                                     description="Timestamp in seconds when the error FIRST becomes visible"
                                 ),
-                                "end_second": genai.types.Schema(
-                                    type=genai.types.Type.NUMBER,
+                                "end_second": self.types.Schema(
+                                    type=self.types.Type.NUMBER,
                                     description="Timestamp in seconds when the error is no longer visible (or video ends)"
                                 ),
-                                "duration_seconds": genai.types.Schema(
-                                    type=genai.types.Type.NUMBER,
+                                "duration_seconds": self.types.Schema(
+                                    type=self.types.Type.NUMBER,
                                     description="How long the error persists (end_second - start_second). Must be >= 2 seconds to be reported."
                                 ),
-                                "is_during_animation": genai.types.Schema(
-                                    type=genai.types.Type.BOOLEAN,
+                                "is_during_animation": self.types.Schema(
+                                    type=self.types.Type.BOOLEAN,
                                     description="True if this issue only appears during active animation/transition and resolves when animation ends. Such issues should NOT be reported."
                                 ),
-                                "location": genai.types.Schema(
-                                    type=genai.types.Type.STRING,
+                                "location": self.types.Schema(
+                                    type=self.types.Type.STRING,
                                     description="Screen location: top-left, top-center, top-right, center-left, center, center-right, bottom-left, bottom-center, bottom-right, or full-screen"
                                 ),
-                                "error_type": genai.types.Schema(
-                                    type=genai.types.Type.STRING,
+                                "error_type": self.types.Schema(
+                                    type=self.types.Type.STRING,
                                     description="Type of error: overflow, overlap, rendering_failure, layout_issue, readability"
                                 ),
-                                "description": genai.types.Schema(
-                                    type=genai.types.Type.STRING,
+                                "description": self.types.Schema(
+                                    type=self.types.Type.STRING,
                                     description="Specific, concrete description of the PERSISTENT error. Mention that it persists in a static state."
                                 )
                             }
@@ -203,7 +199,7 @@ You MUST distinguish between:
                 }
             )
         return self._error_schema
-    
+
     def _track_usage(self, response, num_videos: int = 0):
         """Track token usage and cost from Gemini response
         
@@ -220,21 +216,21 @@ You MUST distinguish between:
             else:
                 input_tokens = 0
                 output_tokens = 0
-            
+
             # Update stats
             self.usage_stats["input_tokens"] += input_tokens
             self.usage_stats["output_tokens"] += output_tokens
             self.usage_stats["videos_processed"] += num_videos
-            
+
             # Calculate cost
             input_cost = (input_tokens / 1_000_000) * self.PRICING["input"]
             output_cost = (output_tokens / 1_000_000) * self.PRICING["output"]
-            
+
             self.usage_stats["total_cost"] += input_cost + output_cost
-            
+
         except Exception as e:
             print(f"[VisualQC] Warning: Could not track usage: {e}")
-    
+
     def get_usage_stats(self) -> Dict[str, Any]:
         """Get usage statistics and costs
         
@@ -248,7 +244,7 @@ You MUST distinguish between:
             "videos_processed": self.usage_stats["videos_processed"],
             "total_cost_usd": round(self.usage_stats["total_cost"], 4)
         }
-    
+
     def set_errors_dir(self, output_dir: str):
         """Set the directory to store error screenshots for debugging
         
@@ -258,11 +254,11 @@ You MUST distinguish between:
         self.errors_dir = Path(output_dir) / "errors"
         self.errors_dir.mkdir(parents=True, exist_ok=True)
         print(f"[VisualQC] Error screenshots will be saved to: {self.errors_dir}")
-    
+
     def _extract_error_frame(
-        self, 
+        self,
         video_path: str,
-        timestamp: float, 
+        timestamp: float,
         section_title: str,
         error_description: str,
         qc_iteration: int = 0
@@ -278,13 +274,13 @@ You MUST distinguish between:
         """
         if not self.errors_dir:
             return
-        
+
         try:
             # Create a safe filename
             safe_title = "".join(c if c.isalnum() or c in "._-" else "_" for c in section_title[:30])
             filename = f"{safe_title}_t{timestamp:.1f}s_iter{qc_iteration}.jpg"
             dest_path = self.errors_dir / filename
-            
+
             # Extract frame from video at the timestamp
             cmd = [
                 "ffmpeg",
@@ -295,13 +291,13 @@ You MUST distinguish between:
                 "-y",
                 str(dest_path)
             ]
-            
+
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-            
+
             if result.returncode != 0:
                 print(f"[VisualQC] Warning: Could not extract error frame at {timestamp}s")
                 return
-            
+
             # Track this error
             error_info = {
                 "section": section_title,
@@ -311,12 +307,12 @@ You MUST distinguish between:
                 "qc_iteration": qc_iteration
             }
             self.error_frames.append(error_info)
-            
+
             print(f"[VisualQC] 📸 Saved error frame: {filename}")
-            
+
         except Exception as e:
             print(f"[VisualQC] Warning: Could not save error frame: {e}")
-    
+
     def print_error_summary(self):
         """Print a summary of all detected errors (even those that were fixed)"""
         if not self.error_frames:
@@ -324,11 +320,11 @@ You MUST distinguish between:
             print("[VisualQC] ERROR SUMMARY: No visual errors detected during QC")
             print("[VisualQC] ═══════════════════════════════════════════════════════\n")
             return
-        
+
         print("\n[VisualQC] ═══════════════════════════════════════════════════════")
         print(f"[VisualQC] ERROR SUMMARY: {len(self.error_frames)} error(s) detected")
         print("[VisualQC] ═══════════════════════════════════════════════════════")
-        
+
         # Group by section
         sections = {}
         for err in self.error_frames:
@@ -336,17 +332,17 @@ You MUST distinguish between:
             if section not in sections:
                 sections[section] = []
             sections[section].append(err)
-        
+
         for section, errors in sections.items():
             print(f"\n[VisualQC] Section: {section}")
             for err in errors:
                 iter_str = f"[Iter {err['qc_iteration'] + 1}]" if err.get('qc_iteration', 0) > 0 else "[Initial]"
                 print(f"[VisualQC]   {iter_str} {err['timestamp']:.1f}s: {err['error'][:100]}...")
-        
+
         if self.errors_dir:
             print(f"\n[VisualQC] Error frames saved to: {self.errors_dir}")
         print("[VisualQC] ═══════════════════════════════════════════════════════\n")
-    
+
     def get_error_frames(self) -> List[Dict[str, Any]]:
         """Get list of all detected error frames
         
@@ -354,7 +350,7 @@ You MUST distinguish between:
             List of error frame info dicts
         """
         return self.error_frames.copy()
-    
+
     def clear_error_frames(self):
         """Clear the error frames list (call at start of new job)"""
         self.error_frames = []
@@ -362,7 +358,7 @@ You MUST distinguish between:
     async def check_model_available(self) -> bool:
         """Check if the Gemini API is accessible (always true if client initialized)"""
         return True
-    
+
     def _prepare_video_for_analysis(self, video_path: str) -> Optional[str]:
         """Downscale video to 480p at 1fps for efficient analysis
         
@@ -376,12 +372,12 @@ You MUST distinguish between:
         if not video_path.exists():
             print(f"[VisualQC] Video not found: {video_path}")
             return None
-        
+
         # Create temp file for downscaled video
         temp_dir = video_path.parent / ".qc_temp"
         temp_dir.mkdir(exist_ok=True)
         output_path = temp_dir / f"qc_{video_path.stem}_480p_1fps.mp4"
-        
+
         try:
             # Get original video info
             probe_cmd = [
@@ -392,12 +388,12 @@ You MUST distinguish between:
                 "-of", "json",
                 str(video_path)
             ]
-            
+
             result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=10)
             if result.returncode != 0:
-                print(f"[VisualQC] Failed to probe video")
+                print("[VisualQC] Failed to probe video")
                 return None
-            
+
             # Downscale to 480p height at 1fps
             # Using -vf scale=-2:480 to maintain aspect ratio (width divisible by 2)
             cmd = [
@@ -411,13 +407,13 @@ You MUST distinguish between:
                 "-y",  # Overwrite
                 str(output_path)
             ]
-            
+
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-            
+
             if result.returncode != 0:
                 print(f"[VisualQC] Failed to downscale video: {result.stderr}")
                 return None
-            
+
             if output_path.exists():
                 # Get file size for logging
                 size_mb = output_path.stat().st_size / (1024 * 1024)
@@ -425,21 +421,21 @@ You MUST distinguish between:
                 return str(output_path)
             else:
                 return None
-                
+
         except subprocess.TimeoutExpired:
-            print(f"[VisualQC] Video preparation timed out")
+            print("[VisualQC] Video preparation timed out")
             return None
         except Exception as e:
             print(f"[VisualQC] Error preparing video: {e}")
             return None
-    
+
     def _cleanup_temp_video(self, temp_video_path: str):
         """Clean up temporary video file"""
         try:
             temp_path = Path(temp_video_path)
             if temp_path.exists():
                 temp_path.unlink()
-            
+
             # Remove parent directory if empty
             parent = temp_path.parent
             if parent.exists() and parent.name == ".qc_temp":
@@ -470,7 +466,7 @@ You MUST distinguish between:
         full_narration = section_info.get("narration", section_info.get("tts_narration", ""))
         visual_description = section_info.get("visual_description", "")
         duration = section_info.get("duration_seconds", section_info.get("duration", 30))
-        
+
         # Build context for the prompt
         narration_segments = section_info.get("narration_segments", [])
         segment_context = ""
@@ -483,7 +479,7 @@ You MUST distinguish between:
                 segment_lines.append(f"  [{cumulative:.1f}s-{cumulative + seg_duration:.1f}s]: \"{seg_text}...\"")
                 cumulative += seg_duration
             segment_context = "\n".join(segment_lines)
-        
+
         # Build the analysis prompt
         user_prompt = f"""Analyze this Manim educational animation video for PERSISTENT VISUAL ERRORS.
 
@@ -530,51 +526,51 @@ REMEMBER: When in doubt, check if the issue persists in a "settled" state. Only 
             # Read video file as bytes
             with open(video_path, "rb") as f:
                 video_bytes = f.read()
-            
+
             # Create video part for Gemini
             # Note: video_metadata is not supported in from_bytes, fps is inferred from the video
-            video_part = types.Part.from_bytes(
+            video_part = self.types.Part.from_bytes(
                 data=video_bytes,
                 mime_type="video/mp4"
             )
-            
+
             # Create content with video and prompt
             contents = [
-                types.Content(
+                self.types.Content(
                     role="user",
                     parts=[video_part]
                 ),
-                types.Content(
+                self.types.Content(
                     role="user",
-                    parts=[types.Part.from_text(text=user_prompt)]
+                    parts=[self.types.Part.from_text(text=user_prompt)]
                 )
             ]
-            
+
             # Generate content config with structured output
-            config = types.GenerateContentConfig(
-                system_instruction=[types.Part.from_text(text=self.SYSTEM_INSTRUCTION)],
+            config = self.types.GenerateContentConfig(
+                system_instruction=[self.types.Part.from_text(text=self.SYSTEM_INSTRUCTION)],
                 media_resolution="MEDIA_RESOLUTION_LOW",  # Low res for efficiency
                 temperature=0.1,  # Low temperature for consistent analysis
                 max_output_tokens=2048,
                 response_mime_type="application/json",
                 response_schema=self.error_schema
             )
-            
+
             # Call Gemini API
-            print(f"[VisualQC] Sending video to Gemini for analysis...")
+            print("[VisualQC] Sending video to Gemini for analysis...")
             response = await asyncio.to_thread(
                 self.client.models.generate_content,
                 model=self.model,
                 contents=contents,
                 config=config
             )
-            
+
             # Track usage
             self._track_usage(response, num_videos=1)
-            
+
             # Parse structured JSON response
             response_text = response.text.strip() if response.text else "{}"
-            
+
             try:
                 result = json.loads(response_text)
             except json.JSONDecodeError as e:
@@ -584,47 +580,47 @@ REMEMBER: When in doubt, check if the issue persists in a "settled" state. Only 
                     "status": "error",
                     "error_report": "Failed to parse QC response"
                 }
-            
+
             # Process structured result
             errors_detected = result.get("errors_detected", False)
             error_descriptions = result.get("error_descriptions", [])
-            
+
             if errors_detected and error_descriptions:
                 error_reports = []
                 filtered_count = 0
-                
+
                 # Get the original video path for frame extraction
                 original_video = section_info.get("_original_video_path", video_path)
-                
+
                 # Minimum duration threshold for persistent errors (in seconds)
                 MIN_PERSISTENT_DURATION = 1.5  # Slightly under 2s to account for frame timing
-                
+
                 for error in error_descriptions:
                     # Get timing information from new schema
                     start_second = error.get("start_second", error.get("second", 0))
                     end_second = error.get("end_second", start_second + 1)
                     duration = error.get("duration_seconds", end_second - start_second)
                     is_during_animation = error.get("is_during_animation", False)
-                    
+
                     location = error.get("location", "unknown")
                     error_type = error.get("error_type", "unknown")
                     description = error.get("description", "No description")
-                    
+
                     # Filter out transient/animation issues
                     if is_during_animation:
                         print(f"[VisualQC] Filtered (animation): {description[:60]}...")
                         filtered_count += 1
                         continue
-                    
+
                     if duration < MIN_PERSISTENT_DURATION:
                         print(f"[VisualQC] Filtered (transient, {duration:.1f}s < {MIN_PERSISTENT_DURATION}s): {description[:60]}...")
                         filtered_count += 1
                         continue
-                    
+
                     # This is a persistent error - report it
                     error_str = f"At {start_second:.1f}s-{end_second:.1f}s ({duration:.1f}s) [{location}] ({error_type}): {description}"
                     error_reports.append(error_str)
-                    
+
                     # Extract and save error frame for debugging (at midpoint of error)
                     frame_timestamp = (start_second + end_second) / 2
                     self._extract_error_frame(
@@ -634,33 +630,33 @@ REMEMBER: When in doubt, check if the issue persists in a "settled" state. Only 
                         f"[{location}] {error_type}: {description}",
                         qc_iteration
                     )
-                
+
                 if filtered_count > 0:
                     print(f"[VisualQC] Filtered out {filtered_count} transient/animation issue(s)")
-                
+
                 if error_reports:
                     full_report = "\n".join(error_reports)
                     print(f"[VisualQC] ⚠️  Found {len(error_reports)} PERSISTENT issue(s):")
                     for report in error_reports:
                         print(f"[VisualQC]    {report}")
-                    
+
                     return {
                         "status": "issues",
                         "error_report": full_report
                     }
                 else:
-                    print(f"[VisualQC] ✅ QC PASSED - All detected issues were transient (animation artifacts)")
+                    print("[VisualQC] ✅ QC PASSED - All detected issues were transient (animation artifacts)")
                     return {
                         "status": "ok",
                         "error_report": ""
                     }
             else:
-                print(f"[VisualQC] ✅ QC PASSED - No visual errors detected")
+                print("[VisualQC] ✅ QC PASSED - No visual errors detected")
                 return {
                     "status": "ok",
                     "error_report": ""
                 }
-        
+
         except Exception as e:
             print(f"[VisualQC] Error analyzing video: {e}")
             import traceback
@@ -694,27 +690,27 @@ REMEMBER: When in doubt, check if the issue persists in a "settled" state. Only 
         print(f"[VisualQC] Starting video QC for section: '{section_title}'")
         print(f"[VisualQC] Video path: {video_path}")
         print(f"[VisualQC] Mode: Video analysis ({self.TARGET_HEIGHT}p @ {self.TARGET_FPS}fps)")
-        
+
         # Prepare video for analysis (downscale to 480p at 1fps)
         temp_video_path = self._prepare_video_for_analysis(video_path)
-        
+
         if not temp_video_path:
-            print(f"[VisualQC] ❌ Failed to prepare video for analysis")
+            print("[VisualQC] ❌ Failed to prepare video for analysis")
             return {
                 "status": "error",
                 "error_report": "Failed to prepare video for analysis",
                 "temp_video_path": None
             }
-        
+
         # Store original video path for frame extraction on errors
         section_info["_original_video_path"] = video_path
-        
+
         # Analyze video
         analysis = await self.analyze_video(temp_video_path, section_info, qc_iteration)
         analysis["temp_video_path"] = temp_video_path
-        
+
         return analysis
-    
+
     def cleanup_frames(self, frame_paths: List[str] = None, temp_video_path: str = None):
         """Clean up temporary files
         
@@ -744,19 +740,19 @@ async def check_section_video(
         Analysis result with status and error_report
     """
     qc = VisualQualityController(model=model)
-    
+
     # Check if model is available
     if not await qc.check_model_available():
         return {
             "status": "error",
             "error_report": f"Model {qc.model} not available"
         }
-    
+
     # Run QC
     result = await qc.check_video_quality(video_path, section_info)
-    
+
     # Cleanup
     if result.get("temp_video_path"):
         qc.cleanup_frames(temp_video_path=result["temp_video_path"])
-    
+
     return result

@@ -12,7 +12,7 @@ API_VERSION = "1.0.0"
 # CORS origins
 CORS_ORIGINS = [
     "http://localhost:3000",
-    "http://localhost:3001", 
+    "http://localhost:3001",
     "http://localhost:5173",
 ]
 

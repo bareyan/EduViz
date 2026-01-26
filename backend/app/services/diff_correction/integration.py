@@ -13,17 +13,16 @@ Features:
 
 import asyncio
 import json
-from typing import Optional, Dict, Any, List, TYPE_CHECKING
+from typing import Optional, Dict, Any, TYPE_CHECKING
 
 from .parser import extract_blocks_from_fenced, SearchReplaceBlock
 from .applier import apply_all_blocks, validate_syntax
 from .prompts import (
-    DIFF_CORRECTION_SYSTEM, 
+    DIFF_CORRECTION_SYSTEM,
     DIFF_CORRECTION_SCHEMA,
     MANIM_CONTEXT,
     build_diff_correction_prompt,
-    build_structured_prompt,
-    parse_error_context
+    build_structured_prompt
 )
 
 if TYPE_CHECKING:
@@ -64,21 +63,21 @@ async def correct_manim_code_with_diff(
         # Feature disabled, use original function
         from app.services.manim_generator.renderer import correct_manim_code as original_correct
         return await original_correct(generator, original_code, error_message, section, attempt)
-    
+
     # Try diff-based correction with internal retry loop
     current_code = original_code
     for diff_attempt in range(MAX_DIFF_ATTEMPTS):
         print(f"[DiffCorrector] Diff attempt {diff_attempt + 1}/{MAX_DIFF_ATTEMPTS}...")
-        
+
         result = await _try_diff_correction(generator, current_code, error_message, section, diff_attempt)
         if result:
             return result
-        
+
         # If diff failed and no blocks found, try once more with the same code
         # If blocks were found but didn't apply, current_code is unchanged
-    
+
     print(f"[DiffCorrector] All {MAX_DIFF_ATTEMPTS} diff attempts failed, falling back to full regeneration")
-    
+
     # Fallback to original full regeneration
     from app.services.manim_generator.renderer import correct_manim_code as original_correct
     return await original_correct(generator, original_code, error_message, section, attempt)
@@ -107,7 +106,7 @@ async def _try_diff_correction(
             return result
         print("[DiffCorrector] Structured output failed, will try text-based on retry")
         return None
-    
+
     # Text-based SEARCH/REPLACE blocks
     return await _try_text_based_correction(generator, code, error_message, section, attempt)
 
@@ -125,17 +124,17 @@ async def _try_structured_correction(
     """
     # Use generator's types module (supports both API and Vertex AI)
     types = generator.types
-    
+
     # Build prompt for structured output
     prompt = build_structured_prompt(code, error_message, section)
-    
+
     # System instruction with Manim context
     system_instruction = f"""You are a Manim code debugger. Analyze errors and provide fixes.
 
 {MANIM_CONTEXT}
 
 Provide fixes as search/replace pairs. The "search" field must EXACTLY match text in the code."""
-    
+
     # Configure with JSON schema response
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
@@ -144,10 +143,10 @@ Provide fixes as search/replace pairs. The "search" field must EXACTLY match tex
         response_mime_type="application/json",
         response_schema=DIFF_CORRECTION_SCHEMA,
     )
-    
+
     try:
         print("[DiffCorrector] Using structured JSON output mode")
-        
+
         response = await asyncio.to_thread(
             generator.client.models.generate_content,
             model=generator.CORRECTION_MODEL,
@@ -159,17 +158,17 @@ Provide fixes as search/replace pairs. The "search" field must EXACTLY match tex
             ],
             config=config
         )
-        
+
         # Track cost
         try:
             generator.cost_tracker.track_usage(response, generator.CORRECTION_MODEL)
         except Exception:
             pass
-        
+
         if not response or not response.text:
             print("[DiffCorrector] Empty response from LLM")
             return None
-        
+
         # Parse JSON response
         try:
             result = json.loads(response.text)
@@ -178,13 +177,13 @@ Provide fixes as search/replace pairs. The "search" field must EXACTLY match tex
             print(f"[DiffCorrector] Failed to parse JSON: {e}")
             print(f"[DiffCorrector] Response: {response.text[:300]}...")
             return None
-        
+
         if not fixes:
             print("[DiffCorrector] No fixes in structured response")
             return None
-        
+
         print(f"[DiffCorrector] Got {len(fixes)} fix(es) from structured output")
-        
+
         # Convert to SearchReplaceBlock objects
         blocks = [
             SearchReplaceBlock(
@@ -195,37 +194,37 @@ Provide fixes as search/replace pairs. The "search" field must EXACTLY match tex
             for fix in fixes
             if fix.get("search")  # Filter out empty searches
         ]
-        
+
         if not blocks:
             print("[DiffCorrector] No valid blocks after filtering")
             return None
-        
+
         # Log reasons if provided
         for i, fix in enumerate(fixes):
             if fix.get("reason"):
                 print(f"[DiffCorrector] Fix {i+1}: {fix['reason']}")
-        
+
         # Apply blocks
         new_code, successes, errors = apply_all_blocks(code, blocks)
-        
+
         for msg in successes:
             print(f"[DiffCorrector] ✓ {msg}")
         for msg in errors:
             print(f"[DiffCorrector] ✗ {msg}")
-        
+
         if not successes:
             print("[DiffCorrector] No blocks applied successfully")
             return None
-        
+
         # Validate syntax
         syntax_error = validate_syntax(new_code)
         if syntax_error:
             print(f"[DiffCorrector] Syntax error after fixes: {syntax_error}")
             return None
-        
+
         print(f"[DiffCorrector] ✓ Code fixed via structured output ({len(successes)} changes)")
         return new_code
-        
+
     except Exception as e:
         print(f"[DiffCorrector] Structured output error: {e}")
         import traceback
@@ -247,10 +246,10 @@ async def _try_text_based_correction(
     """
     # Use generator's types module (supports both API and Vertex AI)
     types = generator.types
-    
+
     # Build prompt with retry emphasis
     prompt = build_diff_correction_prompt(code, error_message, section)
-    
+
     if attempt > 0:
         prompt = f"""RETRY {attempt + 1} - OUTPUT SEARCH/REPLACE BLOCKS ONLY.
 
@@ -262,19 +261,19 @@ replacement code
 >>>>>>> REPLACE
 
 {prompt}"""
-    
+
     # Use stronger model on retries
     model = generator.CORRECTION_MODEL
     if attempt > 0 and USE_STRONG_MODEL_ON_RETRY:
         model = generator.STRONG_MODEL
         print(f"[DiffCorrector] Using stronger model: {model}")
-    
+
     config = types.GenerateContentConfig(
         system_instruction=DIFF_CORRECTION_SYSTEM,
         temperature=0.1 + (attempt * 0.15),  # Increase temp on retries
         max_output_tokens=4096,
     )
-    
+
     try:
         response = await asyncio.to_thread(
             generator.client.models.generate_content,
@@ -287,51 +286,51 @@ replacement code
             ],
             config=config
         )
-        
+
         # Track cost
         try:
             generator.cost_tracker.track_usage(response, model)
         except Exception:
             pass
-        
+
         if not response or not response.text:
             print("[DiffCorrector] Empty response from LLM")
             return None
-        
+
         response_text = response.text
-        
+
         # Parse SEARCH/REPLACE blocks
         blocks = extract_blocks_from_fenced(response_text)
-        
+
         if not blocks:
             print("[DiffCorrector] No SEARCH/REPLACE blocks found")
             preview = response_text[:300].replace('\n', ' ').strip()
             print(f"[DiffCorrector] Response preview: {preview}...")
             return None
-        
+
         print(f"[DiffCorrector] Found {len(blocks)} block(s) in text response")
-        
+
         # Apply blocks
         new_code, successes, errors = apply_all_blocks(code, blocks)
-        
+
         for msg in successes:
             print(f"[DiffCorrector] ✓ {msg}")
         for msg in errors:
             print(f"[DiffCorrector] ✗ {msg}")
-        
+
         if not successes:
             print("[DiffCorrector] No blocks applied successfully")
             return None
-        
+
         # Validate syntax
         syntax_error = validate_syntax(new_code)
         if syntax_error:
             print(f"[DiffCorrector] Syntax error after fixes: {syntax_error}")
             return None
-        
+
         print(f"[DiffCorrector] ✓ Code fixed via text blocks ({len(successes)} changes)")
         return new_code
-        
+
     except Exception as e:
         print(f"[DiffCorrector] Text-based error: {e}")
         import traceback

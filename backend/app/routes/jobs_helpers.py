@@ -6,7 +6,6 @@ Each function handles a specific aspect of job processing.
 """
 
 from typing import Optional, Dict, Any, List
-from pathlib import Path
 
 from app.config import OUTPUT_DIR
 from app.models import SectionProgress
@@ -25,7 +24,7 @@ def get_stage_from_status(status: str) -> str:
     """
     status_to_stage = {
         "pending": "analyzing",
-        "analyzing": "analyzing", 
+        "analyzing": "analyzing",
         "generating_script": "script",
         "creating_animations": "sections",
         "synthesizing_audio": "sections",
@@ -62,20 +61,20 @@ def build_section_progress(
     section_id = section.get("id", f"section_{index}")
     sections_dir = OUTPUT_DIR / job_id / "sections"
     section_dir = sections_dir / section_id
-    
+
     # Check what files exist
     has_video = False
     has_audio = False
     has_code = False
-    
+
     merged_path = sections_dir / f"merged_{index}.mp4"
     final_section_path = section_dir / "final_section.mp4"
     audio_path = section_dir / "section_audio.mp3"
-    
+
     # Look for manim code files
     code_files = list(section_dir.glob("*.py")) if section_dir.exists() else []
     has_code = len(code_files) > 0
-    
+
     # Determine current status
     if merged_path.exists() or final_section_path.exists():
         has_video = True
@@ -90,14 +89,14 @@ def build_section_progress(
             status = "generating_manim"
         else:
             status = "waiting"
-    
+
     if audio_path.exists():
         has_audio = True
-    
+
     # Get narration preview
     narration = section.get("tts_narration") or section.get("narration", "")
     narration_preview = narration[:200] + "..." if len(narration) > 200 else narration
-    
+
     return SectionProgress(
         index=index,
         id=section_id,
@@ -133,24 +132,24 @@ def build_sections_progress(
     """
     sections = []
     completed_sections = 0
-    
+
     try:
         script = load_script(job_id)
     except Exception:
         # Script not found or unreadable - return empty
         return sections, completed_sections
-    
+
     for i, section in enumerate(script.get("sections", [])):
         # Build progress for each section
         progress = build_section_progress(
             job_id, section, i, current_stage, completed_sections
         )
-        
+
         if progress.status == "completed":
             completed_sections += 1
-        
+
         sections.append(progress)
-    
+
     return sections, completed_sections
 
 
@@ -174,16 +173,16 @@ def get_current_section_index(
     """
     if current_stage != "sections" or not sections:
         return None
-    
+
     # Find first section not completed or waiting
     for section in sections:
         if section.status not in ["completed", "waiting"]:
             return section.index
-    
+
     # If all sections are completed or waiting, check if more to process
     if completed_sections < total_sections:
         return completed_sections
-    
+
     return None
 
 

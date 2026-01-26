@@ -8,7 +8,7 @@ segmentation and script validation.
 
 import asyncio
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 from app.services.parsing import parse_json_array_response
 from .base import BaseScriptGenerator
@@ -332,7 +332,6 @@ OUTPUT: Valid JSON only.
         section_idx: int,
         total_sections: int,
     ) -> str:
-        import re
 
         MAX_CONTENT_PER_SECTION = 12000
         if len(content) <= MAX_CONTENT_PER_SECTION:

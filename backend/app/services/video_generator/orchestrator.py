@@ -5,7 +5,7 @@ Separated from VideoGenerator for better testability and single responsibility
 """
 
 import asyncio
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 from dataclasses import dataclass
 
@@ -33,7 +33,7 @@ class SectionResult:
     manim_code_path: Optional[str] = None
     manim_code: Optional[str] = None
     error: Optional[str] = None
-    
+
     def is_successful(self) -> bool:
         """Check if section processing was successful"""
         return self.video_path is not None and self.error is None
@@ -53,7 +53,7 @@ class SectionOrchestrator:
     This class handles the complex async orchestration of section processing
     while keeping individual processing logic in section_processor.
     """
-    
+
     def __init__(
         self,
         manim_generator: ManimGenerator,
@@ -75,11 +75,11 @@ class SectionOrchestrator:
         self.progress_tracker = progress_tracker
         self.max_concurrent = max_concurrent
         self.semaphore = asyncio.Semaphore(max_concurrent)
-        
-        logger.info(f"Initialized SectionOrchestrator", extra={
+
+        logger.info("Initialized SectionOrchestrator", extra={
             "max_concurrent": max_concurrent
         })
-    
+
     async def process_sections_parallel(
         self,
         sections: List[Dict[str, Any]],
@@ -116,19 +116,19 @@ class SectionOrchestrator:
         with LogTimer(logger, f"process_sections_parallel ({len(sections)} sections)"):
             total_sections = len(sections)
             completed_count = [0]  # Mutable counter for closure
-            
-            logger.info(f"Starting parallel section processing", extra={
+
+            logger.info("Starting parallel section processing", extra={
                 "total_sections": total_sections,
                 "max_concurrent": self.max_concurrent,
                 "resume": resume
             })
-            
+
             self.progress_tracker.report_stage_progress(
                 stage="sections",
                 progress=0,
                 message=f"Processing {total_sections} sections (max {self.max_concurrent} concurrent)..."
             )
-            
+
             async def process_section(i: int, section: Dict[str, Any]) -> SectionResult:
                 """Process a single section with semaphore control"""
                 async with self.semaphore:
@@ -143,16 +143,16 @@ class SectionOrchestrator:
                         completed_count=completed_count,
                         total_sections=total_sections
                     )
-            
+
             # Create tasks for all sections
             section_tasks = [
                 process_section(i, section)
                 for i, section in enumerate(sections)
             ]
-            
+
             # Execute with gather to collect all results
             section_results = await asyncio.gather(*section_tasks, return_exceptions=True)
-            
+
             # Convert exceptions to error results
             final_results = []
             for i, result in enumerate(section_results):
@@ -171,23 +171,23 @@ class SectionOrchestrator:
                     ))
                 else:
                     final_results.append(result)
-            
+
             self.progress_tracker.report_stage_progress(
                 stage="sections",
                 progress=100,
                 message="All sections processed"
             )
-            
+
             # Log summary
             successful = sum(1 for r in final_results if r.is_successful())
-            logger.info(f"Section processing complete", extra={
+            logger.info("Section processing complete", extra={
                 "total_sections": len(final_results),
                 "successful": successful,
                 "failed": len(final_results) - successful
             })
-            
+
             return final_results
-    
+
     async def _process_single_section(
         self,
         section_index: int,
@@ -211,7 +211,7 @@ class SectionOrchestrator:
         """
         section_dir = sections_dir / str(section_index)
         section_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Build initial result
         result = SectionResult(
             index=section_index,
@@ -220,29 +220,29 @@ class SectionOrchestrator:
             duration=section.get("duration_seconds", 30),
             title=section.get("title", f"Section {section_index + 1}")
         )
-        
+
         # Check for existing completed section
         merged_path = sections_dir / f"merged_{section_index}.mp4"
         final_section_path = section_dir / "final_section.mp4"
-        
+
         existing_video_path = None
         if merged_path.exists():
             existing_video_path = str(merged_path)
         elif final_section_path.exists():
             existing_video_path = str(final_section_path)
-        
+
         # Resume logic: skip if already completed
         if resume and self.progress_tracker.is_section_complete(section_index) and existing_video_path:
             logger.info(f"[Resume] Skipping section {section_index + 1}/{total_sections} (cached)", extra={
                 "section_index": section_index,
                 "total_sections": total_sections
             })
-            
+
             result.video_path = existing_video_path
             section_audio_path = section_dir / "section_audio.mp3"
             if section_audio_path.exists():
                 result.audio_path = str(section_audio_path)
-            
+
             completed_count[0] += 1
             self.progress_tracker.report_section_progress(
                 completed_count=completed_count[0],
@@ -250,31 +250,31 @@ class SectionOrchestrator:
                 is_cached=True
             )
             return result
-        
+
         # Process section
         logger.info(f"[Parallel] Starting section {section_index + 1}/{total_sections}: {result.title}", extra={
             "section_index": section_index,
             "total_sections": total_sections,
             "title": result.title
         })
-        
+
         try:
             narration_segments = section.get("narration_segments", [])
-            
+
             if not narration_segments:
                 # Single narration processing
                 tts_text = section.get("tts_narration") or section.get("narration", "")
                 clean_narration = clean_narration_for_tts(tts_text)
-                
+
                 logger.debug(f"Processing section {section_index} as single narration", extra={
                     "section_index": section_index,
                     "narration_length": len(clean_narration)
                 })
-                
+
                 # Import generator here to avoid circular import
                 from . import VideoGenerator
                 generator = VideoGenerator(str(self.progress_tracker.output_base_dir))
-                
+
                 subsection_results = await process_single_subsection(
                     generator=generator,
                     section=section,
@@ -285,7 +285,7 @@ class SectionOrchestrator:
                     style=style,
                     language=language
                 )
-                
+
                 result.video_path = subsection_results.get("video_path")
                 result.audio_path = subsection_results.get("audio_path")
                 result.duration = subsection_results.get("duration", 30)
@@ -294,18 +294,18 @@ class SectionOrchestrator:
                     section["manim_code_path"] = subsection_results["manim_code_path"]
                 if subsection_results.get("manim_code"):
                     result.manim_code = subsection_results["manim_code"]
-            
+
             else:
                 # Multi-segment processing
                 logger.debug(f"Processing section {section_index} with {len(narration_segments)} segments", extra={
                     "section_index": section_index,
                     "segment_count": len(narration_segments)
                 })
-                
+
                 # Import generator here to avoid circular import
                 from . import VideoGenerator
                 generator = VideoGenerator(str(self.progress_tracker.output_base_dir))
-                
+
                 segment_result = await process_segments_audio_first(
                     generator=generator,
                     section=section,
@@ -316,7 +316,7 @@ class SectionOrchestrator:
                     style=style,
                     language=language
                 )
-                
+
                 result.video_path = segment_result.get("video_path")
                 result.audio_path = segment_result.get("audio_path")
                 result.duration = segment_result.get("duration", 30)
@@ -325,7 +325,7 @@ class SectionOrchestrator:
                     section["manim_code_path"] = segment_result["manim_code_path"]
                 if segment_result.get("manim_code"):
                     result.manim_code = segment_result["manim_code"]
-            
+
             # Mark as complete and report progress
             self.progress_tracker.mark_section_complete(section_index)
             completed_count[0] += 1
@@ -334,16 +334,16 @@ class SectionOrchestrator:
                 total_count=total_sections,
                 is_cached=False
             )
-            
+
             logger.info(f"[Parallel] Finished section {section_index + 1}/{total_sections}", extra={
                 "section_index": section_index,
                 "total_sections": total_sections,
                 "has_video": result.video_path is not None,
                 "has_audio": result.audio_path is not None
             })
-            
+
             return result
-        
+
         except Exception as e:
             logger.error(f"Failed to process section {section_index}", extra={
                 "section_index": section_index,
@@ -351,7 +351,7 @@ class SectionOrchestrator:
             }, exc_info=True)
             result.error = str(e)
             return result
-    
+
     def aggregate_results(
         self,
         section_results: List[SectionResult],
@@ -377,14 +377,14 @@ class SectionOrchestrator:
         section_audios = []
         chapters = []
         current_time = 0.0
-        
+
         for result in section_results:
             i = result.index
-            
+
             # Update section dictionary
             if i < len(sections):
                 sections[i]["order"] = i
-            
+
             # Handle successful sections
             if result.video_path and result.audio_path:
                 section_videos.append(result.video_path)
@@ -392,43 +392,43 @@ class SectionOrchestrator:
                 if i < len(sections):
                     sections[i]["video"] = result.video_path
                     sections[i]["audio"] = result.audio_path
-                
+
                 logger.debug(f"Section {i} has video and audio", extra={
                     "section_index": i
                 })
-            
+
             elif result.video_path:
                 section_videos.append(result.video_path)
                 section_audios.append(None)
                 if i < len(sections):
                     sections[i]["video"] = result.video_path
-                
+
                 logger.warning(f"Section {i} has video but no audio", extra={
                     "section_index": i
                 })
-            
+
             elif result.audio_path:
                 if i < len(sections):
                     sections[i]["audio"] = result.audio_path
-                
+
                 logger.warning(f"Section {i} has audio but no video - SKIPPING from final video", extra={
                     "section_index": i
                 })
                 continue
-            
+
             else:
                 logger.warning(f"Section {i} has neither video nor audio - SKIPPING", extra={
                     "section_index": i,
                     "error": result.error
                 })
                 continue
-            
+
             # Update manim code paths
             if result.manim_code_path and i < len(sections):
                 sections[i]["manim_code_path"] = result.manim_code_path
                 if "manim_code" in sections[i]:
                     del sections[i]["manim_code"]
-            
+
             # Build chapter metadata (only for sections with video)
             if result.video_path:
                 chapters.append({
@@ -437,12 +437,12 @@ class SectionOrchestrator:
                     "duration": result.duration
                 })
                 current_time += result.duration
-        
-        logger.info(f"Aggregated section results", extra={
+
+        logger.info("Aggregated section results", extra={
             "video_count": len(section_videos),
             "audio_count": len([a for a in section_audios if a]),
             "chapter_count": len(chapters),
             "total_duration": current_time
         })
-        
+
         return section_videos, section_audios, chapters

@@ -7,7 +7,7 @@ Separated from generation logic for better testability and single responsibility
 import json
 from typing import Dict, Any, List, Set, Optional, Callable
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from ...core import get_logger
 
@@ -37,15 +37,15 @@ class JobProgress:
     total_sections: int
     sections_dir: Path
     job_dir: Path
-    
+
     def is_resumable(self) -> bool:
         """Check if this job can be resumed"""
         return self.has_script and len(self.completed_sections) > 0 and not self.has_final_video
-    
+
     def get_remaining_sections(self) -> List[int]:
         """Get list of section indices that still need processing"""
         return [i for i in range(self.total_sections) if i not in self.completed_sections]
-    
+
     def completion_percentage(self) -> float:
         """Calculate completion percentage"""
         if self.total_sections == 0:
@@ -66,7 +66,7 @@ class ProgressTracker:
     
     This class maintains state for a single job and should be created per job.
     """
-    
+
     def __init__(
         self,
         job_id: str,
@@ -86,15 +86,15 @@ class ProgressTracker:
         self.job_dir = output_base_dir / job_id
         self.sections_dir = self.job_dir / "sections"
         self.progress_callback = progress_callback
-        
+
         self.completed_sections: Set[int] = set()
         self.total_sections: int = 0
-        
+
         logger.info(f"Initialized ProgressTracker for job {job_id[:8]}", extra={
             "job_id": job_id,
             "job_dir": str(self.job_dir)
         })
-    
+
     def check_existing_progress(self) -> JobProgress:
         """
         Check what progress already exists for this job
@@ -108,7 +108,7 @@ class ProgressTracker:
                 print(f"Can resume from {len(progress.completed_sections)} sections")
         """
         logger.debug(f"Checking existing progress for job {self.job_id[:8]}")
-        
+
         result = JobProgress(
             job_id=self.job_id,
             has_script=False,
@@ -119,11 +119,11 @@ class ProgressTracker:
             sections_dir=self.sections_dir,
             job_dir=self.job_dir
         )
-        
+
         if not self.job_dir.exists():
             logger.info(f"No existing progress found for job {self.job_id[:8]}")
             return result
-        
+
         # Check for script
         script_path = self.job_dir / "script.json"
         if script_path.exists():
@@ -135,38 +135,38 @@ class ProgressTracker:
                 logger.debug(f"Found existing script with {result.total_sections} sections", extra={
                     "total_sections": result.total_sections
                 })
-            except Exception as e:
-                logger.error(f"Failed to load script.json", exc_info=True)
-        
+            except Exception:
+                logger.error("Failed to load script.json", exc_info=True)
+
         # Check for final video
         final_video_path = self.job_dir / "final_video.mp4"
         if final_video_path.exists():
             result.has_final_video = True
             logger.info(f"Found existing final video for job {self.job_id[:8]}")
-        
+
         # Check for completed sections
         if self.sections_dir.exists():
             for section_index in range(result.total_sections):
                 section_dir = self.sections_dir / str(section_index)
                 if not section_dir.exists():
                     continue
-                
+
                 # Check for merged video
                 merged_path = self.sections_dir / f"merged_{section_index}.mp4"
                 final_section_path = section_dir / "final_section.mp4"
-                
+
                 if merged_path.exists() or final_section_path.exists():
                     result.completed_sections.add(section_index)
-            
+
             self.completed_sections = result.completed_sections
             logger.info(f"Found {len(result.completed_sections)} completed sections", extra={
                 "completed_count": len(result.completed_sections),
                 "total_sections": result.total_sections,
                 "completed_indices": sorted(result.completed_sections)
             })
-        
+
         return result
-    
+
     def mark_section_complete(self, section_index: int) -> None:
         """
         Mark a section as completed
@@ -180,11 +180,11 @@ class ProgressTracker:
             "completed_count": len(self.completed_sections),
             "total_sections": self.total_sections
         })
-    
+
     def is_section_complete(self, section_index: int) -> bool:
         """Check if a section is already completed"""
         return section_index in self.completed_sections
-    
+
     def report_stage_progress(
         self,
         stage: str,
@@ -205,13 +205,13 @@ class ProgressTracker:
                 "progress": progress,
                 "message": message
             })
-        
+
         logger.info(f"[{stage}] {message}", extra={
             "stage": stage,
             "progress": progress,
             "job_id": self.job_id
         })
-    
+
     def report_section_progress(
         self,
         completed_count: int,
@@ -228,12 +228,12 @@ class ProgressTracker:
         """
         self.total_sections = total_count
         progress_pct = int((completed_count / total_count) * 100) if total_count > 0 else 0
-        
+
         status = "cached" if is_cached else "completed"
         message = f"Section {completed_count}/{total_count} {status}"
-        
+
         self.report_stage_progress("sections", progress_pct, message)
-    
+
     def save_script(self, script: Dict[str, Any]) -> None:
         """
         Save script data to disk
@@ -242,20 +242,20 @@ class ProgressTracker:
             script: Script dictionary to save
         """
         script_path = self.job_dir / "script.json"
-        
+
         try:
             with open(script_path, "w") as f:
                 json.dump(script, f, indent=2)
-            
+
             logger.debug(f"Saved script.json with {len(script.get('sections', []))} sections", extra={
                 "section_count": len(script.get("sections", [])),
                 "script_path": str(script_path)
             })
-        
-        except Exception as e:
-            logger.error(f"Failed to save script.json", exc_info=True)
+
+        except Exception:
+            logger.error("Failed to save script.json", exc_info=True)
             raise
-    
+
     def load_script(self) -> Dict[str, Any]:
         """
         Load script data from disk
@@ -268,22 +268,22 @@ class ProgressTracker:
             json.JSONDecodeError: If script.json is invalid
         """
         script_path = self.job_dir / "script.json"
-        
+
         if not script_path.exists():
             logger.error(f"script.json not found at {script_path}")
             raise FileNotFoundError(f"Script not found: {script_path}")
-        
+
         try:
             with open(script_path) as f:
                 script = json.load(f)
-            
+
             logger.debug(f"Loaded script.json with {len(script.get('sections', []))} sections")
             return script
-        
-        except Exception as e:
-            logger.error(f"Failed to load script.json", exc_info=True)
+
+        except Exception:
+            logger.error("Failed to load script.json", exc_info=True)
             raise
-    
+
     def get_summary(self) -> Dict[str, Any]:
         """
         Get summary of current progress

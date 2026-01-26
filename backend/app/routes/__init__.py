@@ -11,7 +11,7 @@ from .translation import router as translation_router
 
 __all__ = [
     "upload_router",
-    "analysis_router", 
+    "analysis_router",
     "generation_router",
     "jobs_router",
     "sections_router",

@@ -3,7 +3,7 @@ Outline builder for script generation (Phase 1)
 """
 
 import asyncio
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 from .base import BaseScriptGenerator
 

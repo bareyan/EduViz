@@ -5,7 +5,7 @@ Media utilities - Duration, video info, and media processing
 import asyncio
 import subprocess
 import json
-from typing import Optional, Dict, Any
+from typing import Dict, Any
 from pathlib import Path
 
 
@@ -25,7 +25,7 @@ async def get_media_duration(file_path: str) -> float:
         "-of", "default=noprint_wrappers=1:nokey=1",
         file_path
     ]
-    
+
     try:
         process = await asyncio.create_subprocess_exec(
             *cmd,
@@ -49,7 +49,7 @@ def get_video_info(video_path: Path) -> Dict[str, Any]:
     """
     if not video_path.exists():
         return {"exists": False}
-    
+
     try:
         cmd = [
             "ffprobe",
@@ -69,5 +69,5 @@ def get_video_info(video_path: Path) -> Dict[str, Any]:
             }
     except Exception:
         pass
-    
+
     return {"exists": True, "duration": 0, "size": 0}

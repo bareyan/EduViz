@@ -9,7 +9,7 @@ from enum import Enum
 
 class JobStatus(Enum):
     """Enumeration of all possible job statuses."""
-    
+
     PENDING = "pending"
     ANALYZING = "analyzing"
     GENERATING_SCRIPT = "generating_script"
@@ -19,11 +19,11 @@ class JobStatus(Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     INTERRUPTED = "interrupted"
-    
+
     def is_terminal(self) -> bool:
         """Check if this status is a terminal state (no further progress)."""
         return self in (JobStatus.COMPLETED, JobStatus.FAILED)
-    
+
     def is_in_progress(self) -> bool:
         """Check if this status indicates active processing."""
         return self not in (JobStatus.PENDING, JobStatus.COMPLETED, JobStatus.FAILED)

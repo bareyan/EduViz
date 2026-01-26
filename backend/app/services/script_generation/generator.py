@@ -7,7 +7,6 @@ Maintains the public ScriptGenerator interface used elsewhere.
 
 from typing import Dict, Any, Optional
 
-from app.services.parsing import parse_json_response
 from .base import BaseScriptGenerator
 from .outline_builder import OutlineBuilder
 from .section_generator import SectionGenerator

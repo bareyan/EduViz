@@ -18,10 +18,10 @@ Classes:
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Any, List, Optional
 from dataclasses import dataclass
 
-from app.services.job_manager import JobManager, JobStatus, get_job_manager
+from app.services.job_manager import JobStatus, get_job_manager
 
 
 @dataclass
@@ -56,7 +56,7 @@ class JobRepository(ABC):
     Defines the interface that all job repository implementations must follow.
     This abstraction decouples the application from the underlying data storage.
     """
-    
+
     @abstractmethod
     def create(self, job_id: str) -> JobRecord:
         """
@@ -69,7 +69,7 @@ class JobRepository(ABC):
             JobRecord representing the newly created job
         """
         pass
-    
+
     @abstractmethod
     def get(self, job_id: str) -> Optional[JobRecord]:
         """
@@ -82,7 +82,7 @@ class JobRepository(ABC):
             JobRecord if found, None otherwise
         """
         pass
-    
+
     @abstractmethod
     def update(
         self,
@@ -108,7 +108,7 @@ class JobRepository(ABC):
             Updated JobRecord
         """
         pass
-    
+
     @abstractmethod
     def list_all(self) -> List[JobRecord]:
         """
@@ -118,7 +118,7 @@ class JobRepository(ABC):
             List of all JobRecords
         """
         pass
-    
+
     @abstractmethod
     def list_completed(self) -> List[JobRecord]:
         """
@@ -128,7 +128,7 @@ class JobRepository(ABC):
             List of completed JobRecords
         """
         pass
-    
+
     @abstractmethod
     def delete(self, job_id: str) -> bool:
         """
@@ -155,21 +155,21 @@ class FileBasedJobRepository(JobRepository):
         - Converts JobManager.Job objects to JobRecord data models
         - All operations are synchronous (could be made async)
     """
-    
+
     def __init__(self):
         """Initialize the repository with the global JobManager instance."""
         self.job_manager = get_job_manager()
-    
+
     def create(self, job_id: str) -> JobRecord:
         """Create a new job and return its record."""
         job = self.job_manager.create_job(job_id)
         return self._to_record(job)
-    
+
     def get(self, job_id: str) -> Optional[JobRecord]:
         """Retrieve a job record by ID."""
         job = self.job_manager.get_job(job_id)
         return self._to_record(job) if job else None
-    
+
     def update(
         self,
         job_id: str,
@@ -184,12 +184,12 @@ class FileBasedJobRepository(JobRepository):
         self.job_manager.update_job(job_id, status_enum, progress, message, result, error)
         job = self.job_manager.get_job(job_id)
         return self._to_record(job)
-    
+
     def list_all(self) -> List[JobRecord]:
         """Retrieve all jobs in the system."""
         jobs = self.job_manager.list_all_jobs()
         return [self._to_record(self.job_manager.get_job(j["id"])) for j in jobs]
-    
+
     def list_completed(self) -> List[JobRecord]:
         """Retrieve only completed jobs."""
         jobs = self.job_manager.list_all_jobs()
@@ -198,11 +198,11 @@ class FileBasedJobRepository(JobRepository):
             for j in jobs
             if j.get("status") == "completed"
         ]
-    
+
     def delete(self, job_id: str) -> bool:
         """Delete a job and return success status."""
         return self.job_manager.delete_job(job_id) is not None
-    
+
     def _to_record(self, job) -> Optional[JobRecord]:
         """
         Convert a JobManager Job object to a JobRecord data model.

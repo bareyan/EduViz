@@ -12,7 +12,7 @@ from .base import BaseAnalyzer
 
 class ImageAnalyzer(BaseAnalyzer):
     """Analyzes images using Gemini Vision API"""
-    
+
     # MIME type mapping
     MIME_TYPES = {
         ".png": "image/png",
@@ -21,16 +21,16 @@ class ImageAnalyzer(BaseAnalyzer):
         ".webp": "image/webp",
         ".gif": "image/gif"
     }
-    
+
     async def analyze(self, file_path: str, file_id: str) -> Dict[str, Any]:
         """Analyze an image using Gemini Vision"""
         # Read and encode image
         with open(file_path, "rb") as f:
             image_data = f.read()
-        
+
         # Use Gemini to analyze with vision
         analysis = await self._gemini_analyze_image(image_data, file_path)
-        
+
         return {
             "analysis_id": f"analysis_{file_id}",
             "file_id": file_id,
@@ -38,13 +38,13 @@ class ImageAnalyzer(BaseAnalyzer):
             "total_content_pages": 1,
             **analysis
         }
-    
+
     async def _gemini_analyze_image(self, image_data: bytes, file_path: str) -> Dict[str, Any]:
         """Use Gemini Vision to analyze an image"""
         # Determine mime type
         ext = Path(file_path).suffix.lower()
         mime_type = self.MIME_TYPES.get(ext, "image/png")
-        
+
         prompt = """You are an expert educator preparing COMPREHENSIVE educational video content.
 
 Analyze this content from the image. Extract all text, equations, diagrams, concepts, code, or information visible.
@@ -83,11 +83,11 @@ CRITICAL: Create exactly ONE comprehensive video covering everything."""
 
         # Create image part for Gemini
         image_part = self.types.Part.from_bytes(data=image_data, mime_type=mime_type)
-        
+
         response = await asyncio.to_thread(
             self.client.models.generate_content,
             model=self.MODEL,
             contents=[prompt, image_part]
         )
-        
+
         return self._parse_json_response(response.text)

@@ -5,7 +5,7 @@ Request/Response models for document analysis operations.
 """
 
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
+from typing import List
 
 
 class AnalysisRequest(BaseModel):

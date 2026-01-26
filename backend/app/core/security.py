@@ -49,45 +49,45 @@ def sanitize_filename(filename: str) -> str:
         Do NOT modify without security review.
     """
     original_filename = filename
-    
+
     # Remove path components (handles both / and \\ separators)
     filename = os.path.basename(filename)
-    
+
     # Remove null bytes (null byte injection attack)
     filename = filename.replace('\x00', '')
-    
+
     # Remove leading dots (hidden files, relative paths)
     filename = filename.lstrip('.')
-    
+
     # Remove control characters (ASCII 0-31) and DEL (127)
     filename = ''.join(char for char in filename if 31 < ord(char) < 127 or ord(char) > 127)
-    
+
     # Remove dangerous characters for various file systems
     dangerous_chars = '<>:"|?*'
     for char in dangerous_chars:
         filename = filename.replace(char, '')
-    
+
     # Normalize unicode and remove zero-width characters
     filename = filename.encode('ascii', 'ignore').decode('ascii')
-    
+
     # Limit length to reasonable value (most FS limit: 255)
     filename = filename[:255]
-    
+
     # Strip whitespace
     filename = filename.strip()
-    
+
     if not filename:
-        logger.warning(f"Filename sanitization resulted in empty string", extra={
+        logger.warning("Filename sanitization resulted in empty string", extra={
             "original": original_filename
         })
         raise ValueError("Invalid filename after sanitization")
-    
+
     if filename != original_filename:
-        logger.info(f"Filename sanitized", extra={
+        logger.info("Filename sanitized", extra={
             "original": original_filename,
             "sanitized": filename
         })
-    
+
     return filename
 
 
@@ -113,10 +113,10 @@ def validate_job_id(job_id: str) -> bool:
     # UUID format: 8-4-4-4-12 hexadecimal digits
     pattern = r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'
     is_valid = bool(re.match(pattern, job_id, re.IGNORECASE))
-    
+
     if not is_valid:
-        logger.warning(f"Invalid job ID format", extra={"job_id": job_id})
-    
+        logger.warning("Invalid job ID format", extra={"job_id": job_id})
+
     return is_valid
 
 
@@ -160,19 +160,19 @@ def validate_path_within_directory(
             path = path.resolve()
             allowed_directory = allowed_directory.resolve()
         except (OSError, RuntimeError) as e:
-            logger.warning(f"Path resolution failed", extra={
+            logger.warning("Path resolution failed", extra={
                 "path": str(path),
                 "error": str(e)
             })
             return False
-    
+
     try:
         # Check if path is relative to allowed directory
         # This will raise ValueError if not relative
         path.relative_to(allowed_directory)
         return True
     except ValueError:
-        logger.warning(f"Path traversal attempt detected", extra={
+        logger.warning("Path traversal attempt detected", extra={
             "path": str(path),
             "allowed_directory": str(allowed_directory)
         })
@@ -191,13 +191,13 @@ def validate_section_index(section_index: int, max_sections: int = 1000) -> bool
         True if valid, False otherwise
     """
     is_valid = 0 <= section_index < max_sections
-    
+
     if not is_valid:
-        logger.warning(f"Invalid section index", extra={
+        logger.warning("Invalid section index", extra={
             "section_index": section_index,
             "max_sections": max_sections
         })
-    
+
     return is_valid
 
 
@@ -235,25 +235,25 @@ def secure_file_path(
             part = part.replace('..', '').replace('.', '')
             if part:
                 sanitized_parts.append(part)
-        
+
         if not sanitized_parts:
             return None
-        
+
         # Construct path
         path = base_dir.joinpath(*sanitized_parts)
-        
+
         # Validate within base directory
         if not validate_path_within_directory(path, base_dir):
             return None
-        
+
         # Create parent directories if requested
         if create_dirs:
             path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         return path
-    
+
     except Exception as e:
-        logger.error(f"Failed to construct secure path", extra={
+        logger.error("Failed to construct secure path", extra={
             "base_dir": str(base_dir),
             "path_parts": path_parts,
             "error": str(e)

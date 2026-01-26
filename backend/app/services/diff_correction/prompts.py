@@ -127,27 +127,27 @@ def parse_error_context(error_message: str) -> ManimErrorContext:
         Structured error context
     """
     import re
-    
+
     # Extract error type
     error_type = "Unknown"
     type_match = re.search(r'(\w+Error|\w+Exception):', error_message)
     if type_match:
         error_type = type_match.group(1)
-    
+
     # Extract line number
     line_number = None
     line_match = re.search(r'line (\d+)', error_message)
     if line_match:
         line_number = int(line_match.group(1))
-    
+
     # Extract the actual error message
     msg_match = re.search(r'(?:Error|Exception): (.+?)(?:\n|$)', error_message)
     error_msg = msg_match.group(1) if msg_match else error_message[-200:]
-    
+
     # Try to extract problematic code line
     code_match = re.search(r'^\s+(.+?)\n\s+\^+', error_message, re.MULTILINE)
     problematic_code = code_match.group(1).strip() if code_match else None
-    
+
     return ManimErrorContext(
         error_type=error_type,
         error_message=error_msg,
@@ -176,10 +176,10 @@ def build_diff_correction_prompt(
     """
     # Parse structured error context
     parsed = parse_error_context(error_message)
-    
+
     # Extract relevant parts of error message (last 1500 chars max)
     error_excerpt = error_message[-1500:] if len(error_message) > 1500 else error_message
-    
+
     # Build section context
     section_info = ""
     if section:
@@ -189,7 +189,7 @@ def build_diff_correction_prompt(
         if section.get('target_duration'):
             parts.append(f"Target duration: {section['target_duration']}s")
         section_info = " | ".join(parts)
-    
+
     # Build focused prompt
     prompt = f"""FIX THIS MANIM ERROR:
 
@@ -206,7 +206,7 @@ CODE TO FIX:
 {code}
 
 Output SEARCH/REPLACE blocks to fix this error. SEARCH must exactly match code."""
-    
+
     return prompt
 
 
@@ -228,7 +228,7 @@ def build_structured_prompt(
     """
     parsed = parse_error_context(error_message)
     error_excerpt = error_message[-1500:] if len(error_message) > 1500 else error_message
-    
+
     prompt = f"""Analyze this Manim error and provide fixes.
 
 ERROR TYPE: {parsed.error_type}
@@ -242,7 +242,7 @@ BROKEN CODE:
 ```
 
 Provide search/replace fixes. The "search" field must EXACTLY match text in the code above."""
-    
+
     return prompt
 
 
@@ -255,7 +255,7 @@ def build_multi_error_prompt(
     Build prompt for fixing multiple errors at once.
     """
     errors_text = "\n\n---\n\n".join([f"Error {i+1}:\n{e[-500:]}" for i, e in enumerate(errors)])
-    
+
     prompt = f"""Fix ALL these Manim errors using SEARCH/REPLACE blocks:
 
 {errors_text}
@@ -264,7 +264,7 @@ CODE:
 {code}
 
 Output SEARCH/REPLACE blocks for ALL errors."""
-    
+
     return prompt
 
 
@@ -374,7 +374,7 @@ def build_visual_qc_diff_prompt(
         title = section.get('title', 'Untitled')
         duration = section.get('duration_seconds', section.get('target_duration', 30))
         section_context = f"\nSection: {title}\nTarget Duration: {duration}s (preserve timing!)"
-    
+
     prompt = f"""FIX THESE VISUAL LAYOUT ERRORS in Manim code:
 
 VISUAL ERRORS DETECTED BY QC:
@@ -393,7 +393,7 @@ Output SEARCH/REPLACE blocks to fix these VISUAL issues.
 - Increase buff values for overlaps
 - Add scale() for overflow
 - Preserve all timing and educational content"""
-    
+
     return prompt
 
 
@@ -418,7 +418,7 @@ def build_visual_qc_structured_prompt(
         title = section.get('title', 'Untitled')
         duration = section.get('duration_seconds', section.get('target_duration', 30))
         section_context = f"Section: {title} | Duration: {duration}s"
-    
+
     prompt = f"""Analyze these VISUAL LAYOUT ERRORS and provide fixes.
 
 VISUAL ERRORS DETECTED:
@@ -436,5 +436,5 @@ MANIM CODE:
 Provide search/replace fixes for the visual issues.
 The "search" field must EXACTLY match text in the code above.
 Focus on: buff values, scale, positioning, FadeOut for cleanup."""
-    
+
     return prompt

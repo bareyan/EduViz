@@ -23,7 +23,7 @@ job_id_var: ContextVar[Optional[str]] = ContextVar("job_id", default=None)
 
 class StructuredFormatter(logging.Formatter):
     """JSON formatter for structured logging in production"""
-    
+
     def format(self, record: logging.LogRecord) -> str:
         log_data: Dict[str, Any] = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -34,16 +34,16 @@ class StructuredFormatter(logging.Formatter):
             "function": record.funcName,
             "line": record.lineno,
         }
-        
+
         # Add correlation IDs
         request_id = request_id_var.get()
         if request_id:
             log_data["request_id"] = request_id
-        
+
         job_id = job_id_var.get()
         if job_id:
             log_data["job_id"] = job_id
-        
+
         # Add exception info if present
         if record.exc_info:
             log_data["exception"] = {
@@ -51,17 +51,17 @@ class StructuredFormatter(logging.Formatter):
                 "message": str(record.exc_info[1]),
                 "traceback": self.formatException(record.exc_info)
             }
-        
+
         # Add extra fields
         if hasattr(record, "extra_data"):
             log_data["extra"] = record.extra_data
-        
+
         return json.dumps(log_data)
 
 
 class DevelopmentFormatter(logging.Formatter):
     """Human-readable formatter for development"""
-    
+
     # ANSI color codes
     COLORS = {
         'DEBUG': '\033[36m',      # Cyan
@@ -71,26 +71,26 @@ class DevelopmentFormatter(logging.Formatter):
         'CRITICAL': '\033[35m',   # Magenta
         'RESET': '\033[0m'
     }
-    
+
     def format(self, record: logging.LogRecord) -> str:
         color = self.COLORS.get(record.levelname, self.COLORS['RESET'])
         reset = self.COLORS['RESET']
-        
+
         # Format timestamp
         timestamp = datetime.fromtimestamp(record.created).strftime('%H:%M:%S.%f')[:-3]
-        
+
         # Format correlation IDs
         context_parts = []
         request_id = request_id_var.get()
         if request_id:
             context_parts.append(f"req:{request_id[:8]}")
-        
+
         job_id = job_id_var.get()
         if job_id:
             context_parts.append(f"job:{job_id[:8]}")
-        
+
         context = f" [{', '.join(context_parts)}]" if context_parts else ""
-        
+
         # Build log line
         log_line = (
             f"{color}{timestamp}{reset} "
@@ -98,35 +98,35 @@ class DevelopmentFormatter(logging.Formatter):
             f"{record.name:30s}{context} "
             f"{record.getMessage()}"
         )
-        
+
         # Add exception if present
         if record.exc_info:
             log_line += "\n" + self.formatException(record.exc_info)
-        
+
         return log_line
 
 
 class LoggerAdapter(logging.LoggerAdapter):
     """Logger adapter that adds extra context to all log messages"""
-    
+
     def process(self, msg: str, kwargs: Any) -> tuple:
         # Add extra data to the log record
         if "extra" not in kwargs:
             kwargs["extra"] = {}
-        
+
         # Add correlation IDs
         request_id = request_id_var.get()
         if request_id:
             kwargs["extra"]["request_id"] = request_id
-        
+
         job_id = job_id_var.get()
         if job_id:
             kwargs["extra"]["job_id"] = job_id
-        
+
         # Merge with additional extra data
         if hasattr(self, "extra") and self.extra:
             kwargs["extra"].update(self.extra)
-        
+
         return msg, kwargs
 
 
@@ -145,26 +145,26 @@ def setup_logging(
     """
     # Convert level string to logging constant
     numeric_level = getattr(logging, level.upper(), logging.INFO)
-    
+
     # Configure root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(numeric_level)
-    
+
     # Remove existing handlers
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
-    
+
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(numeric_level)
-    
+
     if use_json:
         console_handler.setFormatter(StructuredFormatter())
     else:
         console_handler.setFormatter(DevelopmentFormatter())
-    
+
     root_logger.addHandler(console_handler)
-    
+
     # File handler (if specified)
     if log_file:
         log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -172,7 +172,7 @@ def setup_logging(
         file_handler.setLevel(numeric_level)
         file_handler.setFormatter(StructuredFormatter())  # Always use JSON for file logs
         root_logger.addHandler(file_handler)
-    
+
     # Suppress noisy third-party loggers
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -218,21 +218,21 @@ def clear_context() -> None:
 # Convenience functions for logging with timing
 class LogTimer:
     """Context manager for timing operations with automatic logging"""
-    
+
     def __init__(self, logger: logging.Logger, operation: str, level: int = logging.INFO):
         self.logger = logger
         self.operation = operation
         self.level = level
         self.start_time: Optional[float] = None
-    
+
     def __enter__(self) -> "LogTimer":
         self.start_time = datetime.now().timestamp()
         self.logger.log(self.level, f"Starting: {self.operation}")
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         duration = datetime.now().timestamp() - self.start_time
-        
+
         if exc_type:
             self.logger.error(
                 f"Failed: {self.operation}",

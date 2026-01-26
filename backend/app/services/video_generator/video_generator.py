@@ -36,7 +36,7 @@ class VideoGenerator:
     This class coordinates the high-level workflow without implementing
     low-level details, making it easy to test and maintain.
     """
-    
+
     def __init__(self, output_base_dir: str):
         """
         Initialize video generator and all subsystems
@@ -46,20 +46,20 @@ class VideoGenerator:
         """
         self.output_base_dir = Path(output_base_dir)
         self.output_base_dir.mkdir(parents=True, exist_ok=True)
-        
+
         # Initialize service dependencies
         self.analyzer = MaterialAnalyzer()
         self.script_generator = ScriptGenerator()
         self.manim_generator = ManimGenerator()
         self.tts_engine = TTSEngine()
-        
+
         # Initialize processing components
         self.video_processor = VideoProcessor()
-        
+
         logger.info("Initialized VideoGenerator", extra={
             "output_base_dir": str(self.output_base_dir)
         })
-    
+
     def check_existing_progress(self, job_id: str) -> Dict[str, Any]:
         """
         Check what progress already exists for a job
@@ -72,7 +72,7 @@ class VideoGenerator:
         """
         tracker = ProgressTracker(job_id, self.output_base_dir)
         progress = tracker.check_existing_progress()
-        
+
         return {
             "has_script": progress.has_script,
             "script": progress.script,
@@ -80,7 +80,7 @@ class VideoGenerator:
             "has_final_video": progress.has_final_video,
             "total_sections": progress.total_sections
         }
-    
+
     async def generate_video(
         self,
         job_id: str,
@@ -127,27 +127,27 @@ class VideoGenerator:
         """
         with LogTimer(logger, f"generate_video (job: {job_id[:8]})"):
             set_job_id(job_id)
-            
+
             try:
                 # Initialize components for this job
                 job_dir = self.output_base_dir / job_id
                 job_dir.mkdir(parents=True, exist_ok=True)
                 sections_dir = job_dir / "sections"
                 sections_dir.mkdir(parents=True, exist_ok=True)
-                
+
                 tracker = ProgressTracker(job_id, self.output_base_dir, progress_callback)
-                
-                logger.info(f"Starting video generation", extra={
+
+                logger.info("Starting video generation", extra={
                     "job_id": job_id,
                     "resume": resume,
                     "voice": voice,
                     "language": language,
                     "max_concurrent": max_concurrent_sections
                 })
-                
+
                 # Step 1: Check existing progress
                 progress = tracker.check_existing_progress()
-                
+
                 if progress.has_final_video:
                     logger.info("Final video already exists, returning cached result")
                     final_video_path = job_dir / "final_video.mp4"
@@ -158,7 +158,7 @@ class VideoGenerator:
                         "status": "completed",
                         "cached": True
                     }
-                
+
                 # Step 2: Generate or load script
                 if progress.has_script and resume:
                     logger.info("Loading existing script for resume")
@@ -173,15 +173,15 @@ class VideoGenerator:
                         tracker=tracker
                     )
                     tracker.save_script(script)
-                
+
                 sections = script.get("sections", [])
                 if not sections:
                     raise ValueError("Script has no sections")
-                
+
                 logger.info(f"Processing {len(sections)} sections", extra={
                     "section_count": len(sections)
                 })
-                
+
                 # Step 3: Process sections in parallel
                 orchestrator = SectionOrchestrator(
                     manim_generator=self.manim_generator,
@@ -189,7 +189,7 @@ class VideoGenerator:
                     progress_tracker=tracker,
                     max_concurrent=max_concurrent_sections
                 )
-                
+
                 section_results = await orchestrator.process_sections_parallel(
                     sections=sections,
                     sections_dir=sections_dir,
@@ -198,24 +198,24 @@ class VideoGenerator:
                     language=language,
                     resume=resume
                 )
-                
+
                 # Step 4: Aggregate results
                 section_videos, section_audios, chapters = orchestrator.aggregate_results(
                     section_results=section_results,
                     sections=sections
                 )
-                
+
                 # Save updated script with section paths
                 tracker.save_script(script)
-                logger.info(f"Saved updated script with section metadata", extra={
+                logger.info("Saved updated script with section metadata", extra={
                     "section_count": len(sections)
                 })
-                
+
                 # Step 5: Combine sections into final video
                 tracker.report_stage_progress("combining", 0, "Combining sections...")
-                
+
                 final_video_path = job_dir / "final_video.mp4"
-                
+
                 if section_videos and section_audios:
                     await self.video_processor.combine_sections(
                         videos=section_videos,
@@ -230,24 +230,24 @@ class VideoGenerator:
                     )
                 else:
                     raise ValueError("No video sections were generated")
-                
+
                 tracker.report_stage_progress("combining", 100, "Video complete!")
-                
+
                 # Step 6: Report summaries and costs
                 if self.manim_generator.visual_qc:
                     self.manim_generator.visual_qc.print_error_summary()
-                
+
                 self.manim_generator.print_generation_stats()
                 self.manim_generator.print_cost_summary()
-                
+
                 cost_summary = self.manim_generator.get_cost_summary()
-                
+
                 # Calculate total duration
                 total_duration = sum(chapter["duration"] for chapter in chapters)
-                
+
                 # Step 7: Cleanup
                 await self._cleanup_intermediate_files(sections_dir)
-                
+
                 logger.info("Video generation completed successfully", extra={
                     "job_id": job_id,
                     "video_path": str(final_video_path),
@@ -255,7 +255,7 @@ class VideoGenerator:
                     "total_duration": total_duration,
                     "total_cost": cost_summary.get("total_cost_usd", 0)
                 })
-                
+
                 return {
                     "job_id": job_id,
                     "video_path": str(final_video_path),
@@ -265,19 +265,19 @@ class VideoGenerator:
                     "cost_summary": cost_summary,
                     "status": "completed"
                 }
-            
+
             except Exception as e:
-                logger.error(f"Video generation failed", extra={
+                logger.error("Video generation failed", extra={
                     "job_id": job_id,
                     "error": str(e)
                 }, exc_info=True)
-                
+
                 return {
                     "job_id": job_id,
                     "error": str(e),
                     "status": "failed"
                 }
-    
+
     async def _generate_script(
         self,
         job_id: str,
@@ -293,27 +293,27 @@ class VideoGenerator:
         # Analyze material
         if not material_path:
             raise ValueError("material_path required for new jobs")
-        
+
         tracker.report_stage_progress("analysis", 0, "Analyzing material...")
-        
+
         logger.info("Analyzing material", extra={"material_path": material_path})
         analysis_result = await self.analyzer.analyze_material(material_path)
-        
+
         tracker.report_stage_progress("analysis", 100, "Analysis complete")
-        
+
         # Generate script
         tracker.report_stage_progress("script", 0, "Generating script...")
-        
+
         logger.info("Generating script from analysis")
         script = await self.script_generator.generate_script(
             analysis=analysis_result,
             language=language
         )
-        
+
         tracker.report_stage_progress("script", 100, "Script generated")
-        
+
         return script
-    
+
     async def _cleanup_intermediate_files(self, sections_dir: Path) -> None:
         """
         Remove intermediate files after successful generation
@@ -332,34 +332,34 @@ class VideoGenerator:
             logger.info("Cleaning up intermediate files", extra={
                 "sections_dir": str(sections_dir)
             })
-            
+
             cleanup_count = 0
             for section_path in sections_dir.iterdir():
                 if not section_path.is_dir():
                     continue
-                
+
                 # Remove manim media folders
                 media_dir = section_path / "media"
                 if media_dir.exists():
                     shutil.rmtree(media_dir)
                     cleanup_count += 1
-                
+
                 # Remove fallback files
                 for f in section_path.glob("fallback_*.py"):
                     f.unlink()
                     cleanup_count += 1
-                
+
                 # Remove __pycache__
                 pycache_dir = section_path / "__pycache__"
                 if pycache_dir.exists():
                     shutil.rmtree(pycache_dir)
                     cleanup_count += 1
-            
-            logger.info(f"Cleanup complete", extra={
+
+            logger.info("Cleanup complete", extra={
                 "files_removed": cleanup_count
             })
-        
+
         except Exception as e:
-            logger.warning(f"Cleanup error (non-fatal)", extra={
+            logger.warning("Cleanup error (non-fatal)", extra={
                 "error": str(e)
             })

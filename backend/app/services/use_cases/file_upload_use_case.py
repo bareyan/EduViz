@@ -16,7 +16,6 @@ Classes:
     FileUploadUseCase: Main use case implementation
 """
 
-import os
 import uuid
 from dataclasses import dataclass
 from typing import Optional
@@ -80,7 +79,7 @@ class FileUploadUseCase(UseCase[FileUploadRequest, FileUploadResponse]):
         - HTTPException with 400 for invalid file type
         - HTTPException with 500 for IO errors during save
     """
-    
+
     async def execute(self, request: FileUploadRequest) -> FileUploadResponse:
         """
         Execute the file upload operation.
@@ -102,21 +101,21 @@ class FileUploadUseCase(UseCase[FileUploadRequest, FileUploadResponse]):
         Raises:
             HTTPException: 400 if file type invalid, 500 if write fails
         """
-        
+
         # Step 1: Validate file type
         # This raises HTTPException if not allowed
         file_ext = validate_file_type(request.file.filename, request.file.content_type)
 
         # Step 2: Generate or use provided file ID
         file_id = request.file_id or str(uuid.uuid4())
-        
+
         # Step 3: Construct target path with extension
         # Extensions are preserved so files can be opened correctly
         saved_path = UPLOAD_DIR / f"{file_id}{file_ext}"
-        
+
         # Step 4: Ensure upload directory exists
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        
+
         try:
             # Step 5: Save file to disk
             # Read entire content and write to target location
@@ -125,10 +124,10 @@ class FileUploadUseCase(UseCase[FileUploadRequest, FileUploadResponse]):
                 f.write(content)
         except IOError as e:
             raise HTTPException(
-                status_code=500, 
+                status_code=500,
                 detail=f"Failed to save file: {str(e)}"
             )
-        
+
         # Step 6: Return complete metadata
         return FileUploadResponse(
             file_id=file_id,

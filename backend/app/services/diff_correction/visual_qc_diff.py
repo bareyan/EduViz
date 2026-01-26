@@ -55,25 +55,25 @@ async def fix_visual_errors_with_diff(
     if not USE_VISUAL_QC_DIFF:
         print("[VisualQCDiff] Feature disabled, using full regeneration")
         return None
-    
+
     if not error_report:
         print("[VisualQCDiff] No error report provided")
         return None
-    
+
     print("[VisualQCDiff] Attempting diff-based visual fix...")
-    
+
     # Try diff-based correction with internal retry loop
     current_code = original_code
     for attempt in range(MAX_VISUAL_DIFF_ATTEMPTS):
         print(f"[VisualQCDiff] Attempt {attempt + 1}/{MAX_VISUAL_DIFF_ATTEMPTS}...")
-        
+
         result = await _try_visual_diff_correction(
             generator, current_code, error_report, section, attempt
         )
-        
+
         if result:
             return result
-    
+
     print(f"[VisualQCDiff] All {MAX_VISUAL_DIFF_ATTEMPTS} attempts failed, falling back to full regeneration")
     return None
 
@@ -100,7 +100,7 @@ async def _try_visual_diff_correction(
             return result
         print("[VisualQCDiff] Structured output failed, will try text-based on retry")
         return None
-    
+
     # Text-based SEARCH/REPLACE blocks
     return await _try_text_based_visual_correction(
         generator, code, error_report, section, attempt
@@ -119,17 +119,17 @@ async def _try_structured_visual_correction(
     # Use generator's types module (supports both API and Vertex AI)
     types = generator.types
     from app.config.models import get_model_config
-    
+
     # Get correction model config
     correction_config = get_model_config("code_correction")
     model = correction_config.model_name
-    
+
     # Build prompt
     prompt = build_visual_qc_structured_prompt(code, error_report, section)
-    
+
     # System instruction with visual layout context
     system_instruction = VISUAL_QC_DIFF_SYSTEM
-    
+
     # Configure with JSON schema response
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
@@ -138,10 +138,10 @@ async def _try_structured_visual_correction(
         response_mime_type="application/json",
         response_schema=VISUAL_QC_DIFF_SCHEMA,
     )
-    
+
     try:
         print(f"[VisualQCDiff] Using structured JSON output with {model}")
-        
+
         response = await asyncio.to_thread(
             generator.client.models.generate_content,
             model=model,
@@ -153,17 +153,17 @@ async def _try_structured_visual_correction(
             ],
             config=config
         )
-        
+
         # Track cost
         try:
             generator.cost_tracker.track_usage(response, model)
         except Exception:
             pass
-        
+
         if not response or not response.text:
             print("[VisualQCDiff] Empty response from LLM")
             return None
-        
+
         # Parse JSON response
         try:
             result = json.loads(response.text)
@@ -171,13 +171,13 @@ async def _try_structured_visual_correction(
         except json.JSONDecodeError as e:
             print(f"[VisualQCDiff] Failed to parse JSON: {e}")
             return None
-        
+
         if not fixes:
             print("[VisualQCDiff] No fixes in structured response")
             return None
-        
+
         print(f"[VisualQCDiff] Got {len(fixes)} visual fix(es) from structured output")
-        
+
         # Convert to SearchReplaceBlock objects
         blocks = [
             SearchReplaceBlock(
@@ -188,37 +188,37 @@ async def _try_structured_visual_correction(
             for fix in fixes
             if fix.get("search")  # Filter out empty searches
         ]
-        
+
         if not blocks:
             print("[VisualQCDiff] No valid blocks after filtering")
             return None
-        
+
         # Log which issues are being fixed
         for i, fix in enumerate(fixes):
             if fix.get("issue_fixed"):
                 print(f"[VisualQCDiff] Fix {i+1}: {fix['issue_fixed']}")
-        
+
         # Apply blocks
         new_code, successes, errors = apply_all_blocks(code, blocks)
-        
+
         for msg in successes:
             print(f"[VisualQCDiff] ✓ {msg}")
         for msg in errors:
             print(f"[VisualQCDiff] ✗ {msg}")
-        
+
         if not successes:
             print("[VisualQCDiff] No blocks applied successfully")
             return None
-        
+
         # Validate syntax
         syntax_error = validate_syntax(new_code)
         if syntax_error:
             print(f"[VisualQCDiff] Syntax error after fixes: {syntax_error}")
             return None
-        
+
         print(f"[VisualQCDiff] ✓ Visual issues fixed ({len(successes)} changes)")
         return new_code
-        
+
     except Exception as e:
         print(f"[VisualQCDiff] Structured output error: {e}")
         import traceback
@@ -239,7 +239,7 @@ async def _try_text_based_visual_correction(
     # Use generator's types module (supports both API and Vertex AI)
     types = generator.types
     from app.config.models import get_model_config
-    
+
     # Get model - use stronger model on retries
     if attempt == 0:
         correction_config = get_model_config("code_correction")
@@ -248,10 +248,10 @@ async def _try_text_based_visual_correction(
         strong_config = get_model_config("code_correction_strong")
         model = strong_config.model_name
         print(f"[VisualQCDiff] Using stronger model: {model}")
-    
+
     # Build prompt
     prompt = build_visual_qc_diff_prompt(code, error_report, section)
-    
+
     if attempt > 0:
         prompt = f"""RETRY {attempt + 1} - OUTPUT SEARCH/REPLACE BLOCKS ONLY.
 
@@ -263,13 +263,13 @@ replacement code
 >>>>>>> REPLACE
 
 {prompt}"""
-    
+
     config = types.GenerateContentConfig(
         system_instruction=VISUAL_QC_DIFF_SYSTEM,
         temperature=0.1 + (attempt * 0.15),  # Increase temp on retries
         max_output_tokens=4096,
     )
-    
+
     try:
         response = await asyncio.to_thread(
             generator.client.models.generate_content,
@@ -282,51 +282,51 @@ replacement code
             ],
             config=config
         )
-        
+
         # Track cost
         try:
             generator.cost_tracker.track_usage(response, model)
         except Exception:
             pass
-        
+
         if not response or not response.text:
             print("[VisualQCDiff] Empty response from LLM")
             return None
-        
+
         response_text = response.text
-        
+
         # Parse SEARCH/REPLACE blocks
         blocks = extract_blocks_from_fenced(response_text)
-        
+
         if not blocks:
             print("[VisualQCDiff] No SEARCH/REPLACE blocks found")
             preview = response_text[:300].replace('\n', ' ').strip()
             print(f"[VisualQCDiff] Response preview: {preview}...")
             return None
-        
+
         print(f"[VisualQCDiff] Found {len(blocks)} block(s) in text response")
-        
+
         # Apply blocks
         new_code, successes, errors = apply_all_blocks(code, blocks)
-        
+
         for msg in successes:
             print(f"[VisualQCDiff] ✓ {msg}")
         for msg in errors:
             print(f"[VisualQCDiff] ✗ {msg}")
-        
+
         if not successes:
             print("[VisualQCDiff] No blocks applied successfully")
             return None
-        
+
         # Validate syntax
         syntax_error = validate_syntax(new_code)
         if syntax_error:
             print(f"[VisualQCDiff] Syntax error after fixes: {syntax_error}")
             return None
-        
+
         print(f"[VisualQCDiff] ✓ Visual issues fixed via text blocks ({len(successes)} changes)")
         return new_code
-        
+
     except Exception as e:
         print(f"[VisualQCDiff] Text-based error: {e}")
         import traceback
