@@ -74,10 +74,47 @@ Respond with ONLY valid JSON (no markdown, no code blocks):
     "estimated_total_videos": 1
 }}"""
 
+        # Define response schema for structured JSON output
+        response_schema = {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string"},
+                "main_subject": {"type": "string"},
+                "subject_area": {"type": "string", "enum": ["math", "cs", "physics", "economics", "biology", "engineering", "general"]},
+                "key_concepts": {"type": "array", "items": {"type": "string"}},
+                "detected_math_elements": {"type": "integer"},
+                "suggested_topics": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "index": {"type": "integer"},
+                            "title": {"type": "string"},
+                            "description": {"type": "string"},
+                            "estimated_duration": {"type": "integer"},
+                            "complexity": {"type": "string"},
+                            "subtopics": {"type": "array", "items": {"type": "string"}},
+                            "prerequisites": {"type": "array", "items": {"type": "string"}}
+                        },
+                        "required": ["index", "title", "description", "estimated_duration", "complexity"]
+                    }
+                },
+                "estimated_total_videos": {"type": "integer"}
+            },
+            "required": ["summary", "main_subject", "subject_area", "key_concepts", "suggested_topics", "estimated_total_videos"]
+        }
+
+        config = self.types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=response_schema,
+            temperature=0.7
+        )
+
         response = await asyncio.to_thread(
             self.client.models.generate_content,
             model=self.MODEL,
-            contents=prompt
+            contents=prompt,
+            config=config
         )
 
         return self._parse_json_response(response.text)

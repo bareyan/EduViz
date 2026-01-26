@@ -62,13 +62,71 @@ class OutlineBuilder:
             video_mode=video_mode,
         )
 
+        # Define response schema for structured JSON output
+        response_schema = {
+            "type": "object",
+            "properties": {
+                "document_analysis": {
+                    "type": "object",
+                    "properties": {
+                        "content_type": {"type": "string"},
+                        "content_context": {"type": "string"},
+                        "total_theorems": {"type": "integer"},
+                        "total_proofs": {"type": "integer"},
+                        "total_definitions": {"type": "integer"},
+                        "total_examples": {"type": "integer"},
+                        "complexity_level": {"type": "string"},
+                        "gaps_to_fill": {"type": "array", "items": {"type": "string"}}
+                    }
+                },
+                "title": {"type": "string"},
+                "subject_area": {"type": "string"},
+                "overview": {"type": "string"},
+                "learning_objectives": {"type": "array", "items": {"type": "string"}},
+                "prerequisites": {"type": "array", "items": {"type": "string"}},
+                "total_duration_minutes": {"type": "integer"},
+                "sections_outline": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "title": {"type": "string"},
+                            "section_type": {"type": "string"},
+                            "content_to_cover": {"type": "string"},
+                            "depth_elements": {
+                                "type": "object",
+                                "properties": {
+                                    "motivation": {"type": "string"},
+                                    "intuition": {"type": "string"},
+                                    "connections": {"type": "string"}
+                                }
+                            },
+                            "key_points": {"type": "array", "items": {"type": "string"}},
+                            "visual_type": {"type": "string"},
+                            "estimated_duration_seconds": {"type": "integer"}
+                        },
+                        "required": ["id", "title", "section_type", "content_to_cover", "key_points", "visual_type", "estimated_duration_seconds"]
+                    }
+                }
+            },
+            "required": ["title", "subject_area", "overview", "learning_objectives", "sections_outline"]
+        }
+
         try:
+            # Create config with structured JSON output
+            config = self.base.types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=response_schema,
+                temperature=0.7
+            )
+
             response = await asyncio.wait_for(
                 asyncio.to_thread(
                     self.base.client.models.generate_content,
                     model=self.base.MODEL,
                     contents=phase1_prompt,
-                    config=self.base.generation_config,
+                    config=config,
                 ),
                 timeout=300,
             )

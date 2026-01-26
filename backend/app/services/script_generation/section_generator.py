@@ -109,20 +109,38 @@ OUTPUT FORMAT: Valid JSON array with ALL sections:
 
 Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
 
+        # Define response schema for structured JSON array output
+        response_schema = {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "narration": {"type": "string"},
+                    "tts_narration": {"type": "string"}
+                },
+                "required": ["id", "title", "narration", "tts_narration"]
+            }
+        }
+
         try:
             print(f"[SectionGen] Generating all {len(sections_outline)} sections at once...")
             
             # Try with thinking_config first
             try:
+                config = self.base.types.GenerateContentConfig(
+                    thinking_config=self.base.types.ThinkingConfig(thinking_level="LOW"),
+                    max_output_tokens=16384,
+                    response_mime_type="application/json",
+                    response_schema=response_schema,
+                )
                 response = await asyncio.wait_for(
                     asyncio.to_thread(
                         self.base.client.models.generate_content,
                         model=self.base.MODEL,
                         contents=prompt,
-                        config=self.base.types.GenerateContentConfig(
-                            thinking_config=self.base.types.ThinkingConfig(thinking_level="LOW"),
-                            max_output_tokens=16384,
-                        ),
+                        config=config,
                     ),
                     timeout=180,
                 )
@@ -130,14 +148,17 @@ Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
                 error_msg = str(e)
                 if "thinking_level is not supported" in error_msg or "thinking_config" in error_msg.lower():
                     print(f"[SectionGen] Model doesn't support thinking_config, retrying without it...")
+                    config = self.base.types.GenerateContentConfig(
+                        max_output_tokens=16384,
+                        response_mime_type="application/json",
+                        response_schema=response_schema,
+                    )
                     response = await asyncio.wait_for(
                         asyncio.to_thread(
                             self.base.client.models.generate_content,
                             model=self.base.MODEL,
                             contents=prompt,
-                            config=self.base.types.GenerateContentConfig(
-                                max_output_tokens=16384,
-                            ),
+                            config=config,
                         ),
                         timeout=180,
                     )
@@ -253,17 +274,32 @@ Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
                 try:
                     print(f"[SectionGen] Generating section {section_idx + 1}/{total_sections} (attempt {attempt + 1}/{max_retries})...")
                     
+                    # Define response schema for single section
+                    response_schema = {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "title": {"type": "string"},
+                            "narration": {"type": "string"},
+                            "tts_narration": {"type": "string"}
+                        },
+                        "required": ["id", "title", "narration", "tts_narration"]
+                    }
+                    
                     # Try with thinking_config first
                     try:
+                        config = self.base.types.GenerateContentConfig(
+                            thinking_config=self.base.types.ThinkingConfig(thinking_level="MEDIUM"),
+                            max_output_tokens=8192,
+                            response_mime_type="application/json",
+                            response_schema=response_schema,
+                        )
                         response = await asyncio.wait_for(
                             asyncio.to_thread(
                                 self.base.client.models.generate_content,
                                 model=self.base.MODEL,
                                 contents=prompt,
-                                config=self.base.types.GenerateContentConfig(
-                                    thinking_config=self.base.types.ThinkingConfig(thinking_level="MEDIUM"),
-                                    max_output_tokens=8192,
-                                ),
+                                config=config,
                             ),
                             timeout=120,
                         )
@@ -271,14 +307,17 @@ Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
                         error_msg = str(e)
                         if "thinking_level is not supported" in error_msg or "thinking_config" in error_msg.lower():
                             print(f"[SectionGen] Model doesn't support thinking_config, retrying without it...")
+                            config = self.base.types.GenerateContentConfig(
+                                max_output_tokens=8192,
+                                response_mime_type="application/json",
+                                response_schema=response_schema,
+                            )
                             response = await asyncio.wait_for(
                                 asyncio.to_thread(
                                     self.base.client.models.generate_content,
                                     model=self.base.MODEL,
                                     contents=prompt,
-                                    config=self.base.types.GenerateContentConfig(
-                                        max_output_tokens=8192,
-                                    ),
+                                    config=config,
                                 ),
                                 timeout=120,
                             )
