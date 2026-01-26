@@ -24,6 +24,7 @@ router = APIRouter(tags=["upload"])
 
 # Security configuration
 MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", 50 * 1024 * 1024))  # 50MB default
+CHUNK_SIZE = 1024 * 1024
 
 
 @router.post("/upload")
@@ -50,13 +51,16 @@ async def upload_file(file: UploadFile = File(...)):
         # Security: Check file size by reading in chunks
         size = 0
         chunks = []
-        async for chunk in file.file:
+        while True:
+            chunk = await file.read(CHUNK_SIZE)
+            if not chunk:
+                break
             size += len(chunk)
             if size > MAX_UPLOAD_SIZE:
                 logger.warning("File too large", extra={
                     "size": size,
                     "max_size": MAX_UPLOAD_SIZE,
-                    "filename": file.filename
+                    "upload_filename": file.filename
                 })
                 raise HTTPException(
                     status_code=413,
@@ -70,9 +74,10 @@ async def upload_file(file: UploadFile = File(...)):
         # Reset file for use case
         import io
         file.file = io.BytesIO(content)
+        file.file.seek(0)
 
         logger.info("File upload initiated", extra={
-            "filename": file.filename,
+            "upload_filename": file.filename,
             "size": size,
             "content_type": file.content_type
         })
@@ -82,7 +87,7 @@ async def upload_file(file: UploadFile = File(...)):
 
         logger.info("File upload completed", extra={
             "file_id": response.file_id,
-            "filename": response.filename
+            "upload_filename": response.filename
         })
 
         return {
@@ -95,7 +100,7 @@ async def upload_file(file: UploadFile = File(...)):
         raise
     except Exception as e:
         logger.error("Upload failed", extra={
-            "filename": file.filename,
+            "upload_filename": file.filename,
             "error": str(e)
         }, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")

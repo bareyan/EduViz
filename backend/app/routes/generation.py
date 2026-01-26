@@ -115,18 +115,13 @@ async def generate_videos(request: GenerationRequest, background_tasks: Backgrou
                 )
 
                 result = await video_generator.generate_video(
-                    file_path=file_path,
-                    file_id=request.file_id,
-                    topic=topic,
-                    voice=request.voice,
-                    progress_callback=lambda p, bp=base_progress: update_progress(p, bp),
                     job_id=job_id,
-                    video_mode=request.video_mode,
+                    material_path=file_path,
+                    voice=request.voice,
                     style=request.style,
                     language=request.language,
-                    content_focus=request.content_focus,
-                    document_context=request.document_context,
-                    resume=resume_mode
+                    resume=resume_mode,
+                    progress_callback=lambda p, bp=base_progress: update_progress(p, bp)
                 )
 
                 if result.get("status") == "completed":

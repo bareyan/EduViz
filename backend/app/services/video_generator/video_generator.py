@@ -297,7 +297,9 @@ class VideoGenerator:
         tracker.report_stage_progress("analysis", 0, "Analyzing material...")
 
         logger.info("Analyzing material", extra={"material_path": material_path})
-        analysis_result = await self.analyzer.analyze_material(material_path)
+        # Generate a file_id from job_id for analysis tracking
+        file_id = f"job-{job_id}"
+        analysis_result = await self.analyzer.analyze(material_path, file_id)
 
         tracker.report_stage_progress("analysis", 100, "Analysis complete")
 

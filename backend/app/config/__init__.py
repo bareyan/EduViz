@@ -8,10 +8,12 @@ Modules:
 """
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
 
 # Re-export paths
 from .paths import APP_DIR, BACKEND_DIR, UPLOAD_DIR, OUTPUT_DIR, JOB_DATA_DIR
