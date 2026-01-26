@@ -22,12 +22,15 @@ from .corrector import DiffCorrector
 from .parser import find_search_replace_blocks, SearchReplaceBlock
 from .applier import apply_search_replace, apply_all_blocks, validate_syntax
 from .integration import correct_manim_code_with_diff
+from .visual_qc_diff import fix_visual_errors_with_diff
 from .prompts import MANIM_VERSION, MANIM_CONTEXT, parse_error_context
 
 __all__ = [
     # Main interface
     'DiffCorrector',
     'correct_manim_code_with_diff',
+    # Visual QC diff correction
+    'fix_visual_errors_with_diff',
     # Parser
     'find_search_replace_blocks',
     'SearchReplaceBlock',

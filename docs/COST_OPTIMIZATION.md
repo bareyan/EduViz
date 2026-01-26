@@ -59,6 +59,61 @@ Total: ~$0.022 per video
 2. **3 frames instead of 5** - 40% fewer images to process
 3. **1 QC iteration instead of 2** - Still catches major issues
 4. **Smart frame selection** - Focus on action-heavy middle sections
+5. **Diff-based Visual QC Fixes** - SEARCH/REPLACE blocks instead of full regeneration
+
+## Visual QC Diff-Based Correction (NEW)
+
+When visual QC detects issues (overlaps, overflow, layout problems), we now use **diff-based correction first** before falling back to full code regeneration.
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Visual QC detects issues:                           │
+│ "Overlap at 3.5s: equation overlapping title"       │
+└─────────────────────────────────────────────────────┘
+                       ↓
+┌─────────────────────────────────────────────────────┐
+│ Diff-based correction (first attempt):              │
+│ - Send code + error description (NO video!)         │
+│ - Get SEARCH/REPLACE blocks                         │
+│ - Apply targeted fixes                              │
+│ - Cost: ~200-400 tokens total                       │
+│ - Time: 2-3 seconds                                 │
+└─────────────────────────────────────────────────────┘
+                       ↓ (if fails)
+┌─────────────────────────────────────────────────────┐
+│ Full regeneration (fallback):                       │
+│ - Send full code + context                          │
+│ - Get entire new file                               │
+│ - Cost: ~2000 tokens total                          │
+│ - Time: 15-30 seconds                               │
+└─────────────────────────────────────────────────────┘
+```
+
+### Savings
+
+| Metric | Full Regeneration | Diff-Based | Savings |
+|--------|-------------------|------------|---------|
+| Input tokens | ~1000 | ~300 | 70% |
+| Output tokens | ~1000 | ~100 | 90% |
+| Total tokens | ~2000 | ~400 | **80%** |
+| API time | 15-30s | 2-3s | **85%** |
+
+### Configuration
+
+Set in `renderer.py`:
+```python
+USE_DIFF_BASED_VISUAL_QC = True  # Enable diff-based visual QC
+```
+
+### Common Visual Fixes via Diff
+
+The diff-based corrector knows common Manim layout fixes:
+- **Overlaps**: Increase `buff` values (0.3 → 0.8)
+- **Overflow**: Add `.scale(0.7)` or smaller
+- **Layout**: Use `.arrange()` with proper spacing
+- **Cleanup**: Add `FadeOut(old_content)` before new content
 
 ## Tuning Parameters
 

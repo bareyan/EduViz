@@ -146,7 +146,7 @@ class PipelineModels:
     # Step 7: Visual Quality Control
     # Analyze rendered videos for visual issues
     visual_qc: ModelConfig = field(default_factory=lambda: ModelConfig(
-        model_name="gemini-flash-lite-latest",
+        model_name="gemini-2.5-flash",
         thinking_level=None,
         description="Fast visual quality analysis"
     ))

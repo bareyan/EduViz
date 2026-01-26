@@ -266,3 +266,175 @@ CODE:
 Output SEARCH/REPLACE blocks for ALL errors."""
     
     return prompt
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VISUAL QC DIFF CORRECTION PROMPTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+VISUAL_QC_LAYOUT_CONTEXT = """═══ MANIM FRAME BOUNDARIES ═══
+- HORIZONTAL: -7.1 to +7.1 (safe zone: -6.0 to +6.0)
+- VERTICAL: -4.0 to +4.0 (safe zone: -3.2 to +3.2)
+Content MUST stay within safe zone to avoid cutoff!
+
+═══ COMMON VISUAL FIXES ═══
+
+**FOR OVERLAPS:**
+- INCREASE buff values: buff=0.3 → buff=0.8 or higher
+- For .next_to(): Use buff=0.8+ for vertical, buff=0.6+ for horizontal
+- For .arrange(): Use buff=0.6+ between elements
+- ADD cleanup: self.play(FadeOut(old_content)) before new content
+- USE ReplacementTransform(old, new) instead of just adding new
+
+**FOR OVERFLOW/CUTOFF:**
+- Use .scale(0.7) or smaller to fit content
+- Move to center: .move_to(ORIGIN)
+- Use .to_edge(UP, buff=0.8) with larger buff
+- Split long equations into multiple lines
+
+**FOR LAYOUT ISSUES:**
+- .arrange(DOWN, buff=0.5) for vertical stacking
+- .arrange(RIGHT, buff=0.3) for horizontal layout
+- VGroup(...).scale_to_fit_width(12) to constrain width"""
+
+
+VISUAL_QC_DIFF_SYSTEM = f"""You fix VISUAL LAYOUT ERRORS in Manim code using SEARCH/REPLACE blocks.
+
+{MANIM_CONTEXT}
+
+{VISUAL_QC_LAYOUT_CONTEXT}
+
+RESPONSE FORMAT (output ONLY these blocks, nothing else):
+
+<<<<<<< SEARCH
+exact lines from the code
+=======
+fixed replacement lines  
+>>>>>>> REPLACE
+
+RULES:
+1. SEARCH text must EXACTLY match the code (copy-paste, preserve all whitespace)
+2. Include 1-3 context lines before/after to make match unique
+3. Fix the VISUAL issues described (overlaps, overflow, layout)
+4. Multiple blocks allowed for multiple fixes
+5. NO explanations, NO markdown, ONLY SEARCH/REPLACE blocks
+6. Preserve timing (run_time, wait) and educational content"""
+
+
+# JSON Schema for visual QC structured output
+VISUAL_QC_DIFF_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "fixes": {
+            "type": "array",
+            "description": "List of SEARCH/REPLACE fixes to apply for visual issues",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "search": {
+                        "type": "string",
+                        "description": "Exact text to find in the code (must match exactly including whitespace)"
+                    },
+                    "replace": {
+                        "type": "string",
+                        "description": "Replacement text with the visual fix applied"
+                    },
+                    "issue_fixed": {
+                        "type": "string",
+                        "description": "Which visual issue this fix addresses (overlap, overflow, layout)"
+                    }
+                },
+                "required": ["search", "replace"]
+            }
+        }
+    },
+    "required": ["fixes"]
+}
+
+
+def build_visual_qc_diff_prompt(
+    code: str,
+    error_report: str,
+    section: Optional[Dict[str, Any]] = None
+) -> str:
+    """
+    Build prompt for diff-based visual QC correction.
+    
+    Args:
+        code: The Manim code with visual issues
+        error_report: Visual QC error report describing the issues
+        section: Optional section context
+        
+    Returns:
+        Formatted prompt string
+    """
+    # Extract section context
+    section_context = ""
+    if section:
+        title = section.get('title', 'Untitled')
+        duration = section.get('duration_seconds', section.get('target_duration', 30))
+        section_context = f"\nSection: {title}\nTarget Duration: {duration}s (preserve timing!)"
+    
+    prompt = f"""FIX THESE VISUAL LAYOUT ERRORS in Manim code:
+
+VISUAL ERRORS DETECTED BY QC:
+{error_report}
+{section_context}
+
+{VISUAL_QC_LAYOUT_CONTEXT}
+
+CODE TO FIX:
+```python
+{code}
+```
+
+Output SEARCH/REPLACE blocks to fix these VISUAL issues.
+- SEARCH must exactly match the code
+- Increase buff values for overlaps
+- Add scale() for overflow
+- Preserve all timing and educational content"""
+    
+    return prompt
+
+
+def build_visual_qc_structured_prompt(
+    code: str,
+    error_report: str,
+    section: Optional[Dict[str, Any]] = None
+) -> str:
+    """
+    Build prompt for structured JSON visual QC correction.
+    
+    Args:
+        code: The Manim code with visual issues
+        error_report: Visual QC error report
+        section: Optional section context
+        
+    Returns:
+        Prompt for JSON structured output
+    """
+    section_context = ""
+    if section:
+        title = section.get('title', 'Untitled')
+        duration = section.get('duration_seconds', section.get('target_duration', 30))
+        section_context = f"Section: {title} | Duration: {duration}s"
+    
+    prompt = f"""Analyze these VISUAL LAYOUT ERRORS and provide fixes.
+
+VISUAL ERRORS DETECTED:
+{error_report}
+
+{section_context}
+
+MANIM CODE:
+```python
+{code}
+```
+
+{VISUAL_QC_LAYOUT_CONTEXT}
+
+Provide search/replace fixes for the visual issues.
+The "search" field must EXACTLY match text in the code above.
+Focus on: buff values, scale, positioning, FadeOut for cleanup."""
+    
+    return prompt

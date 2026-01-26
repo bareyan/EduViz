@@ -30,6 +30,7 @@ Thumbs.db
 # Project specific
 uploads/
 outputs/
+job_data/
 *.mp4
 *.mp3
 *.wav

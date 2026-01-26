@@ -71,7 +71,7 @@ class ManimGenerator:
     MAX_CLEAN_RETRIES = 2
     
     # Visual QC settings
-    ENABLE_VISUAL_QC = False  # Toggle: Set to True to enable visual QC
+    ENABLE_VISUAL_QC = True  # Toggle: Enable visual QC to check rendered videos
     MAX_QC_ITERATIONS = 3  # Allow up to 3 fix attempts before accepting
     
     def __init__(self):

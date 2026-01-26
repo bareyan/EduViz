@@ -15,6 +15,8 @@ from .code_utils import remove_markdown_blocks, ensure_manim_structure
 
 # Feature flag for diff-based correction (set to False to disable)
 USE_DIFF_BASED_CORRECTION = True
+# Feature flag for diff-based visual QC correction
+USE_DIFF_BASED_VISUAL_QC = True
 
 # Quality to Manim output directory mapping
 QUALITY_DIR_MAP = {
@@ -236,12 +238,27 @@ async def render_scene(
                         # Only attempt fix if we haven't exhausted our fix attempts
                         if can_still_fix:
                             print(f"[ManimGenerator] Generating visual fix (attempt {qc_iteration + 1}/{generator.MAX_QC_ITERATIONS})...")
-                            fixed_code = await generate_visual_fix(
-                                generator,
-                                content,
-                                error_report,
-                                section=section
-                            )
+                            
+                            # Try diff-based visual QC correction first (cheaper, faster)
+                            fixed_code = None
+                            if USE_DIFF_BASED_VISUAL_QC:
+                                from app.services.diff_correction.visual_qc_diff import fix_visual_errors_with_diff
+                                fixed_code = await fix_visual_errors_with_diff(
+                                    generator,
+                                    content,
+                                    error_report,
+                                    section=section
+                                )
+                            
+                            # Fall back to full regeneration if diff failed
+                            if not fixed_code:
+                                print("[ManimGenerator] Diff-based fix failed, using full regeneration...")
+                                fixed_code = await generate_visual_fix(
+                                    generator,
+                                    content,
+                                    error_report,
+                                    section=section
+                                )
                             
                             if fixed_code:
                                 print(f"[ManimGenerator] Applying visual QC fix and re-rendering...")

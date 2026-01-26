@@ -34,7 +34,8 @@ if TYPE_CHECKING:
 USE_DIFF_CORRECTION = True  # Feature flag
 MAX_DIFF_ATTEMPTS = 3  # How many diff attempts before falling back
 USE_STRONG_MODEL_ON_RETRY = True  # Use stronger model on 2nd+ attempts
-USE_STRUCTURED_OUTPUT = True  # Use Gemini's JSON schema feature (more reliable)
+# Use text-based SEARCH/REPLACE format (standard format the model has seen more of)
+USE_STRUCTURED_OUTPUT = False
 
 
 async def correct_manim_code_with_diff(
