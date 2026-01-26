@@ -41,7 +41,7 @@ class SectionGenerator:
                 gaps_to_fill=gaps_to_fill,
             )
 
-        return await self._generate_sections_conversationally(
+        return await self._generate_sections_sequentially(
             sections_outline=sections_outline,
             full_outline=outline,
             content=content,
@@ -110,27 +110,54 @@ OUTPUT FORMAT: Valid JSON array with ALL sections:
 Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
 
         try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.base.client.models.generate_content,
-                    model=self.base.MODEL,
-                    contents=prompt,
-                    config=self.base.types.GenerateContentConfig(
-                        thinking_config=self.base.types.ThinkingConfig(thinking_level="LOW"),
-                        max_output_tokens=16384,
+            print(f"[SectionGen] Generating all {len(sections_outline)} sections at once...")
+            
+            # Try with thinking_config first
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.base.client.models.generate_content,
+                        model=self.base.MODEL,
+                        contents=prompt,
+                        config=self.base.types.GenerateContentConfig(
+                            thinking_config=self.base.types.ThinkingConfig(thinking_level="LOW"),
+                            max_output_tokens=16384,
+                        ),
                     ),
-                ),
-                timeout=180,
-            )
+                    timeout=180,
+                )
+            except Exception as e:
+                error_msg = str(e)
+                if "thinking_level is not supported" in error_msg or "thinking_config" in error_msg.lower():
+                    print(f"[SectionGen] Model doesn't support thinking_config, retrying without it...")
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.base.client.models.generate_content,
+                            model=self.base.MODEL,
+                            contents=prompt,
+                            config=self.base.types.GenerateContentConfig(
+                                max_output_tokens=16384,
+                            ),
+                        ),
+                        timeout=180,
+                    )
+                else:
+                    raise
+            
             self.base.cost_tracker.track_usage(response, self.base.MODEL)
 
             if not response or not getattr(response, "text", None) or not response.text.strip():
+                print("[SectionGen] ERROR: Empty response from API")
                 return self._fallback_sections(sections_outline)
 
+            print(f"[SectionGen] Received response, length: {len(response.text)} chars")
             sections = parse_json_array_response(response.text)
             if not sections:
+                print("[SectionGen] ERROR: Failed to parse JSON from response")
+                print(f"[SectionGen] Response text preview: {response.text[:500]}...")
                 return self._fallback_sections(sections_outline)
 
+            print(f"[SectionGen] Successfully parsed {len(sections)} sections")
             for i, section in enumerate(sections):
                 section["id"] = section.get(
                     "id",
@@ -146,11 +173,15 @@ Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
             return sections
 
         except asyncio.TimeoutError:
+            print("[SectionGen] ERROR: Request timed out after 180 seconds")
             return self._fallback_sections(sections_outline)
-        except Exception:
+        except Exception as e:
+            print(f"[SectionGen] ERROR: Exception during generation: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return self._fallback_sections(sections_outline)
 
-    async def _generate_sections_conversationally(
+    async def _generate_sections_sequentially(
         self,
         sections_outline: List[Dict[str, Any]],
         full_outline: Dict[str, Any],
@@ -159,77 +190,131 @@ Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
         language_instruction: str,
         gaps_to_fill: List[str],
     ) -> List[Dict[str, Any]]:
+        """
+        Generate sections one by one using individual generate_content calls.
+        Each call includes context from previous sections to maintain coherence.
+        """
         generated_sections: List[Dict[str, Any]] = []
-
-        try:
-            chat = self.base.client.chats.create(model=self.base.MODEL, config=self.base.generation_config)
-        except Exception:
-            return []
-
         total_sections = len(sections_outline)
-        outline_text = "\n".join(f"{i+1}. {sec.get('title', 'Untitled')}" for i, sec in enumerate(full_outline.get("sections_outline", [])))
+        
+        print(f"[SectionGen] Starting sequential generation for {total_sections} sections...")
 
+        # Prepare full outline summary
+        outline_text = "\n".join(
+            f"{i+1}. {sec.get('title', 'Untitled')}" 
+            for i, sec in enumerate(sections_outline)
+        )
+
+        # For comprehensive mode, use more content initially
         initial_content_limit = min(25000, max(15000, len(content) // 2))
         initial_content_excerpt = content[:initial_content_limit]
 
         for section_idx, section_outline in enumerate(sections_outline):
+            # Determine section position and context
             if section_idx == 0:
                 position_note = "FIRST SECTION: Start with engaging hook, may greet viewer."
-                prompt = self._build_first_chat_prompt(
-                    section_idx,
-                    section_outline,
-                    outline_text,
-                    initial_content_excerpt,
-                    language_instruction,
-                )
+                previous_context = ""
+            elif section_idx == total_sections - 1:
+                position_note = "FINAL SECTION: Summarize key insights, provide memorable conclusion."
+                previous_context = self._build_compressed_previous_context(generated_sections)
             else:
-                position_note = (
-                    "FINAL SECTION: Summarize key insights, memorable conclusion." if section_idx == total_sections - 1 else f"MIDDLE SECTION {section_idx + 1}/{total_sections}: Continue naturally, no greetings, reference earlier content."
-                )
-                supplemental_content = ""
-                if len(content) > initial_content_limit:
-                    section_excerpt = self._get_relevant_content_for_section(
-                        content=content,
-                        section_outline=section_outline,
-                        section_idx=section_idx,
-                        total_sections=total_sections,
-                    )
-                    if section_excerpt and section_excerpt[:500] not in initial_content_excerpt[:5000]:
-                        supplemental_content = f"\n\nRELEVANT SOURCE MATERIAL FOR THIS SECTION:\n{section_excerpt[:5000]}"
+                position_note = f"MIDDLE SECTION {section_idx + 1}/{total_sections}: Continue naturally, no greetings, reference earlier content."
+                previous_context = self._build_compressed_previous_context(generated_sections)
 
-                prompt = self._build_chat_prompt(
-                    section_idx,
-                    section_outline,
-                    position_note,
-                    supplemental_content,
+            # Get relevant content excerpt for this section
+            supplemental_content = ""
+            if len(content) > initial_content_limit:
+                section_excerpt = self._get_relevant_content_for_section(
+                    content=content,
+                    section_outline=section_outline,
+                    section_idx=section_idx,
+                    total_sections=total_sections,
                 )
+                if section_excerpt and section_excerpt[:500] not in initial_content_excerpt[:5000]:
+                    supplemental_content = f"\n\nRELEVANT SOURCE MATERIAL FOR THIS SECTION:\n{section_excerpt[:5000]}"
 
+            # Build prompt for this section
+            prompt = self._build_sequential_prompt(
+                section_idx=section_idx,
+                section_outline=section_outline,
+                outline_text=outline_text,
+                initial_content_excerpt=initial_content_excerpt if section_idx == 0 else "",
+                previous_context=previous_context,
+                position_note=position_note,
+                supplemental_content=supplemental_content,
+                language_instruction=language_instruction,
+            )
+
+            # Generate this section with retries
             max_retries = 3
             success = False
+            
             for attempt in range(max_retries):
                 try:
-                    response = await asyncio.wait_for(
-                        asyncio.to_thread(chat.send_message, message=prompt),
-                        timeout=120,
-                    )
+                    print(f"[SectionGen] Generating section {section_idx + 1}/{total_sections} (attempt {attempt + 1}/{max_retries})...")
+                    
+                    # Try with thinking_config first
+                    try:
+                        response = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                self.base.client.models.generate_content,
+                                model=self.base.MODEL,
+                                contents=prompt,
+                                config=self.base.types.GenerateContentConfig(
+                                    thinking_config=self.base.types.ThinkingConfig(thinking_level="MEDIUM"),
+                                    max_output_tokens=8192,
+                                ),
+                            ),
+                            timeout=120,
+                        )
+                    except Exception as e:
+                        error_msg = str(e)
+                        if "thinking_level is not supported" in error_msg or "thinking_config" in error_msg.lower():
+                            print(f"[SectionGen] Model doesn't support thinking_config, retrying without it...")
+                            response = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self.base.client.models.generate_content,
+                                    model=self.base.MODEL,
+                                    contents=prompt,
+                                    config=self.base.types.GenerateContentConfig(
+                                        max_output_tokens=8192,
+                                    ),
+                                ),
+                                timeout=120,
+                            )
+                        else:
+                            raise
+                    
                     self.base.cost_tracker.track_usage(response, self.base.MODEL)
 
                     if response and getattr(response, "text", None):
                         section = self.base.parse_json(response.text)
                         if not section or (section.get("title") == "Mathematical Exploration" and "narration" not in section):
+                            print(f"[SectionGen] WARNING: Invalid section data received (attempt {attempt + 1})")
                             raise ValueError("JSON parse failed")
 
                         section["id"] = section.get("id", section_outline.get("id", f"section_{section_idx}"))
                         section["title"] = section.get("title", section_outline.get("title", f"Part {section_idx + 1}"))
+                        
+                        # Ensure tts_narration exists
+                        if not section.get("tts_narration"):
+                            section["tts_narration"] = section.get("narration", "")
+                        
                         generated_sections.append(section)
+                        print(f"[SectionGen] ✓ Section {section_idx + 1} generated successfully")
                         success = True
                         break
+                        
+                    print(f"[SectionGen] WARNING: Empty response (attempt {attempt + 1})")
                     raise ValueError("Empty response")
-                except Exception:
+                    
+                except Exception as e:
+                    print(f"[SectionGen] ERROR on attempt {attempt + 1}: {type(e).__name__}: {str(e)}")
                     if attempt < max_retries - 1:
                         await asyncio.sleep(2)
 
             if not success:
+                print(f"[SectionGen] ERROR: Section {section_idx + 1} failed after {max_retries} attempts")
                 generated_sections.append(
                     {
                         "id": section_outline.get("id", f"section_{section_idx}"),
@@ -242,25 +327,32 @@ Generate the COMPLETE JSON array with ALL {len(sections_outline)} sections:"""
 
         return generated_sections
 
-    def _build_first_chat_prompt(
+    def _build_sequential_prompt(
         self,
         section_idx: int,
         section_outline: Dict[str, Any],
         outline_text: str,
         initial_content_excerpt: str,
+        previous_context: str,
+        position_note: str,
+        supplemental_content: str,
         language_instruction: str,
     ) -> str:
-        return f"""You are an expert university professor creating a COMPREHENSIVE lecture video script.
+        """Build a comprehensive prompt for sequential section generation."""
+        
+        if section_idx == 0:
+            # First section: Include full context
+            return f"""You are an expert university professor creating a COMPREHENSIVE lecture video script.
+{language_instruction}
 
-Your goal is to generate the narration for ONE section at a time.
-I will ask you for each section sequentially.
+Your goal is to generate the narration for ONE section at a time. This is section {section_idx + 1}.
 
 CONTEXT & INSTRUCTIONS:
 - Explain the WHY, not just the WHAT
 - For definitions: motivation → intuition → formal statement → example
 - For theorems: importance → statement → proof strategy → steps → reinforcement  
-- Be thorough - no length limits
-{language_instruction}
+- Be thorough - no length limits for comprehensive mode
+- Make content engaging and educational
 
 LECTURE OUTLINE:
 {outline_text}
@@ -276,23 +368,27 @@ TYPE: {section_outline.get('section_type', 'content')}
 CONTENT TO COVER: {section_outline.get('content_to_cover', '')}
 KEY POINTS: {json.dumps(section_outline.get('key_points', []))}
 
-FIRST SECTION: Start with engaging hook, may greet viewer.
+{position_note}
 
-OUTPUT: Valid JSON only, no markdown. Generate ONLY narration text:
+OUTPUT: Valid JSON only, no markdown. Generate complete narration:
 {{"id": "{section_outline.get('id', f'section_{section_idx}')}",
 "title": "{section_outline.get('title', f'Part {section_idx + 1}')}",
 "narration": "Complete spoken narration for this section...",
-"tts_narration": "TTS-ready narration: spell out math symbols (e.g., 'theta' not 'theta symbol', 'x squared' not 'x^2') AND write letter names as phonetic transcriptions for correct TTS pronunciation in the target language (e.g., in French: 'igrec' instead of 'y', 'double-ve' instead of 'w')..."}}"""
+"tts_narration": "TTS-ready narration: spell out math symbols (e.g., 'theta' not 'θ', 'x squared' not 'x²') AND write letter names as phonetic transcriptions for correct TTS pronunciation in the target language (e.g., in French: 'igrec' instead of 'y', 'double-ve' instead of 'w')..."}}"""
+        else:
+            # Subsequent sections: Include previous context
+            return f"""Continue generating the lecture video script.
+{language_instruction}
 
-    def _build_chat_prompt(
-        self,
-        section_idx: int,
-        section_outline: Dict[str, Any],
-        position_note: str,
-        supplemental_content: str,
-    ) -> str:
-        return f"""Generate narration for SECTION {section_idx + 1}.
+LECTURE OUTLINE:
+{outline_text}
 
+PREVIOUS SECTIONS CONTEXT:
+{previous_context}
+
+═══════════════════════════════════════════════════════════════════════════════
+REQUEST: Generate narration for SECTION {section_idx + 1}
+═══════════════════════════════════════════════════════════════════════════════
 SECTION: {section_outline.get('title', 'Untitled')}
 TYPE: {section_outline.get('section_type', 'content')}
 CONTENT TO COVER: {section_outline.get('content_to_cover', '')}

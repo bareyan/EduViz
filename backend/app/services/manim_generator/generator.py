@@ -441,6 +441,21 @@ class ManimGenerator:
                     ),
                     timeout=180
                 )
+            except Exception as e:
+                error_msg = str(e)
+                if "thinking_level is not supported" in error_msg or "thinking_config" in error_msg.lower():
+                    print(f"[ManimGenerator] Model doesn't support thinking_config, retrying without it...")
+                    response2 = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.client.models.generate_content,
+                            model=self.MODEL,
+                            contents=code_prompt,
+                            config=None
+                        ),
+                        timeout=180
+                    )
+                else:
+                    raise
 
                 self.cost_tracker.track_usage(response2, self.MODEL)
                 code = response2.text.strip()
@@ -469,15 +484,31 @@ class ManimGenerator:
         )
 
         try:
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=self.MODEL,
-                    contents=prompt,
-                    config=self.generation_config
-                ),
-                timeout=300
-            )
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=self.MODEL,
+                        contents=prompt,
+                        config=self.generation_config
+                    ),
+                    timeout=300
+                )
+            except Exception as e:
+                error_msg = str(e)
+                if "thinking_level is not supported" in error_msg or "thinking_config" in error_msg.lower():
+                    print(f"[ManimGenerator] Model doesn't support thinking_config, retrying without it...")
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.client.models.generate_content,
+                            model=self.MODEL,
+                            contents=prompt,
+                            config=None
+                        ),
+                        timeout=300
+                    )
+                else:
+                    raise
 
             self.cost_tracker.track_usage(response, self.MODEL)
 

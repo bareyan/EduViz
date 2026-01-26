@@ -82,7 +82,12 @@ Respond with ONLY valid JSON (no markdown, no code blocks):
 CRITICAL: Create exactly ONE comprehensive video covering everything."""
 
         # Create image part for Gemini
-        image_part = self.types.Part.from_bytes(data=image_data, mime_type=mime_type)
+        # Vertex AI uses from_data(), Gemini API uses from_bytes()
+        try:
+            image_part = self.types.Part.from_data(data=image_data, mime_type=mime_type)
+        except AttributeError:
+            # Fallback for Gemini API
+            image_part = self.types.Part.from_bytes(data=image_data, mime_type=mime_type)
 
         response = await asyncio.to_thread(
             self.client.models.generate_content,

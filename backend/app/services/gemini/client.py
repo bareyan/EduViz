@@ -187,6 +187,8 @@ class GeminiAPIModels:
         }
 
         # Add thinking config if present
+        # Note: Not all models support thinking_config (e.g., gemini-2.0-flash-exp)
+        # The API will return an error if the model doesn't support it
         if config.thinking_config:
             gen_config_dict["thinking_config"] = config.thinking_config
 
@@ -200,11 +202,27 @@ class GeminiAPIModels:
         gen_config = types.GenerateContentConfig(**gen_config_dict)
 
         # Make the API call
-        response = self.client.models.generate_content(
-            model=model,
-            contents=contents,
-            config=gen_config
-        )
+        try:
+            response = self.client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=gen_config
+            )
+        except Exception as e:
+            # If the error is about thinking_config not being supported, retry without it
+            error_msg = str(e)
+            if config.thinking_config and ("thinking_level is not supported" in error_msg or "thinking" in error_msg.lower()):
+                print(f"[UnifiedGeminiClient] Model doesn't support thinking_config, retrying without it...")
+                # Rebuild config without thinking_config
+                gen_config_dict_no_thinking = {k: v for k, v in gen_config_dict.items() if k != "thinking_config"}
+                gen_config = types.GenerateContentConfig(**gen_config_dict_no_thinking)
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=contents,
+                    config=gen_config
+                )
+            else:
+                raise
 
         return response
 
