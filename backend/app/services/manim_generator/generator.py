@@ -41,6 +41,7 @@ from .prompts import (
     build_code_from_script_prompt,
 )
 from .code_helpers import clean_code, create_scene_file
+from .tool_generator import ToolBasedGenerator
 from . import renderer
 
 
@@ -92,6 +93,9 @@ class ManimGenerator:
 
         # Initialize cost tracker
         self.cost_tracker = CostTracker()
+        
+        # Initialize tool-based generator for function calling
+        self.tool_generator = ToolBasedGenerator(self.client, self.cost_tracker)
 
         # Initialize stats
         self.stats = {
@@ -419,7 +423,7 @@ class ManimGenerator:
         # ══════════════════════════════════════════════════════════════════════
 
         if visual_script:
-            print("[ManimGenerator] Shot 2: Generating Manim code from visual script...")
+            print("[ManimGenerator] Shot 2: Generating Manim code with tool-based validation...")
 
             code_prompt = build_code_from_script_prompt(
                 section=section,
@@ -432,37 +436,22 @@ class ManimGenerator:
             )
 
             try:
-                response2 = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.client.models.generate_content,
-                        model=self.MODEL,
-                        contents=code_prompt,
-                        config=self.generation_config
-                    ),
-                    timeout=180
+                # Use function calling tools for iterative generation with validation
+                code, validation_result = await self._generate_with_tools(
+                    prompt=code_prompt,
+                    model=self.MODEL,
+                    max_attempts=3
                 )
-            except Exception as e:
-                error_msg = str(e)
-                if "thinking_level is not supported" in error_msg or "thinking_config" in error_msg.lower():
-                    print(f"[ManimGenerator] Model doesn't support thinking_config, retrying without it...")
-                    response2 = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            self.client.models.generate_content,
-                            model=self.MODEL,
-                            contents=code_prompt,
-                            config=None
-                        ),
-                        timeout=180
-                    )
+                
+                if code:
+                    print(f"[ManimGenerator] Shot 2 complete: {len(code)} chars of validated code")
+                    print(f"[ManimGenerator] Validation: syntax={validation_result['syntax']['valid']}, "
+                          f"structure={validation_result['structure']['valid']}, "
+                          f"imports={validation_result['imports']['valid']}, "
+                          f"spatial={validation_result['spatial']['valid']}")
+                    return (code, visual_script)
                 else:
-                    raise
-
-                self.cost_tracker.track_usage(response2, self.MODEL)
-                code = response2.text.strip()
-                code = clean_code(code)
-                print(f"[ManimGenerator] Shot 2 complete: {len(code)} chars of code")
-
-                return (code, visual_script)
+                    print("[ManimGenerator] Tool-based generation failed, trying fallback...")
 
             except asyncio.TimeoutError:
                 print("[ManimGenerator] Shot 2 timed out, falling back to single-shot")
@@ -470,9 +459,9 @@ class ManimGenerator:
                 print(f"[ManimGenerator] Shot 2 error: {e}, falling back to single-shot")
 
         # ══════════════════════════════════════════════════════════════════════
-        # FALLBACK: Single-shot generation (original method)
+        # FALLBACK: Single-shot generation (with validation but no tools)
         # ══════════════════════════════════════════════════════════════════════
-        print("[ManimGenerator] Using single-shot fallback...")
+        print("[ManimGenerator] Using single-shot fallback with validation...")
 
         prompt = build_generation_prompt(
             section=section,
@@ -525,5 +514,40 @@ class ManimGenerator:
 
         code = response.text.strip()
         code = clean_code(code)
+        
+        # Validate the generated code
+        validation = self.tool_generator.tool_executor.validator.validate(code)
+        if validation.valid:
+            print(f"[ManimGenerator] ✓ Code passed all validation checks")
+        else:
+            print(f"[ManimGenerator] ⚠ Code has validation issues:")
+            print(f"  Syntax: {validation.syntax.valid}, Structure: {validation.structure.valid}, "
+                  f"Imports: {validation.imports.valid}, Spatial: {validation.spatial.valid}")
 
         return (code, None)
+
+    async def _generate_with_tools(
+        self,
+        prompt: str,
+        model: str,
+        max_attempts: int = 3
+    ) -> Tuple[Optional[str], Dict[str, Any]]:
+        """
+        Generate code using function calling tools with iterative validation.
+        
+        Delegates to ToolBasedGenerator for clean separation of concerns.
+        
+        Args:
+            prompt: Generation prompt
+            model: Model to use
+            max_attempts: Maximum tool call iterations
+            
+        Returns:
+            Tuple of (final_code, validation_dict) or (None, {}) on failure
+        """
+        return await self.tool_generator.generate_with_validation(
+            prompt=prompt,
+            model=model,
+            max_iterations=max_attempts * 3,  # Allow multiple tool calls per attempt
+            config=self.generation_config
+        )
