@@ -272,7 +272,7 @@ COST_OPTIMIZED_PIPELINE = PipelineModels(
 
 # Current active configuration
 # Change this to switch between configurations
-ACTIVE_PIPELINE = DEFAULT_PIPELINE_MODELS
+ACTIVE_PIPELINE = COST_OPTIMIZED_PIPELINE
 
 # Available pipeline configurations
 # - default: Balanced quality and cost

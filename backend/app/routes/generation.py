@@ -116,11 +116,12 @@ async def generate_videos(request: GenerationRequest, background_tasks: Backgrou
                     progress_callback=lambda p, bp=base_progress: update_progress(p, bp)
                 )
 
+                print(result)
                 if result.get("status") == "completed":
                     all_results.append({
                         "video_id": job_id,
                         "title": result["script"]["title"],
-                        "duration": result["total_duration"],
+                        "duration": result["total_duration"] if "total_duration" in result else sum(c.get("duration", 0) for c in result["chapters"]),
                         "chapters": result["chapters"],
                         "download_url": f"/outputs/{job_id}/final_video.mp4",
                         "thumbnail_url": None

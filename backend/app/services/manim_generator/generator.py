@@ -47,20 +47,6 @@ from . import renderer
 class ManimGenerator:
     """Generates Manim animations using Gemini AI"""
 
-    # Model configuration - loaded from centralized config
-    _manim_config = get_model_config("manim_generation")
-    _visual_script_config = get_model_config("visual_script_generation")
-    _correction_config = get_model_config("code_correction")
-    _correction_strong_config = get_model_config("code_correction_strong")
-    _visual_qc_config = get_model_config("visual_qc")
-
-    MODEL = _manim_config.model_name
-    VISUAL_SCRIPT_MODEL = _visual_script_config.model_name
-    CORRECTION_MODEL = _correction_config.model_name
-    STRONG_MODEL = _correction_strong_config.model_name
-    QC_MODEL = _visual_qc_config.model_name
-
-    MAX_CORRECTION_ATTEMPTS = getattr(_manim_config, 'max_correction_attempts', 3)
     MAX_CLEAN_RETRIES = 2
 
     # Visual QC settings
@@ -72,42 +58,53 @@ class ManimGenerator:
         self.client = create_client()
         self.types = get_types_module()
 
-        # Generation config from centralized config
-        thinking_config = get_thinking_config(self._manim_config)
-        script_thinking_config = get_thinking_config(self._visual_script_config)
-
-        if thinking_config:
-            self.generation_config = UnifiedGenerationConfig(
-                thinking_config=thinking_config,
-            )
-        else:
-            self.generation_config = None
-
-        if script_thinking_config:
-            self.visual_script_generation_config = UnifiedGenerationConfig(
-                thinking_config=script_thinking_config,
-            )
-        else:
-            self.visual_script_generation_config = None
-
         # Initialize cost tracker
         self.cost_tracker = CostTracker()
 
         # Initialize stats
         self.stats = {
             "total_sections": 0,
-            "regenerated_sections": 0,  # Count of sections that needed at least one retry
-            "total_retries": 0,         # Total number of retries across all sections
-            "skipped_sections": 0,      # Sections that failed even after retries
-            "failed_sections": []       # List of failed section indices
+            "regenerated_sections": 0,
+            "total_retries": 0,
+            "skipped_sections": 0,
+            "failed_sections": []
         }
 
-        # Initialize visual QC controller
+        # Visual QC controller (initialized lazily)
         self.visual_qc = None
-        if VISUAL_QC_AVAILABLE and self.ENABLE_VISUAL_QC:
+        self._qc_initialized = False
+
+        # Load initial config
+        self._refresh_config()
+
+    def _refresh_config(self):
+        """Refresh model configuration from active pipeline (call before each generation)"""
+        self._manim_config = get_model_config("manim_generation")
+        self._visual_script_config = get_model_config("visual_script_generation")
+        self._correction_config = get_model_config("code_correction")
+        self._correction_strong_config = get_model_config("code_correction_strong")
+        self._visual_qc_config = get_model_config("visual_qc")
+
+        self.MODEL = self._manim_config.model_name
+        self.VISUAL_SCRIPT_MODEL = self._visual_script_config.model_name
+        self.CORRECTION_MODEL = self._correction_config.model_name
+        self.STRONG_MODEL = self._correction_strong_config.model_name
+        self.QC_MODEL = self._visual_qc_config.model_name
+
+        self.MAX_CORRECTION_ATTEMPTS = getattr(self._manim_config, 'max_correction_attempts', 3)
+
+        # Update generation configs
+        thinking_config = get_thinking_config(self._manim_config)
+        script_thinking_config = get_thinking_config(self._visual_script_config)
+
+        self.generation_config = UnifiedGenerationConfig(thinking_config=thinking_config) if thinking_config else None
+        self.visual_script_generation_config = UnifiedGenerationConfig(thinking_config=script_thinking_config) if script_thinking_config else None
+
+        # Reinitialize Visual QC if needed
+        if VISUAL_QC_AVAILABLE and self.ENABLE_VISUAL_QC and not self._qc_initialized:
             try:
                 self.visual_qc = VisualQualityController(model=self.QC_MODEL)
-                print(f"[ManimGenerator] Visual QC enabled with model: {self.QC_MODEL}")
+                self._qc_initialized = True
             except Exception as e:
                 print(f"[ManimGenerator] Failed to initialize Visual QC: {e}")
                 self.visual_qc = None
@@ -159,7 +156,10 @@ class ManimGenerator:
             Dict with video_path and manim_code
         """
 
+        # Refresh model config from active pipeline (ensures latest settings are used)
         if clean_retry == 0:
+            self._refresh_config()
+            print(f"[ManimGenerator] Using pipeline models: manim={self.MODEL}, visual_script={self.VISUAL_SCRIPT_MODEL}")
             self.stats["total_sections"] += 1
 
         # Use audio duration as the target if available
