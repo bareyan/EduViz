@@ -11,14 +11,13 @@ from app.services.pipeline.animation.generation.tools import (
     VISUAL_SCRIPT_SCHEMA,
     build_context,
     get_language_instructions,
+    extract_code_from_response,
+    apply_fixes,
 )
 
 
 class TestExtractCodeFromResponse:
     """Test code extraction behavior for tool-based generation."""
-
-    def setup_method(self):
-        self.handler = GenerationToolHandler(engine=None, validator=None)
 
     def test_extract_python_markdown(self):
         """Extract code from ```python``` blocks."""
@@ -34,7 +33,7 @@ class MyScene(Scene):
 
 That's it!"""
 
-        code = self.handler._extract_code_from_response(response)
+        code = extract_code_from_response(response)
 
         assert "from manim import *" in code
         assert "class MyScene(Scene)" in code
@@ -49,21 +48,18 @@ class MyScene(Scene):
         self.play(Write(Text("Hello")))
         self.wait(1)"""
 
-        code = self.handler._extract_code_from_response(response)
+        code = extract_code_from_response(response)
 
         assert code == response
 
     def test_non_code_returns_none(self):
         """Return None for non-code responses."""
         response = "Here is a summary of the animation."
-        assert self.handler._extract_code_from_response(response) is None
+        assert extract_code_from_response(response) is None
 
 
 class TestApplyFixes:
     """Test search/replace fix application logic."""
-
-    def setup_method(self):
-        self.handler = GenerationToolHandler(engine=None, validator=None)
 
     def test_successful_replace(self):
         code = """from manim import *
@@ -79,12 +75,12 @@ class MyScene(Scene):
             "reason": "Update text"
         }]
 
-        new_code, applied, details = self.handler._apply_fixes(code, fixes)
+        new_code, applied, details = apply_fixes(code, fixes)
 
         assert applied == 1
         assert 'Text("New Text")' in new_code
         assert 'Text("Old Text")' not in new_code
-        assert any("Applied" in entry for entry in details)
+        assert any("OK" in entry for entry in details)
 
     def test_pattern_not_found(self):
         code = """from manim import *
@@ -99,11 +95,11 @@ class MyScene(Scene):
             "reason": "Fix"
         }]
 
-        new_code, applied, details = self.handler._apply_fixes(code, fixes)
+        new_code, applied, details = apply_fixes(code, fixes)
 
         assert applied == 0
         assert new_code == code
-        assert any("Not found" in entry for entry in details)
+        assert any("FAIL" in entry for entry in details)
 
     def test_multiple_occurrences(self):
         code = """from manim import *
@@ -119,7 +115,7 @@ class MyScene(Scene):
             "reason": "Disambiguate"
         }]
 
-        new_code, applied, details = self.handler._apply_fixes(code, fixes)
+        new_code, applied, details = apply_fixes(code, fixes)
 
         assert applied == 0
         assert new_code == code
@@ -129,7 +125,7 @@ class MyScene(Scene):
         code = "some code"
         fixes = [{"search": "", "replace": "replacement", "reason": "Invalid"}]
 
-        new_code, applied, details = self.handler._apply_fixes(code, fixes)
+        new_code, applied, details = apply_fixes(code, fixes)
 
         assert applied == 0
         assert new_code == code

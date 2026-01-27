@@ -180,7 +180,9 @@ class VideoGenerator:
                     )
                     tracker.save_script(script)
 
-                sections = script.get("sections", [])
+                # Extract sections from script (script generator wraps it in {"script": {...}})
+                script_data = script.get("script", script)  # Support both wrapped and unwrapped formats
+                sections = script_data.get("sections", [])
                 if not sections:
                     raise ValueError("Script has no sections")
 

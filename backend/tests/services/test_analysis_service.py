@@ -7,9 +7,9 @@ from app.services.pipeline.content_analysis.base import BaseAnalyzer
 class TestMaterialAnalyzer:
     @pytest.fixture
     def analyzer(self):
-        with patch("app.services.analysis.analyzer.PDFAnalyzer") as mock_pdf, \
-             patch("app.services.analysis.analyzer.ImageAnalyzer") as mock_img, \
-             patch("app.services.analysis.analyzer.TextAnalyzer") as mock_txt:
+        with patch("app.services.pipeline.content_analysis.analyzer.PDFAnalyzer") as mock_pdf, \
+             patch("app.services.pipeline.content_analysis.analyzer.ImageAnalyzer") as mock_img, \
+             patch("app.services.pipeline.content_analysis.analyzer.TextAnalyzer") as mock_txt:
             
             # Setup async mocks
             mock_pdf.return_value.analyze = AsyncMock(return_value={"type": "pdf"})
@@ -38,13 +38,13 @@ class TestMaterialAnalyzer:
 class TestBaseAnalyzer:
     def test_get_representative_sample_short(self):
         # PromptingEngine is the only dependency instantiated by BaseAnalyzer.
-        with patch("app.services.analysis.base.PromptingEngine"):
+        with patch("app.services.pipeline.content_analysis.base.PromptingEngine"):
             base = BaseAnalyzer()
             text = "Short text"
             assert base._get_representative_sample(text) == text
 
     def test_get_representative_sample_long(self):
-        with patch("app.services.analysis.base.PromptingEngine"):
+        with patch("app.services.pipeline.content_analysis.base.PromptingEngine"):
             base = BaseAnalyzer()
             # Create text larger than defaults? default max is 15000.
             # Let's override for test if possible, or generate specific string.

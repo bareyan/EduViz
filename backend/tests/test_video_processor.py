@@ -51,7 +51,7 @@ async def test_combine_sections_raises_on_empty_videos():
 
 
 @pytest.mark.asyncio
-@patch("app.services.video_generator.processor.ffmpeg_combine_sections", new_callable=AsyncMock)
+@patch("app.services.pipeline.assembly.processor.ffmpeg_combine_sections", new_callable=AsyncMock)
 async def test_combine_sections_delegates_to_ffmpeg(mock_combine, processor):
     """Test combine_sections delegates to ffmpeg helper."""
     videos = ["video1.mp4"]
@@ -77,7 +77,7 @@ async def test_concatenate_videos_empty_list(processor):
 
 
 @pytest.mark.asyncio
-@patch("app.services.video_generator.processor.ffmpeg_concatenate_videos", new_callable=AsyncMock)
+@patch("app.services.pipeline.assembly.processor.ffmpeg_concatenate_videos", new_callable=AsyncMock)
 async def test_concatenate_videos_delegates_to_ffmpeg(mock_concat, processor):
     """Test concatenate_videos delegates to ffmpeg helper."""
     video_paths = ["video1.mp4", "video2.mp4"]

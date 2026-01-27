@@ -92,8 +92,10 @@ def test_get_job_status_not_found():
         assert response.status_code == 404
 
 def test_delete_job():
+    # Use a valid UUID format for job_id
+    valid_job_id = "12345678-1234-5678-1234-567812345678"
     mock_repo = MagicMock()
-    mock_repo.delete.return_value = {"id": "del_job"}
+    mock_repo.delete.return_value = {"id": valid_job_id}
     
     with patch("app.routes.jobs.FileBasedJobRepository", return_value=mock_repo), \
          patch("app.routes.jobs.shutil.rmtree") as mock_rm:
@@ -104,6 +106,6 @@ def test_delete_job():
         # But for 'delete', checking execution is enough.
         
         with patch("pathlib.Path.exists", return_value=True):
-            response = client.delete("/job/del_job")
+            response = client.delete(f"/job/{valid_job_id}")
             assert response.status_code == 200
-            mock_repo.delete.assert_called_with("del_job")
+            mock_repo.delete.assert_called_with(valid_job_id)

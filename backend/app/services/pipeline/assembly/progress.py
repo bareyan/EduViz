@@ -239,7 +239,7 @@ class ProgressTracker:
         Save script data to disk
         
         Args:
-            script: Script dictionary to save
+            script: Script dictionary to save (may be wrapped or unwrapped)
         """
         script_path = self.job_dir / "script.json"
 
@@ -247,8 +247,11 @@ class ProgressTracker:
             with open(script_path, "w", encoding="utf-8") as f:
                 json.dump(script, f, indent=2, ensure_ascii=False)
 
-            logger.debug(f"Saved script.json with {len(script.get('sections', []))} sections", extra={
-                "section_count": len(script.get("sections", [])),
+            # Count sections from either wrapped or unwrapped format
+            script_data = script.get('script', script)
+            section_count = len(script_data.get('sections', []))
+            logger.debug(f"Saved script.json with {section_count} sections", extra={
+                "section_count": section_count,
                 "script_path": str(script_path)
             })
 
@@ -261,7 +264,7 @@ class ProgressTracker:
         Load script data from disk
         
         Returns:
-            Script dictionary
+            Script dictionary (may be wrapped or unwrapped format)
         
         Raises:
             FileNotFoundError: If script.json doesn't exist
@@ -277,7 +280,10 @@ class ProgressTracker:
             with open(script_path, encoding="utf-8") as f:
                 script = json.load(f)
 
-            logger.debug(f"Loaded script.json with {len(script.get('sections', []))} sections")
+            # Count sections from either wrapped or unwrapped format
+            script_data = script.get('script', script)
+            section_count = len(script_data.get('sections', []))
+            logger.debug(f"Loaded script.json with {section_count} sections")
             return script
 
         except Exception:
