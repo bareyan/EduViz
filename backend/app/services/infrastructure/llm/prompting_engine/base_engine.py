@@ -151,13 +151,25 @@ class PromptingEngine:
                 gen_config = self._get_generation_config(config)
                 
                 # Get model - use client.models.generate_content for unified client
-                response = await asyncio.to_thread(
-                    self.client.models.generate_content,
-                    model=model_name,
-                    contents=payload,
-                    tools=tools,
-                    config=gen_config
-                )
+                if config.timeout:
+                    response = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            self.client.models.generate_content,
+                            model=model_name,
+                            contents=payload,
+                            tools=tools,
+                            config=gen_config
+                        ),
+                        timeout=config.timeout,
+                    )
+                else:
+                    response = await asyncio.to_thread(
+                        self.client.models.generate_content,
+                        model=model_name,
+                        contents=payload,
+                        tools=tools,
+                        config=gen_config
+                    )
                 
                 # Track costs
                 if hasattr(response, 'usage_metadata'):
