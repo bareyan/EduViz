@@ -229,10 +229,10 @@ async def test_correction_loop():
     print(bad_code)
     print(f"\n❌ Error: {error_message}")
     
-    print("\n🔧 Calling CorrectionToolHandler.correct()...")
+    print("\n🔧 Calling GenerationToolHandler.fix()...")
     
     try:
-        result = await generator.correction_handler.correct(
+        result = await generator.correction_handler.fix(
             code=bad_code,
             error_message=error_message,
             section={"audio_duration": 10.0},
@@ -241,7 +241,7 @@ async def test_correction_loop():
         
         print(f"\n📊 Correction Result:")
         print(f"  - Success: {result.success}")
-        print(f"  - Fixes applied: {result.fixes_applied}")
+        print(f"  - Iterations: {result.iterations}")
         
         if result.success and result.code:
             print(f"\n✓ Corrected Code:")
@@ -250,11 +250,11 @@ async def test_correction_loop():
             print("-" * 80)
         else:
             print(f"\n❌ Correction failed: {result.error}")
-            
-        if result.details:
-            print(f"\n📋 Details:")
-            for detail in result.details:
-                print(f"   - {detail}")
+        
+        if result.feedback_history:
+            print(f"\n📋 Feedback history:")
+            for entry in result.feedback_history:
+                print(f"   - {entry}")
         
     except Exception as e:
         print(f"\n❌ ERROR: {e}")

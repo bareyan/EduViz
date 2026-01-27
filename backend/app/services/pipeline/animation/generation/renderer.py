@@ -12,17 +12,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from .code_helpers import ensure_manim_structure
-
-# Feature flag for diff-based correction (set to False to disable)
-USE_DIFF_BASED_CORRECTION = True
-
-# Quality to Manim output directory mapping
-QUALITY_DIR_MAP = {
-    "low": "480p15",
-    "medium": "720p30",
-    "high": "1080p60",
-    "4k": "2160p60"
-}
+from ..config import QUALITY_DIR_MAP, QUALITY_FLAGS, RENDER_TIMEOUT
 
 if TYPE_CHECKING:
     from . import ManimGenerator
@@ -80,9 +70,6 @@ async def render_scene(
     - If clean_retry < MAX_CLEAN_RETRIES: returns None to trigger clean regeneration
     - If clean_retry >= MAX_CLEAN_RETRIES: uses fallback scene as last resort
     """
-
-    Path(output_dir) / f"section_{section_index}.mp4"
-
     # Get the actual class name from the file
     with open(code_file, "r", encoding="utf-8") as f:
         content = f.read()
@@ -92,18 +79,8 @@ async def render_scene(
     if match:
         scene_name = match.group(1)
 
-    # Determine quality flag
-    # -ql: Low quality (480p15)
-    # -qm: Medium quality (720p30)
-    # -qh: High quality (1080p60)
-    # -qk: 4k quality (2160p60)
-    quality_flag = "-ql"
-    if quality == "medium":
-        quality_flag = "-qm"
-    elif quality == "high":
-        quality_flag = "-qh"
-    elif quality == "4k":
-        quality_flag = "-qk"
+    # Get quality flag from config
+    quality_flag = QUALITY_FLAGS.get(quality, "-ql")
 
     # Build manim command
     cmd = [
@@ -122,7 +99,7 @@ async def render_scene(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300  # 5 minute timeout per section
+            timeout=RENDER_TIMEOUT
         )
 
         if result.returncode != 0:
@@ -136,24 +113,14 @@ async def render_scene(
             if attempt < generator.MAX_CORRECTION_ATTEMPTS and section:
                 print(f"[ManimGenerator] Attempting auto-correction (attempt {attempt + 1}/{generator.MAX_CORRECTION_ATTEMPTS})...")
 
-                # Use diff-based correction if enabled (faster, cheaper)
-                if USE_DIFF_BASED_CORRECTION:
-                    from app.services.pipeline.animation.correction.integration import correct_manim_code_with_diff
-                    corrected_code = await correct_manim_code_with_diff(
-                        generator,
-                        content,
-                        result.stderr,
-                        section,
-                        attempt=attempt
-                    )
-                else:
-                    corrected_code = await correct_manim_code(
-                        generator,
-                        content,
-                        result.stderr,
-                        section,
-                        attempt=attempt
-                    )
+                # Use tool-based correction
+                corrected_code = await correct_manim_code(
+                    generator,
+                    content,
+                    result.stderr,
+                    section,
+                    attempt=attempt
+                )
 
                 if corrected_code:
                     # Overwrite the original file with corrected code
@@ -385,9 +352,9 @@ async def correct_manim_code(
     section: Dict[str, Any],
     attempt: int = 0
 ) -> Optional[str]:
-    """Use Gemini to fix errors in the Manim code"""
+    """Use GenerationToolHandler.fix() to correct code errors"""
     try:
-        result = await generator.correction_handler.correct(
+        result = await generator.correction_handler.fix(
             code=original_code,
             error_message=error_message,
             section=section,
@@ -398,14 +365,14 @@ async def correct_manim_code(
             corrected = result.code.strip()
             if ensure_manim_structure(corrected):
                 return corrected
-            print("Corrected code missing basic Manim structure")
+            print("[ManimGenerator] Corrected code missing basic Manim structure")
             return None
 
         print(f"[ManimGenerator] Correction failed: {result.error}")
         return None
 
     except Exception as e:
-        print(f"Error during code correction: {e}")
+        print(f"[ManimGenerator] Error during code correction: {e}")
         return None
 
 
@@ -423,7 +390,7 @@ async def generate_visual_fix(
         section = {}
 
     try:
-        result = await generator.correction_handler.correct(
+        result = await generator.correction_handler.fix(
             code=original_code,
             error_message=error_report,
             section=section,
@@ -544,7 +511,7 @@ async def fix_render_error(
 ) -> Optional[str]:
     """Fix a render error in the code using Gemini"""
     try:
-        result = await generator.correction_handler.correct(
+        result = await generator.correction_handler.fix(
             code=code,
             error_message=error_message,
             section=section,

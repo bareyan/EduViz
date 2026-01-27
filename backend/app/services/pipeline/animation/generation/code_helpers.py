@@ -6,6 +6,7 @@ import re
 from typing import Optional
 
 from .tools import get_theme_setup_code
+from ..config import CONSTRUCT_INDENT_SPACES, MIN_DURATION_PADDING, DURATION_PADDING_PERCENTAGE
 
 
 def clean_code(code: str) -> str:
@@ -55,7 +56,7 @@ def clean_code(code: str) -> str:
     if min_indent == float('inf'):
         min_indent = 0
 
-    # Re-indent: shift everything so base level is 8 spaces (inside construct)
+    # Re-indent: shift everything so base level is CONSTRUCT_INDENT_SPACES (inside construct)
     indented_lines = []
     for line in lines:
         if line.strip():
@@ -70,8 +71,8 @@ def clean_code(code: str) -> str:
             else:
                 relative_indent = current_indent
 
-            # New indent: 8 spaces (base) + relative indentation
-            new_indent = 8 + max(0, relative_indent)
+            # New indent: CONSTRUCT_INDENT_SPACES + relative indentation
+            new_indent = CONSTRUCT_INDENT_SPACES + max(0, relative_indent)
             indented_lines.append(" " * new_indent + content)
         else:
             indented_lines.append("")
@@ -149,26 +150,23 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
     normalized_code = normalize_indentation(code)
 
     # Ensure the code has proper base indentation for inside construct()
-    # The code should already have 8 spaces, but let's make sure
     lines = normalized_code.split('\n')
     indented_lines = []
     for line in lines:
         if line.strip():
-            # Ensure minimum 8-space indentation (inside construct method)
+            # Ensure minimum CONSTRUCT_INDENT_SPACES indentation (inside construct method)
             current_indent = len(line) - len(line.lstrip())
-            if current_indent < 8:
-                # Add base indentation to reach 8 spaces for construct body
-                line = '        ' + line.lstrip()
+            if current_indent < CONSTRUCT_INDENT_SPACES:
+                # Add base indentation to reach CONSTRUCT_INDENT_SPACES for construct body
+                line = ' ' * CONSTRUCT_INDENT_SPACES + line.lstrip()
         indented_lines.append(line)
     normalized_code = '\n'.join(indented_lines)
 
     # Sanitize section_id for class name
     class_name = "".join(word.title() for word in section_id.split("_"))
 
-    # Calculate generous padding to ensure we meet target duration
-    # Since Gemini often underestimates timing, we add significant buffer
-    # This wait will be at the end after all animations, showing final state
-    padding_wait = max(3, duration * 0.25)  # At least 3 seconds or 25% of duration
+    # Calculate padding using config constants
+    padding_wait = max(MIN_DURATION_PADDING, duration * DURATION_PADDING_PERCENTAGE)
 
     # Get theme setup code
     theme_setup = get_theme_setup_code(style)

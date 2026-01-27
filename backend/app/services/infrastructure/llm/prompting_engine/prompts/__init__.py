@@ -10,8 +10,7 @@ Structure:
     ├── translation.py   # Translation prompts
     └── analysis.py      # Content analysis
 
-Note: Manim generation uses tool-based prompts in pipeline/animation/generation/tools/
-      Error correction uses inline system instructions in pipeline/animation/correction/
+Note: Manim generation uses tool-based prompts in pipeline/animation/prompts.py
 
 Usage:
     from app.services.infrastructure.llm.prompting_engine.prompts import format_prompt

@@ -2,16 +2,36 @@
 Generation Tools - Agentic Manim code generation
 
 Uses Gemini function calling for agentic iteration:
-- Model has access to generate_code and fix_code tools
+- Model has access to write_code and fix_code tools
 - Tools validate and return feedback
 - Model iterates until code is valid or max attempts reached
+
+Responsibilities:
+- Orchestrate LLM calls for code generation
+- Handle tool responses and validation loops
+- Manage retry logic with feedback
+
+Delegates to:
+- code_manipulation.py: Code extraction and fix application
+- context.py: Prompt building and context management
+- validation/: Code validation
 """
 
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
-from .schemas import GENERATE_CODE_SCHEMA
+from .schemas import WRITE_CODE_SCHEMA, FIX_CODE_SCHEMA
 from .context import build_context, ManimContext
+from .code_manipulation import extract_code_from_response, apply_fixes
+from ...config import (
+    MAX_GENERATION_ITERATIONS,
+    GENERATION_TIMEOUT,
+    CORRECTION_TIMEOUT,
+    BASE_GENERATION_TEMPERATURE,
+    BASE_CORRECTION_TEMPERATURE,
+    TEMPERATURE_INCREMENT
+)
+from ...prompts import FIX_CODE_USER, FIX_CODE_RETRY_USER, GENERATION_RETRY_USER, format_section_context
 
 
 @dataclass
@@ -43,8 +63,6 @@ class GenerationToolHandler:
     5. Model controls iteration via tool calls
     """
     
-    MAX_ITERATIONS = 5
-    
     def __init__(self, engine, validator):
         """
         Args:
@@ -54,6 +72,192 @@ class GenerationToolHandler:
         self.engine = engine
         self.validator = validator
         self._feedback_history = []
+        self.MAX_ITERATIONS = MAX_GENERATION_ITERATIONS
+    
+    async def fix(
+        self,
+        code: str,
+        error_message: str,
+        section: Optional[Dict[str, Any]] = None,
+        attempt: int = 0
+    ) -> GenerationResult:
+        """
+        Fix code errors using write_code or fix_code tools.
+        
+        LLM can choose:
+        - write_code: Full replacement (for major issues)
+        - fix_code: Targeted search/replace (for small fixes)
+        
+        Args:
+            code: Current code with errors
+            error_message: Error message (from Manim, validator, etc.)
+            section: Optional section context
+            attempt: Current attempt number
+            
+        Returns:
+            GenerationResult with fixed code or error
+        """
+        # Reset feedback history
+        self._feedback_history = []
+        
+        # Build fix prompt using template
+        user_prompt = FIX_CODE_USER.format(
+            error_message=error_message,
+            context_info=format_section_context(section),
+            code=code
+        )
+        
+        # Run fix loop
+        from app.services.infrastructure.llm import PromptConfig
+        from app.services.infrastructure.llm.gemini import get_types_module
+        
+        config = PromptConfig(
+            temperature=BASE_CORRECTION_TEMPERATURE + (attempt * TEMPERATURE_INCREMENT),
+            timeout=CORRECTION_TIMEOUT,
+            enable_thinking=False
+        )
+        
+        iteration = 0
+        current_code = code
+        
+        try:
+            while iteration < self.MAX_ITERATIONS:
+                iteration += 1
+                
+                # Get tools
+                tools = self._get_tools(get_types_module())
+                
+                # Call model
+                response = await self.engine.generate(
+                    prompt=user_prompt,
+                    config=config,
+                    tools=tools
+                )
+                
+                if not response.get("success"):
+                    return GenerationResult(
+                        success=False,
+                        error=response.get("error", "Model call failed"),
+                        iterations=iteration,
+                        feedback_history=self._feedback_history
+                    )
+                
+                # Extract function calls
+                function_calls = response.get("function_calls", [])
+                
+                if not function_calls:
+                    # Try to extract code from text
+                    text_response = response.get("response", "")
+                    fixed_code = extract_code_from_response(text_response)
+                    if fixed_code:
+                        validation = self.validator.validate_code(fixed_code)
+                        if validation["valid"]:
+                            return GenerationResult(
+                                success=True,
+                                code=fixed_code,
+                                validation=validation,
+                                iterations=iteration,
+                                feedback_history=self._feedback_history
+                            )
+                    return GenerationResult(
+                        success=False,
+                        error="Model did not use fix_manim_code tool",
+                        iterations=iteration,
+                        feedback_history=self._feedback_history
+                    )
+                
+                # Process function call
+                func_call = function_calls[0]
+                func_name = func_call.get("name", "")
+                func_args = func_call.get("args", {})
+                
+                # Handle write_code (full replacement)
+                if func_name == "write_code":
+                    fixed_code = func_args.get("code", "")
+                    if not fixed_code:
+                        return GenerationResult(
+                            success=False,
+                            error="write_code tool returned no code",
+                            iterations=iteration,
+                            feedback_history=self._feedback_history
+                        )
+                
+                # Handle fix_code (diff-based)
+                elif func_name == "fix_code":
+                    fixes = func_args.get("fixes", [])
+                    if not fixes:
+                        return GenerationResult(
+                            success=False,
+                            error="fix_code tool returned no fixes",
+                            iterations=iteration,
+                            feedback_history=self._feedback_history
+                        )
+                    
+                    # Apply fixes to current code
+                    fixed_code, applied, details = apply_fixes(current_code, fixes)
+                    
+                    if applied == 0:
+                        error_details = "\n".join(details) if details else "No details"
+                        return GenerationResult(
+                            success=False,
+                            error=f"No fixes could be applied:\n{error_details}",
+                            iterations=iteration,
+                            feedback_history=self._feedback_history
+                        )
+                    
+                    # Log applied fixes
+                    for detail in details:
+                        print(f"[GenerationToolHandler] {detail}")
+                
+                else:
+                    return GenerationResult(
+                        success=False,
+                        error=f"Model did not use write_code or fix_code tool (used: {func_name})",
+                        iterations=iteration,
+                        feedback_history=self._feedback_history
+                    )
+                
+                # Validate
+                validation = self.validator.validate_code(fixed_code)
+                
+                if validation["valid"]:
+                    # Success!
+                    return GenerationResult(
+                        success=True,
+                        code=fixed_code,
+                        validation=validation,
+                        iterations=iteration,
+                        feedback_history=self._feedback_history
+                    )
+                else:
+                    # Still invalid, prepare feedback
+                    error_msg = validation.get("error", "Code validation failed")
+                    feedback = f"Fix attempt had validation errors:\n{error_msg}"
+                    self._feedback_history.append(feedback)
+                    
+                    # Update current_code and prompt for next iteration
+                    current_code = fixed_code
+                    user_prompt = FIX_CODE_RETRY_USER.format(
+                        feedback=feedback,
+                        code=current_code
+                    )
+            
+            # Max iterations reached
+            return GenerationResult(
+                success=False,
+                code=fixed_code if 'fixed_code' in locals() else None,
+                error=f"Max iterations ({self.MAX_ITERATIONS}) reached without valid fix",
+                iterations=iteration,
+                feedback_history=self._feedback_history
+            )
+            
+        except Exception as e:
+            return GenerationResult(
+                success=False,
+                error=f"Fix failed: {str(e)}",
+                iterations=iteration,
+                feedback_history=self._feedback_history
+            )
     
     async def generate(
         self,
@@ -101,8 +305,8 @@ class GenerationToolHandler:
         from app.services.infrastructure.llm.gemini import get_types_module
         
         config = PromptConfig(
-            temperature=0.7,
-            timeout=300,
+            temperature=BASE_GENERATION_TEMPERATURE,
+            timeout=GENERATION_TIMEOUT,
             enable_thinking=False  # Disable thinking for agentic iteration
         )
         
@@ -138,7 +342,7 @@ class GenerationToolHandler:
                 if not function_calls:
                     # Model didn't call tools - extract code from text if available
                     text_response = response.get("response", "")
-                    code = self._extract_code_from_response(text_response)
+                    code = extract_code_from_response(text_response)
                     if code:
                         validation = self.validator.validate_code(code)
                         if validation["valid"]:
@@ -161,16 +365,53 @@ class GenerationToolHandler:
                 func_name = func_call.get("name", "")
                 func_args = func_call.get("args", {})
                 
-                # Validate code from tool call
-                code = func_args.get("code", "")
-                if not code:
+                # Handle write_code (full replacement)
+                if func_name in ["write_code", "generate_manim_code"]:  # Support old name
+                    code = func_args.get("code", "")
+                    if not code:
+                        return GenerationResult(
+                            success=False,
+                            error=f"Tool '{func_name}' returned no code",
+                            iterations=iteration,
+                            feedback_history=self._feedback_history
+                        )
+                
+                # Handle fix_code (diff-based)
+                elif func_name == "fix_code":
+                    fixes = func_args.get("fixes", [])
+                    if not fixes:
+                        return GenerationResult(
+                            success=False,
+                            error="fix_code tool returned no fixes",
+                            iterations=iteration,
+                            feedback_history=self._feedback_history
+                        )
+                    
+                    # Apply fixes to current code
+                    code, applied, details = apply_fixes(code, fixes)
+                    
+                    if applied == 0:
+                        error_details = "\n".join(details) if details else "No details"
+                        return GenerationResult(
+                            success=False,
+                            error=f"No fixes could be applied:\n{error_details}",
+                            iterations=iteration,
+                            feedback_history=self._feedback_history
+                        )
+                    
+                    # Log applied fixes
+                    for detail in details:
+                        print(f"[GenerationToolHandler] {detail}")
+                
+                else:
                     return GenerationResult(
                         success=False,
-                        error=f"Tool '{func_name}' returned no code",
+                        error=f"Unknown tool: {func_name}",
                         iterations=iteration,
                         feedback_history=self._feedback_history
                     )
                 
+                # Validate resulting code
                 validation = self.validator.validate_code(code)
                 
                 if validation["valid"]:
@@ -189,7 +430,10 @@ class GenerationToolHandler:
                     self._feedback_history.append(feedback)
                     
                     # Update prompt with feedback for next iteration
-                    user_prompt = f"Previous attempt had validation errors:\n\n{feedback}\n\nUse fix_manim_code tool to correct the code."
+                    user_prompt = GENERATION_RETRY_USER.format(
+                        feedback=feedback,
+                        code=code
+                    )
             
             # Max iterations reached
             return GenerationResult(
@@ -210,43 +454,23 @@ class GenerationToolHandler:
     
     
     def _get_tools(self, types_module) -> List[Any]:
-        """Get available tools for agentic generation"""
+        """Get available tools: write_code (full replacement) and fix_code (diff-based)"""
         return [
             types_module.Tool(
                 function_declarations=[
                     types_module.FunctionDeclaration(
-                        name="generate_manim_code",
-                        description="Generate complete Manim animation code. Code will be validated and feedback returned.",
-                        parameters=GENERATE_CODE_SCHEMA
+                        name="write_code",
+                        description="Write complete Manim animation code (full replacement). Use for initial generation or major rewrites. Code will be validated and feedback returned.",
+                        parameters=WRITE_CODE_SCHEMA
                     ),
                     types_module.FunctionDeclaration(
-                        name="fix_manim_code",
-                        description="Fix Manim code that had validation errors. Provide corrected code.",
-                        parameters=GENERATE_CODE_SCHEMA
+                        name="fix_code",
+                        description="Fix Manim code using targeted search/replace operations. Use for surgical fixes to preserve working code. Each fix will be validated.",
+                        parameters=FIX_CODE_SCHEMA
                     ),
                 ]
             )
         ]
-    
-    def _extract_code_from_response(self, response: str) -> Optional[str]:
-        """Try to extract code from text response"""
-        if not response:
-            return None
-        
-        # Try to find code block or code-like content
-        import re
-        # Look for python code pattern
-        pattern = r'```python\n(.*)\n```'
-        match = re.search(pattern, response, re.DOTALL)
-        if match:
-            return match.group(1)
-        
-        # If no markdown, return the whole response if it looks like code
-        if "self.play" in response or "self.wait" in response:
-            return response
-        
-        return None
-    
     
     def _build_system_prompt(self, context: ManimContext) -> str:
         """Build system prompt for agentic generation"""

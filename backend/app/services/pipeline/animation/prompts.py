@@ -3,7 +3,7 @@ Animation Prompts - All Manim-related prompt templates
 
 Centralizes prompts for:
 - Agentic code generation
-- Error correction
+- Tool-based correction
 - Code recompilation
 - Visual refinement
 """
@@ -65,84 +65,6 @@ Use self.wait() to sync with narration timing.""",
 
 
 # =============================================================================
-# ERROR CORRECTION PROMPTS
-# =============================================================================
-
-DIFF_CORRECTION_SYSTEM = PromptTemplate(
-    template="""You are an expert Manim code debugger.
-Fix Python/Manim errors using SEARCH/REPLACE blocks.
-
-{manim_context}
-
-OUTPUT FORMAT:
-For each fix, output a SEARCH/REPLACE block:
-
-```python
-<<<<<<< SEARCH
-# Exact code to find
-=======
-# Fixed code
->>>>>>> REPLACE
-```
-
-RULES:
-1. SEARCH text must EXACTLY match existing code (whitespace matters!)
-2. Keep changes minimal and targeted
-3. Fix the root cause, not symptoms
-4. Preserve timing (self.wait, run_time values)
-5. Don't change working code unnecessarily""",
-    description="System prompt for diff-based error correction"
-)
-
-
-DIFF_CORRECTION_USER = PromptTemplate(
-    template="""Fix this Manim code error.
-
-ERROR TYPE: {error_type}
-ERROR MESSAGE:
-{error_message}
-
-CURRENT CODE:
-```python
-{code}
-```
-
-{timing_hint}
-
-Provide SEARCH/REPLACE blocks to fix the error.
-Keep changes minimal - only fix what's broken.""",
-    description="User prompt for diff-based correction"
-)
-
-
-STRUCTURED_CORRECTION_SYSTEM = PromptTemplate(
-    template="""You are a Manim code debugger. Analyze errors and provide fixes.
-
-{manim_context}
-
-Provide fixes as search/replace pairs. The "search" field must EXACTLY match text in the code.""",
-    description="System prompt for structured JSON error correction"
-)
-
-
-STRUCTURED_CORRECTION_USER = PromptTemplate(
-    template="""Analyze and fix this Manim code error.
-
-ERROR TYPE: {error_type}
-ERROR:
-{error_message}
-
-CODE:
-```python
-{code}
-```
-
-Return JSON with fixes array. Each fix has 'search' and 'replace' fields.""",
-    description="User prompt for structured correction"
-)
-
-
-# =============================================================================
 # CODE RECOMPILATION PROMPTS
 # =============================================================================
 
@@ -200,6 +122,78 @@ Return corrected code via the fix_code tool.""",
 )
 
 
+# =============================================================================
+# CODE FIXING PROMPTS (write_code / fix_code tools)
+# =============================================================================
+
+FIX_CODE_USER = PromptTemplate(
+    template="""Fix this Manim code error.
+
+ERROR MESSAGE:
+{error_message}
+
+{context_info}
+
+CURRENT CODE (construct method body only):
+```python
+{code}
+```
+
+You have two tools to fix the code:
+1. write_code - Full code replacement (use for major changes or complex issues)
+2. fix_code - Targeted search/replace fixes (use for small, surgical fixes)
+
+Choose the appropriate tool based on the error. Both tools will validate the result.""",
+    description="User prompt for fixing code with write_code or fix_code tools"
+)
+
+
+FIX_CODE_RETRY_USER = PromptTemplate(
+    template="""Previous fix still has errors:
+
+{feedback}
+
+CURRENT CODE:
+```python
+{code}
+```
+
+Use write_code or fix_code tool again with corrections.""",
+    description="User prompt for retry after failed fix"
+)
+
+
+GENERATION_RETRY_USER = PromptTemplate(
+    template="""Previous attempt had validation errors:
+
+{feedback}
+
+CURRENT CODE:
+```python
+{code}
+```
+
+Use write_code (full rewrite) or fix_code (targeted fixes) to correct the code.""",
+    description="User prompt for retry during generation"
+)
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def format_section_context(section: Optional[Dict[str, Any]]) -> str:
+    """Format section context for prompts"""
+    if not section:
+        return ""
+    
+    return f"""
+SECTION CONTEXT:
+- Title: {section.get('title', 'Unknown')}
+- Duration: {section.get('target_duration', 30)} seconds
+"""
+
+
 TOOL_CORRECTION_PROMPT = PromptTemplate(
     template="""Previous code attempt failed validation. Fix the issues:
 
@@ -238,73 +232,6 @@ def format_timing_context(section: Dict[str, Any]) -> str:
     return "TIMING:\n" + "\n".join(timing_lines) if timing_lines else ""
 
 
-def parse_error_context(error_message: str) -> Dict[str, str]:
-    """Parse error message to extract context"""
-    context = {
-        "error_type": "unknown",
-        "line": None,
-        "details": error_message
-    }
-    
-    # Try to extract error type
-    if "NameError" in error_message:
-        context["error_type"] = "NameError"
-    elif "AttributeError" in error_message:
-        context["error_type"] = "AttributeError"
-    elif "TypeError" in error_message:
-        context["error_type"] = "TypeError"
-    elif "ValueError" in error_message:
-        context["error_type"] = "ValueError"
-    elif "SyntaxError" in error_message:
-        context["error_type"] = "SyntaxError"
-    elif "IndentationError" in error_message:
-        context["error_type"] = "IndentationError"
-    
-    # Try to extract line number
-    import re
-    line_match = re.search(r'line (\d+)', error_message)
-    if line_match:
-        context["line"] = line_match.group(1)
-    
-    return context
-
-
-def build_diff_correction_prompt(
-    code: str,
-    error_message: str,
-    section: Optional[Dict[str, Any]] = None
-) -> str:
-    """Build complete prompt for diff-based correction"""
-    context = parse_error_context(error_message)
-    
-    timing_hint = ""
-    if section:
-        timing = section.get("audio_duration", 30)
-        timing_hint = f"TARGET TIMING: {timing}s (preserve timing if possible)"
-    
-    return DIFF_CORRECTION_USER.format(
-        error_type=context["error_type"],
-        error_message=error_message,
-        code=code,
-        timing_hint=timing_hint
-    )
-
-
-def build_structured_correction_prompt(
-    code: str,
-    error_message: str,
-    section: Optional[Dict[str, Any]] = None
-) -> str:
-    """Build prompt for structured JSON correction"""
-    context = parse_error_context(error_message)
-    
-    return STRUCTURED_CORRECTION_USER.format(
-        error_type=context["error_type"],
-        error_message=error_message,
-        code=code
-    )
-
-
 # =============================================================================
 # EXPORTS
 # =============================================================================
@@ -314,12 +241,6 @@ __all__ = [
     "AGENTIC_GENERATION_SYSTEM",
     "AGENTIC_GENERATION_USER",
     
-    # Error Correction
-    "DIFF_CORRECTION_SYSTEM",
-    "DIFF_CORRECTION_USER",
-    "STRUCTURED_CORRECTION_SYSTEM",
-    "STRUCTURED_CORRECTION_USER",
-    
     # Recompilation
     "RECOMPILE_SYSTEM",
     "RECOMPILE_USER",
@@ -328,11 +249,14 @@ __all__ = [
     "TOOL_CORRECTION_SYSTEM",
     "TOOL_CORRECTION_PROMPT",
     
+    # Code fixing
+    "FIX_CODE_USER",
+    "FIX_CODE_RETRY_USER",
+    "GENERATION_RETRY_USER",
+    
     # Helpers
     "format_timing_context",
-    "parse_error_context",
-    "build_diff_correction_prompt",
-    "build_structured_correction_prompt",
+    "format_section_context",
     
     # Constants
     "MANIM_CONTEXT",

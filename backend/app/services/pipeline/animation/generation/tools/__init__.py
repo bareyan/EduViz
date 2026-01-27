@@ -6,18 +6,18 @@ Uses Gemini function calling for structured, reliable outputs.
 
 Structure:
     tools/
-    ├── __init__.py     # Exports
-    ├── schemas.py      # Tool schemas (JSON schemas for function calling)
-    ├── context.py      # Manim context (colors, styles, API reference)
-    ├── generation.py   # Code generation tools
-    └── correction.py   # Code correction tools
+    ├── __init__.py         # Exports
+    ├── schemas.py          # Tool schemas (JSON schemas for function calling)
+    ├── context.py          # Manim context (colors, styles, API reference)
+    ├── generation.py       # Code generation and correction tools (unified)
+    ├── code_manipulation.py # Code extraction and fix application utilities
 """
 
 from .schemas import (
-    GENERATE_CODE_SCHEMA,
-    SEARCH_REPLACE_SCHEMA,
+    WRITE_CODE_SCHEMA,
+    FIX_CODE_SCHEMA,
+    GENERATE_CODE_SCHEMA,  # Backward compatibility
     VISUAL_SCRIPT_SCHEMA,
-    ANALYSIS_SCHEMA,
 )
 
 from .context import (
@@ -36,17 +36,18 @@ from .generation import (
     GenerationResult,
 )
 
-from .correction import (
-    CorrectionToolHandler,
-    CorrectionResult,
+from .code_manipulation import (
+    extract_code_from_response,
+    apply_fixes,
+    find_similar_text,
 )
 
 __all__ = [
     # Schemas
-    "GENERATE_CODE_SCHEMA",
-    "SEARCH_REPLACE_SCHEMA",
+    "WRITE_CODE_SCHEMA",
+    "FIX_CODE_SCHEMA",
+    "GENERATE_CODE_SCHEMA",  # Backward compatibility
     "VISUAL_SCRIPT_SCHEMA",
-    "ANALYSIS_SCHEMA",
     # Context
     "ManimContext",
     "build_context",
@@ -56,10 +57,11 @@ __all__ = [
     "get_animation_guidance",
     "get_language_instructions",
     "get_manim_reference",
-    # Generation
+    # Generation (handles both generation and correction)
     "GenerationToolHandler",
     "GenerationResult",
-    # Correction
-    "CorrectionToolHandler",
-    "CorrectionResult",
+    # Code manipulation utilities
+    "extract_code_from_response",
+    "apply_fixes",
+    "find_similar_text",
 ]

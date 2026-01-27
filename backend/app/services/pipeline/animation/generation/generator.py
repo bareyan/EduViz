@@ -18,27 +18,25 @@ from app.config.models import get_model_config
 # Tool-based generation (unified approach)
 from .tools import (
     GenerationToolHandler,
-    CorrectionToolHandler,
     build_context,
 )
 from .code_helpers import clean_code, create_scene_file
 from .validation import CodeValidator
 from . import renderer
+from ..config import MAX_CLEAN_RETRIES, MAX_CORRECTION_ATTEMPTS
 
 
 class ManimGenerator:
     """
     Generates Manim animations using tool-based approach.
     
-    Uses GenerationToolHandler and CorrectionToolHandler for:
+    Uses GenerationToolHandler for:
     - Visual script generation (structured output)
     - Manim code generation (function calling)
-    - Error correction (tool-based fixes)
+    - Error correction (same tool-based fixes)
     
     All logic centralized in: tools/
     """
-
-    MAX_CLEAN_RETRIES = 2
 
     def __init__(self, pipeline_name: Optional[str] = None):
         self.pipeline_name = pipeline_name
@@ -54,9 +52,9 @@ class ManimGenerator:
         # Initialize validator
         self.validator = CodeValidator()
         
-        # Initialize tool handlers (unified approach)
+        # Initialize tool handlers (unified approach - same handler for generation and correction)
         self.generation_handler = GenerationToolHandler(self.code_engine, self.validator)
-        self.correction_handler = CorrectionToolHandler(self.correction_engine, self.validator)
+        self.correction_handler = GenerationToolHandler(self.correction_engine, self.validator)
 
         # Initialize stats
         self.stats = {
@@ -67,14 +65,14 @@ class ManimGenerator:
             "failed_sections": []
         }
         
-        # Load config
+        # Load config and set limits
         self._refresh_config()
+        self.MAX_CLEAN_RETRIES = MAX_CLEAN_RETRIES
+        self.MAX_CORRECTION_ATTEMPTS = MAX_CORRECTION_ATTEMPTS
 
     def _refresh_config(self):
         """Refresh model configuration"""
         self._manim_config = get_model_config("manim_generation", self.pipeline_name)
-        
-        self.MAX_CORRECTION_ATTEMPTS = getattr(self._manim_config, 'max_correction_attempts', 3)
 
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost summary"""

@@ -6,11 +6,9 @@ These tests validate deterministic helper logic without calling any LLMs.
 
 from app.services.pipeline.animation.generation.tools import (
     GenerationToolHandler,
-    CorrectionToolHandler,
-    GENERATE_CODE_SCHEMA,
-    SEARCH_REPLACE_SCHEMA,
+    WRITE_CODE_SCHEMA,
+    FIX_CODE_SCHEMA,
     VISUAL_SCRIPT_SCHEMA,
-    ANALYSIS_SCHEMA,
     build_context,
     get_language_instructions,
 )
@@ -65,7 +63,7 @@ class TestApplyFixes:
     """Test search/replace fix application logic."""
 
     def setup_method(self):
-        self.handler = CorrectionToolHandler(engine=None, validator=None)
+        self.handler = GenerationToolHandler(engine=None, validator=None)
 
     def test_successful_replace(self):
         code = """from manim import *
@@ -141,21 +139,17 @@ class MyScene(Scene):
 class TestSchemas:
     """Validate schema structure for tool contracts."""
 
-    def test_generate_code_schema(self):
-        assert GENERATE_CODE_SCHEMA["type"] == "object"
-        assert "code" in GENERATE_CODE_SCHEMA["required"]
+    def test_write_code_schema(self):
+        assert WRITE_CODE_SCHEMA["type"] == "object"
+        assert "code" in WRITE_CODE_SCHEMA["required"]
 
-    def test_search_replace_schema(self):
-        assert SEARCH_REPLACE_SCHEMA["type"] == "object"
-        assert "fixes" in SEARCH_REPLACE_SCHEMA["required"]
+    def test_fix_code_schema(self):
+        assert FIX_CODE_SCHEMA["type"] == "object"
+        assert "fixes" in FIX_CODE_SCHEMA["required"]
 
     def test_visual_script_schema(self):
         assert VISUAL_SCRIPT_SCHEMA["type"] == "object"
         assert "segments" in VISUAL_SCRIPT_SCHEMA["required"]
-
-    def test_analysis_schema(self):
-        assert ANALYSIS_SCHEMA["type"] == "object"
-        assert "issue_type" in ANALYSIS_SCHEMA["required"]
 
 
 class TestContextHelpers:

@@ -6,12 +6,12 @@ These schemas tell Gemini exactly what structure to return.
 """
 
 # =============================================================================
-# GENERATION TOOLS
+# CODE WRITING AND FIXING TOOLS
 # =============================================================================
 
-GENERATE_CODE_SCHEMA = {
+WRITE_CODE_SCHEMA = {
     "type": "object",
-    "description": "Generate complete Manim animation code",
+    "description": "Write complete Manim animation code (full replacement)",
     "properties": {
         "code": {
             "type": "string",
@@ -30,6 +30,49 @@ GENERATE_CODE_SCHEMA = {
     "required": ["code"]
 }
 
+
+FIX_CODE_SCHEMA = {
+    "type": "object",
+    "description": "Fix code using targeted search/replace operations (preserves working code)",
+    "properties": {
+        "fixes": {
+            "type": "array",
+            "description": "List of targeted fixes to apply",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "search": {
+                        "type": "string",
+                        "description": "Exact text to find (must match exactly including whitespace). Include enough context to make it unique."
+                    },
+                    "replace": {
+                        "type": "string",
+                        "description": "Replacement text (exact whitespace/indentation)"
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "Brief reason for this fix"
+                    }
+                },
+                "required": ["search", "replace", "reason"]
+            }
+        },
+        "description": {
+            "type": "string",
+            "description": "Overall description of what these fixes accomplish"
+        }
+    },
+    "required": ["fixes"]
+}
+
+
+# Backward compatibility alias
+GENERATE_CODE_SCHEMA = WRITE_CODE_SCHEMA
+
+
+# =============================================================================
+# VISUAL SCRIPT SCHEMA
+# =============================================================================
 
 VISUAL_SCRIPT_SCHEMA = {
     "type": "object",
@@ -69,64 +112,3 @@ VISUAL_SCRIPT_SCHEMA = {
     "required": ["segments", "total_duration"]
 }
 
-
-# =============================================================================
-# CORRECTION TOOLS
-# =============================================================================
-
-SEARCH_REPLACE_SCHEMA = {
-    "type": "object",
-    "description": "Fix code using search and replace",
-    "properties": {
-        "fixes": {
-            "type": "array",
-            "description": "List of fixes to apply",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "search": {
-                        "type": "string",
-                        "description": "Exact text to find (must match exactly including whitespace)"
-                    },
-                    "replace": {
-                        "type": "string",
-                        "description": "Replacement text"
-                    },
-                    "reason": {
-                        "type": "string",
-                        "description": "Brief reason for this fix"
-                    }
-                },
-                "required": ["search", "replace"]
-            }
-        }
-    },
-    "required": ["fixes"]
-}
-
-
-ANALYSIS_SCHEMA = {
-    "type": "object",
-    "description": "Analyze code or error",
-    "properties": {
-        "issue_type": {
-            "type": "string",
-            "enum": ["syntax_error", "runtime_error", "visual_issue", "timing_issue", "api_error"],
-            "description": "Type of issue detected"
-        },
-        "root_cause": {
-            "type": "string",
-            "description": "Root cause of the issue"
-        },
-        "affected_lines": {
-            "type": "array",
-            "items": {"type": "integer"},
-            "description": "Line numbers affected"
-        },
-        "suggested_fix": {
-            "type": "string",
-            "description": "Suggested fix approach"
-        }
-    },
-    "required": ["issue_type", "root_cause"]
-}
