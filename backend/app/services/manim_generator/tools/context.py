@@ -144,6 +144,23 @@ STYLE: {config.name}
 """
 
 
+def get_theme_setup_code(style: str = "3b1b") -> str:
+    """Return scene background setup snippet for a given style"""
+    config = get_style_config(style)
+
+    if style == "3b1b" or config.background.startswith("#"):
+        bg_color = config.background.replace("#", "")
+        return f'''        # Theme: {config.name}
+        self.camera.background_color = "#{bg_color}"'''
+
+    if style == "clean":
+        return '''        # Theme: Clean Light
+        self.camera.background_color = WHITE'''
+
+    return '''        # Theme: Default Dark
+        self.camera.background_color = "#1C1C1C"'''
+
+
 # =============================================================================
 # ANIMATION TYPE GUIDANCE
 # =============================================================================

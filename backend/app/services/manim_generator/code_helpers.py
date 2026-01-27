@@ -5,7 +5,7 @@ Code utilities - cleaning, normalization, scene file creation
 import re
 from typing import Optional
 
-from .prompts import get_theme_setup_code
+from .tools import get_theme_setup_code
 
 
 def clean_code(code: str) -> str:

@@ -1,13 +1,17 @@
 """
-Generation Tools - Tool-based Manim code generation
+Generation Tools - Agentic Manim code generation
 
-Uses Gemini function calling for structured, reliable code generation.
+Uses Gemini function calling for agentic iteration:
+- Model has access to generate_code and fix_code tools
+- Tools validate and return feedback
+- Model iterates until code is valid or max attempts reached
 """
 
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
+import json
 
-from .schemas import GENERATE_CODE_SCHEMA, VISUAL_SCRIPT_SCHEMA
+from .schemas import GENERATE_CODE_SCHEMA, VISUAL_SCRIPT_SCHEMA, SEARCH_REPLACE_SCHEMA, ANALYSIS_SCHEMA
 from .context import build_context, get_manim_reference, ManimContext
 
 
@@ -19,18 +23,28 @@ class GenerationResult:
     visual_script: Optional[Dict] = None
     error: Optional[str] = None
     validation: Optional[Dict] = None
+    iterations: int = 0
+    feedback_history: Optional[List[str]] = None
+    
+    def __post_init__(self):
+        """Initialize feedback_history if None"""
+        if self.feedback_history is None:
+            self.feedback_history = []
 
 
 class GenerationToolHandler:
     """
-    Handles Manim code generation using tool calling.
+    Agentic Manim code generation using tool calling.
     
     Flow:
-    1. Build context (style, timing, language)
-    2. Generate visual script (optional 2-shot)
-    3. Generate Manim code
-    4. Validate code
+    1. Model generates code via generate_manim_code tool
+    2. Tool validates and returns feedback
+    3. If invalid, model uses fix_manim_code tool with feedback
+    4. Loop until code valid or max iterations reached
+    5. Model controls iteration via tool calls
     """
+    
+    MAX_ITERATIONS = 5
     
     def __init__(self, engine, validator):
         """
@@ -40,33 +54,7 @@ class GenerationToolHandler:
         """
         self.engine = engine
         self.validator = validator
-    
-    def get_tools(self, types_module) -> List[Any]:
-        """
-        Get Gemini tool declarations for generation.
-        
-        Args:
-            types_module: Gemini types module
-            
-        Returns:
-            List of Tool declarations for Gemini API
-        """
-        return [
-            types_module.Tool(
-                function_declarations=[
-                    types_module.FunctionDeclaration(
-                        name="generate_manim_code",
-                        description="Generate complete Manim animation code for the construct() method",
-                        parameters=GENERATE_CODE_SCHEMA
-                    ),
-                    types_module.FunctionDeclaration(
-                        name="create_visual_script",
-                        description="Create a visual storyboard with timing for the animation",
-                        parameters=VISUAL_SCRIPT_SCHEMA
-                    ),
-                ]
-            )
-        ]
+        self._feedback_history = []
     
     async def generate(
         self,
@@ -77,7 +65,7 @@ class GenerationToolHandler:
         use_visual_script: bool = True
     ) -> GenerationResult:
         """
-        Generate Manim code for a section.
+        Agentic code generation with tool-based iteration.
         
         Args:
             section: Section data with narration, title, etc.
@@ -89,6 +77,9 @@ class GenerationToolHandler:
         Returns:
             GenerationResult with code or error
         """
+        # Reset feedback history
+        self._feedback_history = []
+        
         # Detect animation type from section
         animation_type = self._detect_animation_type(section)
         
@@ -100,61 +91,180 @@ class GenerationToolHandler:
             language=language
         )
         
-        # Build user prompt
+        # Build initial system prompt
+        system_prompt = self._build_system_prompt(context)
+        
+        # Build initial user prompt
         user_prompt = self._build_generation_prompt(section, context)
         
-        # Generate with function calling
+        # Run agentic loop
         from app.services.prompting_engine import PromptConfig
+        from app.services.gemini import get_types_module
         
         config = PromptConfig(
             temperature=0.7,
-            max_output_tokens=4096,
-            timeout=120,
-            response_format="json"
+            max_output_tokens=8192,
+            timeout=300,
+            enable_thinking=False  # Disable thinking for agentic iteration
         )
         
+        code = None
+        iteration = 0
+        
         try:
-            response = await self.engine.generate(
-                prompt=user_prompt,
-                config=config,
-                system_prompt=context.to_system_prompt(),
-                response_schema=GENERATE_CODE_SCHEMA
+            # Agentic loop - model calls tools and gets feedback
+            while iteration < self.MAX_ITERATIONS:
+                iteration += 1
+                
+                # Get available tools
+                tools = self._get_tools(get_types_module())
+                
+                # Call model with tools available
+                response = await self.engine.generate(
+                    prompt=user_prompt,
+                    config=config,
+                    tools=tools
+                )
+                
+                if not response.get("success"):
+                    return GenerationResult(
+                        success=False,
+                        error=response.get("error", "Model call failed"),
+                        iterations=iteration,
+                        feedback_history=self._feedback_history
+                    )
+                
+                # Extract function calls from response
+                function_calls = response.get("function_calls", [])
+                
+                if not function_calls:
+                    # Model didn't call tools - extract code from text if available
+                    text_response = response.get("response", "")
+                    code = self._extract_code_from_response(text_response)
+                    if code:
+                        validation = self.validator.validate_code(code)
+                        if validation["valid"]:
+                            return GenerationResult(
+                                success=True,
+                                code=code,
+                                validation=validation,
+                                iterations=iteration,
+                                feedback_history=self._feedback_history
+                            )
+                    return GenerationResult(
+                        success=False,
+                        error="Model did not use tools",
+                        iterations=iteration,
+                        feedback_history=self._feedback_history
+                    )
+                
+                # Process first function call
+                func_call = function_calls[0]
+                func_name = func_call.get("name", "")
+                func_args = func_call.get("args", {})
+                
+                # Validate code from tool call
+                code = func_args.get("code", "")
+                if not code:
+                    return GenerationResult(
+                        success=False,
+                        error=f"Tool '{func_name}' returned no code",
+                        iterations=iteration,
+                        feedback_history=self._feedback_history
+                    )
+                
+                validation = self.validator.validate_code(code)
+                
+                if validation["valid"]:
+                    # Success!
+                    return GenerationResult(
+                        success=True,
+                        code=code,
+                        validation=validation,
+                        iterations=iteration,
+                        feedback_history=self._feedback_history
+                    )
+                else:
+                    # Invalid code - prepare feedback for next iteration
+                    error_msg = validation.get("error", "Code validation failed")
+                    feedback = f"Validation failed:\n{error_msg}"
+                    self._feedback_history.append(feedback)
+                    
+                    # Update prompt with feedback for next iteration
+                    user_prompt = f"Previous attempt had validation errors:\n\n{feedback}\n\nUse fix_manim_code tool to correct the code."
+            
+            # Max iterations reached
+            return GenerationResult(
+                success=False,
+                code=code,
+                error=f"Max iterations ({self.MAX_ITERATIONS}) reached without valid code",
+                iterations=iteration,
+                feedback_history=self._feedback_history
             )
-            
-            if not response:
-                return GenerationResult(success=False, error="Empty response from LLM")
-            
-            # Parse response
-            import json
-            if isinstance(response, str):
-                result = json.loads(response)
-            else:
-                result = response
-            
-            code = result.get("code", "")
-            
-            # Validate
-            validation = self.validator.validate_code(code)
-            
-            if validation["valid"]:
-                return GenerationResult(
-                    success=True,
-                    code=code,
-                    validation=validation
-                )
-            else:
-                return GenerationResult(
-                    success=False,
-                    code=code,
-                    error=validation.get("error", "Validation failed"),
-                    validation=validation
-                )
                 
         except Exception as e:
             return GenerationResult(
                 success=False,
-                error=f"Generation failed: {str(e)}"
+                error=f"Generation failed: {str(e)}",
+                iterations=iteration,
+                feedback_history=self._feedback_history
             )
+    
+    
+    def _get_tools(self, types_module) -> List[Any]:
+        """Get available tools for agentic generation"""
+        return [
+            types_module.Tool(
+                function_declarations=[
+                    types_module.FunctionDeclaration(
+                        name="generate_manim_code",
+                        description="Generate complete Manim animation code. Code will be validated and feedback returned.",
+                        parameters=GENERATE_CODE_SCHEMA
+                    ),
+                    types_module.FunctionDeclaration(
+                        name="fix_manim_code",
+                        description="Fix Manim code that had validation errors. Provide corrected code.",
+                        parameters=GENERATE_CODE_SCHEMA
+                    ),
+                ]
+            )
+        ]
+    
+    def _extract_code_from_response(self, response: str) -> Optional[str]:
+        """Try to extract code from text response"""
+        if not response:
+            return None
+        
+        # Try to find code block or code-like content
+        import re
+        # Look for python code pattern
+        pattern = r'```python\n(.*?)\n```'
+        match = re.search(pattern, response, re.DOTALL)
+        if match:
+            return match.group(1)
+        
+        # If no markdown, return the whole response if it looks like code
+        if "self.play" in response or "self.wait" in response:
+            return response
+        
+        return None
+    
+    
+    def _build_system_prompt(self, context: ManimContext) -> str:
+        """Build system prompt for agentic generation"""
+        return f"""{context.to_system_prompt()}
+
+TOOL-BASED ITERATION:
+You have two tools: generate_manim_code and fix_manim_code
+
+PROCESS:
+1. Call generate_manim_code with your best attempt
+2. You'll receive validation feedback
+3. If there are errors, call fix_manim_code with corrections
+4. Iterate until code validates or max attempts reached
+
+CRITICAL: Only use the tools to submit code. Do NOT write code in messages.
+Each tool call returns validation results to guide your fixes."""
     
     def _detect_animation_type(self, section: Dict[str, Any]) -> str:
         """Detect animation type from section content"""
@@ -192,7 +302,7 @@ class GenerationToolHandler:
                 cumulative += seg_duration
             timing_context = "TIMING:\n" + "\n".join(timing_lines)
         
-        return f"""Generate Manim code for this section:
+        return f"""Use the generate_manim_code tool to create animation code for this section:
 
 TITLE: {title}
 
@@ -209,8 +319,3 @@ TARGET DURATION: {context.target_duration} seconds
 Generate the construct() method body that creates engaging animations matching the narration.
 Use self.wait() to sync with narration timing.
 """
-
-
-def create_generation_tools(engine, validator) -> GenerationToolHandler:
-    """Create generation tool handler"""
-    return GenerationToolHandler(engine, validator)

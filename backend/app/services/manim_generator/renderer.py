@@ -12,7 +12,6 @@ from pathlib import Path
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from .code_helpers import remove_markdown_blocks, ensure_manim_structure
-from ..gemini.helpers import generate_content_with_text
 
 # Feature flag for diff-based correction (set to False to disable)
 USE_DIFF_BASED_CORRECTION = True
@@ -469,51 +468,23 @@ async def correct_manim_code(
     attempt: int = 0
 ) -> Optional[str]:
     """Use Gemini to fix errors in the Manim code"""
-    from .prompts import CORRECTION_SYSTEM_INSTRUCTION, build_correction_prompt
-    from app.config.models import get_model_config, get_thinking_config
-    from app.services.gemini import get_types_module
-
-    # Get model configs from centralized configuration
-    correction_config = get_model_config("code_correction")
-    correction_strong_config = get_model_config("code_correction_strong")
-
-    # Use stronger model on last attempt
-    is_last_attempt = attempt >= generator.MAX_CORRECTION_ATTEMPTS - 1
-    model_config = correction_strong_config if is_last_attempt else correction_config
-    model_to_use = model_config.model_name
-
-    if is_last_attempt:
-        print(f"[ManimGenerator] Using stronger model ({model_to_use}) for final fix attempt")
-
-    # Build prompt using the prompts module
-    prompt = build_correction_prompt(original_code, error_message, section)
-
-    # Use thinking config from centralized configuration if model supports it
-    thinking_config = get_thinking_config(model_config)
-
     try:
-        corrected = await generate_content_with_text(
-            client=generator.client,
-            model=model_to_use,
-            prompt=prompt,
-            system_instruction=CORRECTION_SYSTEM_INSTRUCTION,
-            thinking_config=thinking_config,
-            types_module=get_types_module(),
-            cost_tracker=generator.cost_tracker,
+        result = await generator.correction_handler.correct(
+            code=original_code,
+            error_message=error_message,
+            section=section,
+            attempt=attempt,
         )
 
-        if not corrected:
-            print("[ManimGenerator] Empty response from correction model")
-            return None
-
-        corrected = corrected.strip()
-        corrected = remove_markdown_blocks(corrected)
-
-        if ensure_manim_structure(corrected):
-            return corrected
-        else:
+        if result.success and result.code:
+            corrected = result.code.strip()
+            if ensure_manim_structure(corrected):
+                return corrected
             print("Corrected code missing basic Manim structure")
             return None
+
+        print(f"[ManimGenerator] Correction failed: {result.error}")
+        return None
 
     except Exception as e:
         print(f"Error during code correction: {e}")
@@ -527,42 +498,25 @@ async def generate_visual_fix(
     section: Dict[str, Any] = None
 ) -> Optional[str]:
     """Generate fixed Manim code based on visual QC error report"""
-    from .prompts import build_visual_fix_prompt
-    from app.config.models import get_model_config, get_thinking_config
-    from app.services.gemini import get_types_module
-
     if not error_report:
         return None
 
     if not section:
         section = {}
 
-    # Get strong model config for visual fixes
-    strong_config = get_model_config("code_correction_strong")
-    model_to_use = strong_config.model_name
-
-    # Build prompt using the prompts module
-    prompt = build_visual_fix_prompt(original_code, error_report, section)
-
-    # Get thinking config from centralized configuration
-    thinking_config = get_thinking_config(strong_config)
-
     try:
-        fixed_code = await generate_content_with_text(
-            client=generator.client,
-            model=model_to_use,
-            prompt=prompt,
-            thinking_config=thinking_config,
-            types_module=get_types_module(),
-            cost_tracker=generator.cost_tracker,
+        result = await generator.correction_handler.correct(
+            code=original_code,
+            error_message=error_report,
+            section=section,
+            attempt=0,
         )
 
-        if not fixed_code:
-            print("[ManimGenerator] Visual fix: Empty response")
+        if not result.success or not result.code:
+            print(f"[ManimGenerator] Visual fix failed: {result.error}")
             return None
 
-        fixed_code = fixed_code.strip()
-        fixed_code = remove_markdown_blocks(fixed_code)
+        fixed_code = result.code.strip()
 
         if "from manim import" not in fixed_code:
             fixed_code = "from manim import *\n\n" + fixed_code
@@ -671,29 +625,19 @@ async def fix_render_error(
     section: Dict[str, Any] = None
 ) -> Optional[str]:
     """Fix a render error in the code using Gemini"""
-    from .prompts import RENDER_FIX_SYSTEM_INSTRUCTION, build_render_fix_prompt
-    from app.services.gemini import get_types_module
-
-    # Build prompt with timing info if section is available
-    prompt = build_render_fix_prompt(code, error_message, section)
-
     try:
-        fixed_code = await generate_content_with_text(
-            client=generator.client,
-            model=generator.CORRECTION_MODEL,
-            prompt=prompt,
-            system_instruction=RENDER_FIX_SYSTEM_INSTRUCTION,
-            temperature=0.1,
-            max_output_tokens=8192,
-            types_module=get_types_module(),
-            cost_tracker=generator.cost_tracker,
+        result = await generator.correction_handler.correct(
+            code=code,
+            error_message=error_message,
+            section=section,
+            attempt=0,
         )
 
-        if not fixed_code:
+        if not result.success or not result.code:
+            print(f"[ManimGenerator] Render fix failed: {result.error}")
             return None
 
-        fixed_code = fixed_code.strip()
-        fixed_code = remove_markdown_blocks(fixed_code)
+        fixed_code = result.code.strip()
 
         if "from manim import" not in fixed_code:
             fixed_code = "from manim import *\n\n" + fixed_code
