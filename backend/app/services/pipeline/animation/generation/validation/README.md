@@ -1,5 +1,4 @@
-"""
-Manim Code Validation System - Architecture Documentation
+# Manim Code Validation System - Architecture Documentation
 
 ## Overview
 
