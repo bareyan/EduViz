@@ -5,7 +5,7 @@ Ensures spatial validation catches overlapping and out-of-bounds issues.
 """
 
 import pytest
-from app.services.manim_generator.validation.spatial_validator import (
+from app.services.pipeline.animation.generation.validation.spatial_validator import (
     SpatialValidator,
     format_spatial_issues
 )

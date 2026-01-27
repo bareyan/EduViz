@@ -2,7 +2,7 @@
 import pytest
 import shutil
 from pathlib import Path
-from app.services.job_manager import JobManager, Job, JobStatus
+from app.services.infrastructure.orchestration import JobManager, Job, JobStatus
 
 @pytest.fixture
 def job_manager(tmp_path):

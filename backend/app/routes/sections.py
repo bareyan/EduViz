@@ -13,7 +13,7 @@ from fastapi.responses import PlainTextResponse, FileResponse
 from pydantic import BaseModel
 
 from ..config import OUTPUT_DIR, GEMINI_API_KEY
-from ..services.job_manager import JobStatus, get_job_manager
+from ..services.infrastructure.orchestration import JobStatus, get_job_manager
 from ..core import load_script, load_section_script, save_script
 from ..core import validate_job_id, validate_path_within_directory
 from ..core import get_logger
@@ -389,8 +389,8 @@ async def recompile_job(job_id: str, background_tasks: BackgroundTasks):
 async def fix_section_code(job_id: str, section_id: str, request: FixCodeRequest):
     """Use Gemini to fix/improve Manim code based on prompt and optional frame context"""
     import base64
-    from app.services.gemini.client import create_client, get_types_module
-    from app.services.gemini.helpers import generate_content_with_images
+    from app.services.infrastructure.llm.gemini.client import create_client, get_types_module
+    from app.services.infrastructure.llm.gemini.helpers import generate_content_with_images
 
     if not GEMINI_API_KEY:
         raise HTTPException(status_code=500, detail="GEMINI_API_KEY not configured")

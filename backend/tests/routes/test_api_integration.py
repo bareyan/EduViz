@@ -7,7 +7,7 @@ import io
 from app.main import app
 from app.models import JobResponse
 from app.models.status import JobStatus
-from app.services.job_manager import Job
+from app.services.infrastructure.orchestration import Job
 
 client = TestClient(app)
 

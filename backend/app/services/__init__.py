@@ -1,43 +1,42 @@
 """
 Services package - Core business logic and integrations
 
-Organized modules by responsibility:
+Organized by domain responsibility:
 
-Core Analysis:
-	- analysis: Material analysis (PDF, images, text)
+Pipeline (Core Video Generation Flow):
+    - pipeline/content_analysis: Material analysis (PDF, images, text)
+    - pipeline/script_generation: Modular video script creation
+    - pipeline/animation: Animation generation, correction, and QC
+    - pipeline/audio: Text-to-speech
+    - pipeline/assembly: Video rendering and assembly
     
-Script Generation:
-	- script_generation: Modular video script creation with two-phase approach
-    
-Code Generation & Rendering:
-	- manim_generator: Animation code generation
-	- video_generator: Video rendering and generation
-    
-LLM Integration:
-	- gemini/: Unified Gemini API client and helpers
-    
-Support Services:
-	- parsing/: JSON/code parsing utilities
-	- job_manager: Job status and progress tracking
-	- translation_service: Video translation
-	- tts_engine: Text-to-speech
-	- visual_qc: Video quality control
+Infrastructure (Technical Concerns):
+    - infrastructure/llm: LLM integration (Gemini, prompting, cost tracking)
+    - infrastructure/storage: Data persistence
+    - infrastructure/orchestration: Job management
+    - infrastructure/parsing: JSON/code parsing utilities
+
+Features (Secondary Capabilities):
+    - features/translation: Video translation
+
+Use Cases (Application Layer):
+    - use_cases: Business logic orchestration
 
 Architecture Principles:
-	- Single Responsibility: Each module/file does one thing
-	- Dependency Injection: Services accept dependencies
-	- Async-first: All I/O operations use async/await
-	- Error Recovery: Robust error handling and fallbacks
-	- Cost Tracking: Integrated cost monitoring
+    - Single Responsibility: Each module/file does one thing
+    - Dependency Injection: Services accept dependencies
+    - Async-first: All I/O operations use async/await
+    - Error Recovery: Robust error handling and fallbacks
+    - Cost Tracking: Integrated cost monitoring
 """
 
 # Main entry points
-from .analysis import MaterialAnalyzer
-from .script_generation import ScriptGenerator
-from .job_manager import JobManager
+from .pipeline.content_analysis import MaterialAnalyzer
+from .pipeline.script_generation import ScriptGenerator
+from .infrastructure.orchestration import JobManager
 
 __all__ = [
-	"MaterialAnalyzer",
-	"ScriptGenerator",
-	"JobManager",
+    "MaterialAnalyzer",
+    "ScriptGenerator",
+    "JobManager",
 ]

@@ -9,7 +9,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from app.services.tts_engine import TTSEngine
+from app.services.pipeline.audio import TTSEngine
 
 
 async def test_audio_generation():

@@ -14,10 +14,12 @@ Modules:
 
 from .base import UseCase
 from .file_upload_use_case import FileUploadUseCase, FileUploadRequest, FileUploadResponse
+from .generation_use_case import GenerationUseCase
 
 __all__ = [
     "UseCase",
     "FileUploadUseCase",
     "FileUploadRequest",
     "FileUploadResponse",
+    "GenerationUseCase",
 ]

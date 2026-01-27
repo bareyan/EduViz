@@ -1,0 +1,189 @@
+"""
+GenerationUseCase - orchestrates job creation/resume and video generation.
+
+Keeps HTTP routes thin by handling pipeline selection, job lifecycle, and
+background task wiring. Pure business logic lives here; routes just translate
+HTTP to request objects and schedule work.
+"""
+
+import uuid
+import traceback
+from typing import Callable, Optional, List, Dict, Any
+
+from fastapi import HTTPException, BackgroundTasks
+
+from app.config import OUTPUT_DIR
+from app.config.models import AVAILABLE_PIPELINES
+from app.models import GenerationRequest, JobResponse, ResumeInfo
+from app.services.pipeline.content_analysis import MaterialAnalyzer
+from app.services.pipeline.assembly import VideoGenerator
+from app.services.infrastructure.orchestration import get_job_manager, JobStatus
+from app.core import find_uploaded_file
+
+
+class GenerationUseCase:
+    """Handle generation job lifecycle and background execution."""
+
+    def __init__(self):
+        self.job_manager = get_job_manager()
+
+    def _validate_pipeline(self, pipeline_name: str) -> str:
+        name = pipeline_name or "default"
+        if name not in AVAILABLE_PIPELINES:
+            raise HTTPException(status_code=400, detail=f"Unknown pipeline: {name}")
+        return name
+
+    def _select_job(self, resume_job_id: Optional[str]) -> tuple[str, bool]:
+        """Create or reuse a job id; returns (job_id, resume_mode)."""
+        resume_mode = False
+        if resume_job_id:
+            existing_job = self.job_manager.get_job(resume_job_id)
+            if existing_job:
+                self.job_manager.update_job(resume_job_id, JobStatus.ANALYZING, 0, "Resuming generation...")
+                return resume_job_id, True
+        job_id = str(uuid.uuid4())
+        self.job_manager.create_job(job_id)
+        return job_id, resume_mode
+
+    def start_generation(self, request: GenerationRequest, background_tasks: BackgroundTasks) -> JobResponse:
+        """Validate input, enqueue generation work, and return initial response."""
+        pipeline_name = self._validate_pipeline(request.pipeline)
+
+        # Resolve uploaded file path (raises HTTPException if missing)
+        file_path = find_uploaded_file(request.file_id)
+
+        # Instantiate services per request (pipeline-scoped)
+        analyzer = MaterialAnalyzer(pipeline_name=pipeline_name)
+        video_generator = VideoGenerator(str(OUTPUT_DIR), pipeline_name=pipeline_name)
+
+        job_id, resume_mode = self._select_job(request.resume_job_id)
+
+        def update_progress_factory(total_topics: int, base_progress: float, job_id: str) -> Callable[[Dict[str, Any]], None]:
+            def _update(p: Dict[str, Any]):
+                stage = p.get("stage", "")
+                message = p.get("message", "Processing...")
+                stage_progress = p.get("progress", 0)
+
+                if stage == "script":
+                    status = JobStatus.GENERATING_SCRIPT
+                elif stage == "sections":
+                    status = JobStatus.CREATING_ANIMATIONS
+                elif stage == "combining":
+                    status = JobStatus.COMPOSING_VIDEO
+                else:
+                    status = JobStatus.CREATING_ANIMATIONS
+
+                if stage == "script":
+                    overall = base_progress + (stage_progress * 0.1) / total_topics
+                elif stage == "sections":
+                    overall = base_progress + (10 + stage_progress * 0.8) / total_topics
+                elif stage == "combining":
+                    overall = base_progress + (90 + stage_progress * 0.1) / total_topics
+                else:
+                    overall = base_progress + (stage_progress / total_topics)
+
+                self.job_manager.update_job(job_id, status, overall, message)
+
+            return _update
+
+        async def run_generation():
+            try:
+                print(f"[Generation] Using pipeline: {pipeline_name} (video_mode: {request.video_mode})")
+
+                if resume_mode:
+                    self.job_manager.update_job(job_id, JobStatus.ANALYZING, 0, "Checking existing progress...")
+                else:
+                    self.job_manager.update_job(job_id, JobStatus.ANALYZING, 0, "Re-analyzing material...")
+
+                analysis = await analyzer.analyze(file_path, request.file_id)
+                all_topics: List[Dict[str, Any]] = analysis.get("suggested_topics", [])
+                selected_topics = [t for t in all_topics if t.get("index") in request.selected_topics]
+
+                if not selected_topics:
+                    self.job_manager.update_job(job_id, JobStatus.FAILED, 0, "No valid topics selected")
+                    return
+
+                all_results = []
+                total_topics = len(selected_topics)
+
+                for topic_idx, topic in enumerate(selected_topics):
+                    base_progress = (topic_idx / total_topics) * 100
+
+                    self.job_manager.update_job(
+                        job_id,
+                        JobStatus.GENERATING_SCRIPT,
+                        base_progress,
+                        f"{'Resuming' if resume_mode else 'Generating'} {request.video_mode} video {topic_idx + 1}/{total_topics}: {topic.get('title', 'Unknown')}"
+                    )
+
+                    result = await video_generator.generate_video(
+                        job_id=job_id,
+                        material_path=file_path,
+                        voice=request.voice,
+                        style=request.style,
+                        language=request.language,
+                        video_mode=request.video_mode,
+                        resume=resume_mode,
+                        progress_callback=update_progress_factory(total_topics, base_progress, job_id),
+                    )
+
+                    if result.get("status") == "completed":
+                        all_results.append({
+                            "video_id": job_id,
+                            "title": result["script"].get("title", "Math Video"),
+                            "duration": result.get("total_duration") or sum(c.get("duration", 0) for c in result.get("chapters", [])),
+                            "chapters": result.get("chapters", []),
+                            "download_url": f"/outputs/{job_id}/final_video.mp4",
+                            "thumbnail_url": None,
+                        })
+
+                if all_results:
+                    self.job_manager.update_job(
+                        job_id,
+                        JobStatus.COMPLETED,
+                        100,
+                        f"Generated {len(all_results)} video(s) successfully!",
+                        result=all_results,
+                    )
+                else:
+                    self.job_manager.update_job(
+                        job_id,
+                        JobStatus.FAILED,
+                        0,
+                        "No videos were generated successfully",
+                    )
+
+            except Exception as e:  # noqa: BLE001
+                traceback.print_exc()
+                self.job_manager.update_job(job_id, JobStatus.FAILED, 0, f"Error: {str(e)}")
+
+        background_tasks.add_task(run_generation)
+
+        return JobResponse(
+            job_id=job_id,
+            status="pending" if not resume_mode else "resuming",
+            progress=0.0,
+            message="Resuming video generation..." if resume_mode else "Video generation started",
+        )
+
+    def get_resume_info(self, job_id: str) -> ResumeInfo:
+        job = self.job_manager.get_job(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        vg = VideoGenerator(str(OUTPUT_DIR))
+        progress = vg.check_existing_progress(job_id)
+
+        can_resume = (
+            job.status in [JobStatus.FAILED, JobStatus.INTERRUPTED]
+            and progress["has_script"]
+            and not progress["has_final_video"]
+        )
+
+        return ResumeInfo(
+            can_resume=can_resume,
+            completed_sections=len(progress["completed_sections"]),
+            total_sections=progress["total_sections"],
+            failed_sections=[],
+            last_completed_section=None,
+        )

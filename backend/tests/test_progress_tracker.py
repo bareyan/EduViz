@@ -6,7 +6,7 @@ Tests job progress tracking, resume logic, and state persistence
 import pytest
 import json
 from pathlib import Path
-from app.services.video_generator.progress import (
+from app.services.pipeline.assembly.progress import (
     ProgressTracker,
     JobProgress
 )

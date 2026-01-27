@@ -5,7 +5,7 @@ Test script for Gemini API cost tracking
 
 import asyncio
 
-from app.services.manim_generator import ManimGenerator
+from app.services.pipeline.animation.generation import ManimGenerator
 
 
 async def test_cost_tracking():

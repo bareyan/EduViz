@@ -6,7 +6,7 @@ import traceback
 from fastapi import APIRouter, HTTPException
 
 from ..models import AnalysisRequest
-from ..services.analysis import MaterialAnalyzer
+from ..services.pipeline.content_analysis import MaterialAnalyzer
 from ..core import find_uploaded_file
 
 router = APIRouter(tags=["analysis"])

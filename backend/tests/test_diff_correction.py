@@ -5,8 +5,8 @@ Run with: python -m pytest tests/test_diff_correction.py -v
 """
 
 import pytest
-from app.services.diff_correction.parser import find_search_replace_blocks, SearchReplaceBlock
-from app.services.diff_correction.applier import apply_search_replace, apply_all_blocks, validate_syntax
+from app.services.pipeline.animation.correction.parser import find_search_replace_blocks, SearchReplaceBlock
+from app.services.pipeline.animation.correction.applier import apply_search_replace, apply_all_blocks, validate_syntax
 
 
 class TestParser:

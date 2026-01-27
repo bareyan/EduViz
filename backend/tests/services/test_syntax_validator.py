@@ -5,7 +5,7 @@ Ensures syntax validation works correctly for valid and invalid code.
 """
 
 import pytest
-from app.services.manim_generator.validation import PythonSyntaxValidator
+from app.services.pipeline.animation.generation.validation import PythonSyntaxValidator
 
 
 class TestPythonSyntaxValidator:

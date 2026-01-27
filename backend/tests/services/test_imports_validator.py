@@ -5,7 +5,7 @@ Ensures import validation works correctly.
 """
 
 import pytest
-from app.services.manim_generator.validation import ManimImportsValidator
+from app.services.pipeline.animation.generation.validation import ManimImportsValidator
 
 
 class TestManimImportsValidator:

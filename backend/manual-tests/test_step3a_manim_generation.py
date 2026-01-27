@@ -8,7 +8,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from app.services.manim_generator import ManimGenerator
+from app.services.pipeline.animation.generation import ManimGenerator
 from app.config.models import set_active_pipeline
 
 

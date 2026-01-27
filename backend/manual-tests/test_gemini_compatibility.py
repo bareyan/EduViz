@@ -8,8 +8,8 @@ import asyncio
 import os
 from pathlib import Path
 
-from app.services.gemini.client import create_client, get_types_module
-from app.services.gemini.helpers import (
+from app.services.infrastructure.llm.gemini.client import create_client, get_types_module
+from app.services.infrastructure.llm.gemini.helpers import (
     generate_content_with_text,
     generate_content_with_images,
 )

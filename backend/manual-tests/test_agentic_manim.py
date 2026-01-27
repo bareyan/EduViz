@@ -16,7 +16,7 @@ from pathlib import Path
 # Ensure app module is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.services.manim_generator import ManimGenerator
+from app.services.pipeline.animation.generation import ManimGenerator
 from app.config.models import set_active_pipeline
 
 

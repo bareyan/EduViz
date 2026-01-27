@@ -48,7 +48,7 @@ from .media import (
     get_video_info,
 )
 
-# Script I/O
+# Script I/O (adapter-backed)
 from .scripts import (
     load_script,
     save_script,

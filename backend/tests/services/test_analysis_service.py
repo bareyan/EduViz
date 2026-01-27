@@ -1,8 +1,8 @@
 
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
-from app.services.analysis.analyzer import MaterialAnalyzer
-from app.services.analysis.base import BaseAnalyzer
+from app.services.pipeline.content_analysis.analyzer import MaterialAnalyzer
+from app.services.pipeline.content_analysis.base import BaseAnalyzer
 
 class TestMaterialAnalyzer:
     @pytest.fixture
@@ -37,29 +37,20 @@ class TestMaterialAnalyzer:
 
 class TestBaseAnalyzer:
     def test_get_representative_sample_short(self):
-        # We need to mock the mixins/dependencies of BaseAnalyzer to instantiate it?
-        # Typically BaseAnalyzer is abstract or mixin, but here it's a class.
-        # It calls get_model_config etc in __init__. We need to mock those.
-        
-        with patch("app.services.analysis.base.get_model_config"), \
-             patch("app.services.analysis.base.create_client"), \
-             patch("app.services.analysis.base.get_types_module"):
-             
+        # PromptingEngine is the only dependency instantiated by BaseAnalyzer.
+        with patch("app.services.analysis.base.PromptingEngine"):
             base = BaseAnalyzer()
             text = "Short text"
             assert base._get_representative_sample(text) == text
 
     def test_get_representative_sample_long(self):
-        with patch("app.services.analysis.base.get_model_config"), \
-             patch("app.services.analysis.base.create_client"), \
-             patch("app.services.analysis.base.get_types_module"):
-             
+        with patch("app.services.analysis.base.PromptingEngine"):
             base = BaseAnalyzer()
             # Create text larger than defaults? default max is 15000.
             # Let's override for test if possible, or generate specific string.
             long_text = "a" * 20000
             mic_drop = base._get_representative_sample(long_text, max_chars=100)
-            
+
             # 40 intro + 40 middle + 20 end = 100
-            assert len(mic_drop) > 100 # because of inserted markers
+            assert len(mic_drop) > 100  # because of inserted markers
             assert "[...content continues...]" in mic_drop

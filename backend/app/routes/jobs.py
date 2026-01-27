@@ -14,9 +14,14 @@ from fastapi.responses import FileResponse
 
 from ..config import OUTPUT_DIR
 from ..models import JobResponse, DetailedProgress, HighQualityCompileRequest
-from ..services.repositories import FileBasedJobRepository
-from ..services.tts_engine import TTSEngine
-from ..core import load_script, get_script_metadata
+from ..services.infrastructure.storage import FileBasedJobRepository
+from ..services.pipeline.audio import TTSEngine
+from ..core import (
+    load_script,
+    get_script_metadata,
+    validate_job_id,
+    validate_path_within_directory,
+)
 from .jobs_helpers import (
     get_stage_from_status,
     build_sections_progress,
@@ -60,8 +65,13 @@ async def get_job_status(job_id: str):
 @router.get("/video/{video_id}")
 async def get_video(video_id: str):
     """Stream or download a generated video"""
+    if not validate_job_id(video_id):
+        raise HTTPException(status_code=400, detail="Invalid video ID format")
 
-    video_path = OUTPUT_DIR / f"{video_id}.mp4"
+    video_path = (OUTPUT_DIR / f"{video_id}.mp4").resolve()
+    if not validate_path_within_directory(video_path, OUTPUT_DIR):
+        raise HTTPException(status_code=403, detail="Access denied")
+
     if not video_path.exists():
         raise HTTPException(status_code=404, detail="Video not found")
 
@@ -75,8 +85,13 @@ async def get_video(video_id: str):
 @router.get("/job/{job_id}/section/{section_index}/video")
 async def get_section_video(job_id: str, section_index: int):
     """Get completed section video"""
+    if not validate_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
     sections_dir = OUTPUT_DIR / job_id / "sections"
     section_dir = sections_dir / str(section_index)
+    if not validate_path_within_directory(section_dir, OUTPUT_DIR):
+        raise HTTPException(status_code=403, detail="Access denied")
     
     # Check for video in order of preference
     for video_name in ["final_section.mp4", "section.mp4"]:
@@ -95,7 +110,12 @@ async def get_section_video(job_id: str, section_index: int):
 @router.get("/job/{job_id}/section/{section_index}/visual_script")
 async def get_section_visual_script(job_id: str, section_index: int):
     """Get section visual script (markdown)"""
+    if not validate_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
     section_dir = OUTPUT_DIR / job_id / "sections" / str(section_index)
+    if not validate_path_within_directory(section_dir, OUTPUT_DIR):
+        raise HTTPException(status_code=403, detail="Access denied")
     script_path = section_dir / f"visual_script_{section_index}.md"
     
     if script_path.exists():
@@ -185,12 +205,14 @@ async def list_completed_jobs():
 @router.delete("/job/{job_id}")
 async def delete_job(job_id: str):
     """Delete a job and its associated files"""
+    if not validate_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
 
     repo = FileBasedJobRepository()
     deleted = repo.delete(job_id)
 
-    output_path = OUTPUT_DIR / job_id
-    if output_path.exists():
+    output_path = (OUTPUT_DIR / job_id).resolve()
+    if validate_path_within_directory(output_path, OUTPUT_DIR) and output_path.exists():
         shutil.rmtree(output_path)
 
     return {"message": f"Job {job_id} deleted successfully", "deleted": deleted}
@@ -208,8 +230,8 @@ async def delete_failed_jobs():
         if job.status == "failed":
             repo.delete(job.id)
 
-            output_path = OUTPUT_DIR / job.id
-            if output_path.exists():
+            output_path = (OUTPUT_DIR / job.id).resolve()
+            if validate_path_within_directory(output_path, OUTPUT_DIR) and output_path.exists():
                 shutil.rmtree(output_path)
 
             deleted_count += 1
@@ -296,6 +318,9 @@ async def get_job_details(job_id: str):
 async def get_section_details(job_id: str, section_index: int):
     """Get full details for a specific section including full narration and code"""
 
+    if not validate_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
     script = load_script(job_id)
 
     sections = script.get("sections", [])
@@ -305,6 +330,8 @@ async def get_section_details(job_id: str, section_index: int):
     section = sections[section_index]
     section_id = section.get("id", f"section_{section_index}")
     sections_dir = OUTPUT_DIR / job_id / "sections"
+    if not validate_path_within_directory(sections_dir, OUTPUT_DIR):
+        raise HTTPException(status_code=403, detail="Access denied")
     section_dir = sections_dir / section_id
 
     # Get full narration

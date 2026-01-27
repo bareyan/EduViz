@@ -5,7 +5,7 @@ Ensures Manim-specific structure validation works correctly.
 """
 
 import pytest
-from app.services.manim_generator.validation import ManimStructureValidator
+from app.services.pipeline.animation.generation.validation import ManimStructureValidator
 
 
 class TestManimStructureValidator:

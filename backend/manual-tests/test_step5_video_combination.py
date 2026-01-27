@@ -9,7 +9,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from app.services.video_generator.processor import VideoProcessor
+from app.services.pipeline.assembly.processor import VideoProcessor
 
 
 async def test_video_combination():

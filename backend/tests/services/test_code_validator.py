@@ -5,7 +5,7 @@ Ensures the orchestrating validator works correctly.
 """
 
 import pytest
-from app.services.manim_generator.validation import CodeValidator
+from app.services.pipeline.animation.generation.validation import CodeValidator
 
 
 class TestCodeValidator:
