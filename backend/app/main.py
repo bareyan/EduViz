@@ -111,8 +111,9 @@ async def root():
 @app.on_event("startup")
 async def startup_event():
     """Handle startup tasks like resuming interrupted jobs"""
-    from .services.job_manager import JobStatus, get_job_manager
-    from .services.video_generator import VideoGenerator
+    from .services.infrastructure.orchestration import get_job_manager
+    from .services.pipeline.assembly import VideoGenerator
+    from app.models.status import JobStatus
 
     job_manager = get_job_manager()
     video_generator = VideoGenerator(str(OUTPUT_DIR))
@@ -154,7 +155,7 @@ async def _try_combine_job(job_id: str, job_manager, video_generator, progress):
     """Try to combine completed sections into final video"""
     import os
     import asyncio
-    from .services.job_manager import JobStatus
+    from app.models.status import JobStatus
 
     job_output_dir = OUTPUT_DIR / job_id
     sections_dir = job_output_dir / "sections"
