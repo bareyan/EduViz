@@ -6,12 +6,15 @@ Refactored to use the centralized prompting engine instead of direct client call
 
 from typing import Dict, Any, Optional
 
+from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig, CostTracker
 
 from .base import BaseScriptGenerator
 from .outline_builder import OutlineBuilder
 from .section_generator import SectionGenerator
 from .overview_generator import OverviewGenerator
+
+logger = get_logger(__name__, component="script_generator")
 
 
 class ScriptGenerator:
@@ -75,7 +78,7 @@ class ScriptGenerator:
 
         # OVERVIEW MODE
         if video_mode == "overview":
-            print("[ScriptGenerator] Using OVERVIEW mode")
+            logger.info("Using OVERVIEW mode", extra={"video_mode": video_mode})
             script = await self.overview_generator.generate_overview_script(
                 content=content,
                 topic=topic,
@@ -103,7 +106,7 @@ class ScriptGenerator:
             }
 
         # COMPREHENSIVE MODE
-        print("[ScriptGenerator] Using COMPREHENSIVE mode")
+        logger.info("Using COMPREHENSIVE mode", extra={"video_mode": video_mode})
         
         # Phase 1: Generate outline
         outline = await self.outline_builder.build_outline(
@@ -177,16 +180,6 @@ class ScriptGenerator:
         return self.cost_tracker.get_summary()
 
     def print_cost_summary(self):
-        """Print cost summary"""
+        """Log cost summary using structured logging"""
         summary = self.get_cost_summary()
-        print("\n" + "="*60)
-        print("SCRIPT GENERATION COST SUMMARY")
-        print("="*60)
-        for key, value in summary.items():
-            if isinstance(value, dict):
-                print(f"\n{key}:")
-                for k, v in value.items():
-                    print(f"  {k}: {v}")
-            else:
-                print(f"{key}: {value}")
-        print("="*60 + "\n")
+        logger.info("Script generation cost summary", extra={"cost_summary": summary})
