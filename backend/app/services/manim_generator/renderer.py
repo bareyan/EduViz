@@ -51,9 +51,9 @@ def cleanup_partial_movie_files(output_dir: str, code_file: Path, quality: str =
         print(f"[ManimGenerator] Cleaning up partial movie files before re-render: {partial_dir}")
         try:
             shutil.rmtree(partial_dir)
-            print("[ManimGenerator] ✅ Partial movie files cleaned up")
+            print("[ManimGenerator] OK Partial movie files cleaned up")
         except Exception as e:
-            print(f"[ManimGenerator] ⚠️ Failed to clean up partial movie files: {e}")
+            print(f"[ManimGenerator] WARN Failed to clean up partial movie files: {e}")
 
     # Also remove any existing combined video to force fresh concatenation
     for existing_video in video_base.glob("*.mp4"):
@@ -61,7 +61,7 @@ def cleanup_partial_movie_files(output_dir: str, code_file: Path, quality: str =
             existing_video.unlink()
             print(f"[ManimGenerator] Removed existing video: {existing_video}")
         except Exception as e:
-            print(f"[ManimGenerator] ⚠️ Failed to remove video {existing_video}: {e}")
+            print(f"[ManimGenerator] WARN Failed to remove video {existing_video}: {e}")
 
 
 async def render_scene(
@@ -181,10 +181,10 @@ async def render_scene(
 
             # All correction attempts exhausted
             if clean_retry < generator.MAX_CLEAN_RETRIES:
-                print(f"[ManimGenerator] ❌ All {generator.MAX_CORRECTION_ATTEMPTS} correction attempts failed - will try clean regeneration")
+                print(f"[ManimGenerator] ERROR All {generator.MAX_CORRECTION_ATTEMPTS} correction attempts failed - will try clean regeneration")
                 return None
             else:
-                print(f"[ManimGenerator] ❌ All correction attempts failed on clean retry {clean_retry}, using fallback scene")
+                print(f"[ManimGenerator] ERROR All correction attempts failed on clean retry {clean_retry}, using fallback scene")
                 return await render_fallback_scene(section_index, output_dir, code_file.parent)
 
         # Find the actual output file
@@ -283,9 +283,9 @@ async def render_scene(
                             else:
                                 print("[ManimGenerator] Failed to generate visual fix, using current video")
                         else:
-                            print(f"[ManimGenerator] ⚠️ Max QC fix attempts ({generator.MAX_QC_ITERATIONS}) exhausted - accepting video with remaining issues")
+                            print(f"[ManimGenerator] WARN Max QC fix attempts ({generator.MAX_QC_ITERATIONS}) exhausted - accepting video with remaining issues")
                     else:
-                        print("[ManimGenerator] ✅ Visual QC passed - no issues detected")
+                        print("[ManimGenerator] OK Visual QC passed - no issues detected")
 
             except Exception as qc_error:
                 print(f"[ManimGenerator] Visual QC error (non-fatal): {qc_error}")
@@ -578,7 +578,7 @@ async def validate_and_fix_code(
             )
 
             if result.returncode == 0:
-                print(f"[ManimGenerator] ✓ Visual fix validated (attempt {attempt + 1})")
+                print(f"[ManimGenerator] OK Visual fix validated (attempt {attempt + 1})")
                 try:
                     os.unlink(temp_file)
                     shutil.rmtree(temp_output, ignore_errors=True)
@@ -614,7 +614,7 @@ async def validate_and_fix_code(
             except:
                 pass
 
-    print(f"[ManimGenerator] ⚠️ Could not validate visual fix after {max_attempts} attempts")
+    print(f"[ManimGenerator] WARN Could not validate visual fix after {max_attempts} attempts")
     return None
 
 

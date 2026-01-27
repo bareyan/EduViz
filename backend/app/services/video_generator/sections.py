@@ -14,12 +14,17 @@ from .ffmpeg import (
     get_audio_duration,
     get_media_duration,
     concatenate_audio_files,
+    concatenate_videos,
     build_retime_merge_cmd,
 )
 from app.utils.section_status import write_status
+from ...core import get_logger
 
 if TYPE_CHECKING:
-    from . import VideoGenerator
+    from app.services.manim_generator import ManimGenerator
+    from app.services.tts_engine import TTSEngine
+
+logger = get_logger(__name__, component="section_processor")
 
 
 def clean_narration_for_tts(narration: str) -> str:
@@ -119,12 +124,17 @@ def divide_into_subsections(
             "index": len(subsections)
         })
 
-    print(f"Divided narration ({len(narration)} chars, ~{estimated_total_duration:.0f}s) into {len(subsections)} subsections")
+    logger.info("Divided narration into subsections", extra={
+        "char_count": len(narration),
+        "estimated_seconds": round(estimated_total_duration),
+        "subsection_count": len(subsections)
+    })
     return subsections
 
 
 async def process_single_subsection(
-    generator: "VideoGenerator",
+    manim_generator: "ManimGenerator",
+    tts_engine: "TTSEngine",
     section: Dict[str, Any],
     narration: str,
     section_dir: Path,
@@ -148,7 +158,7 @@ async def process_single_subsection(
     write_status(section_dir, "generating_audio")
 
     try:
-        await generator.tts_engine.generate_speech(
+        await tts_engine.generate_speech(
             text=narration,
             output_path=str(audio_path),
             voice=voice
@@ -157,9 +167,9 @@ async def process_single_subsection(
         section["actual_duration"] = audio_duration
         result["duration"] = audio_duration
         result["audio_path"] = str(audio_path)
-        print(f"Section {section_index} audio duration: {audio_duration:.1f}s")
+        logger.info(f"Section {section_index} audio duration: {audio_duration:.1f}s")
     except Exception as e:
-        print(f"TTS error for section {section_index}: {e}")
+        logger.error(f"TTS error for section {section_index}: {e}")
         write_status(section_dir, "fixing_error", str(e))
         audio_path = None
 
@@ -167,7 +177,7 @@ async def process_single_subsection(
     write_status(section_dir, "generating_video")
 
     try:
-        manim_result = await generator.manim_generator.generate_section_video(
+        manim_result = await manim_generator.generate_section_video(
             section=section,
             output_dir=str(section_dir),
             section_index=section_index,
@@ -180,7 +190,7 @@ async def process_single_subsection(
             result["video_path"] = video_path
             write_status(section_dir, "completed")
         else:
-            print(f"⚠️ Manim returned no video for section {section_index}: {video_path}")
+            logger.warning(f"Manim returned no video for section {section_index}: {video_path}")
         if isinstance(manim_result, dict):
             if manim_result.get("manim_code_path"):
                 result["manim_code_path"] = manim_result["manim_code_path"]
@@ -188,7 +198,7 @@ async def process_single_subsection(
                 result["manim_code"] = manim_result["manim_code"]
     except Exception as e:
         import traceback
-        print(f"❌ Manim error for section {section_index}: {e}")
+        logger.error(f"Manim error for section {section_index}: {e}")
         traceback.print_exc()
         write_status(section_dir, "fixing_error", str(e))
 
@@ -196,7 +206,8 @@ async def process_single_subsection(
 
 
 async def process_segments_audio_first(
-    generator: "VideoGenerator",
+    manim_generator: "ManimGenerator",
+    tts_engine: "TTSEngine",
     section: Dict[str, Any],
     narration_segments: List[Dict[str, Any]],
     section_dir: Path,
@@ -223,7 +234,7 @@ async def process_segments_audio_first(
     }
 
     num_segments = len(narration_segments)
-    print(f"Section {section_index}: Processing {num_segments} segments (audio-first, unified video)")
+    logger.info(f"Section {section_index}: Processing {num_segments} segments (audio-first, unified video)")
 
     # Status: generating audio
     write_status(section_dir, "generating_audio")
@@ -243,14 +254,14 @@ async def process_segments_audio_first(
         audio_duration = segment.get("estimated_duration", 10.0)
 
         try:
-            await generator.tts_engine.generate_speech(
+            await tts_engine.generate_speech(
                 text=clean_text,
                 output_path=str(audio_path),
                 voice=voice
             )
             audio_duration = await get_audio_duration(str(audio_path))
         except Exception as e:
-            print(f"TTS error for section {section_index} segment {seg_idx}: {e}")
+            logger.error(f"TTS error for section {section_index} segment {seg_idx}: {e}")
             audio_path = None
 
         segment_info = {
@@ -265,10 +276,10 @@ async def process_segments_audio_first(
         segment_audio_info.append(segment_info)
         cumulative_time += audio_duration
 
-        print(f"  Segment {seg_idx}: {audio_duration:.1f}s (starts at {segment_info['start_time']:.1f}s)")
+        logger.debug(f"Segment {seg_idx}: {audio_duration:.1f}s (starts at {segment_info['start_time']:.1f}s)")
 
     total_duration = cumulative_time
-    print(f"Section {section_index}: Total audio duration = {total_duration:.1f}s")
+    logger.info(f"Section {section_index}: Total audio duration = {total_duration:.1f}s")
 
     # Step 2: Concatenate all audio segments
     section_audio_path = section_dir / "section_audio.mp3"
@@ -279,7 +290,7 @@ async def process_segments_audio_first(
     elif len(valid_audio_paths) == 1:
         shutil.copy(valid_audio_paths[0], str(section_audio_path))
     else:
-        print(f"Section {section_index}: No valid audio segments")
+        logger.warning(f"Section {section_index}: No valid audio segments")
         return result
 
     result["audio_path"] = str(section_audio_path)
@@ -332,7 +343,7 @@ async def process_segments_audio_first(
         ]
     }
 
-    print(f"Section {section_index}: Generating unified video ({total_duration:.1f}s total)")
+    logger.info(f"Section {section_index}: Generating unified video ({total_duration:.1f}s total)")
 
     # Status: generating video
     write_status(section_dir, "generating_video")
@@ -341,10 +352,10 @@ async def process_segments_audio_first(
     manim_code = None
 
     try:
-        manim_result = await generator.manim_generator.generate_section_video(
+        manim_result = await manim_generator.generate_section_video(
             section=unified_section,
             output_dir=str(section_dir),
-            section_index=str(section_index),
+            section_index=section_index,
             audio_duration=total_duration,
             style=style,
             language=language
@@ -353,14 +364,14 @@ async def process_segments_audio_first(
         if isinstance(manim_result, dict) and manim_result.get("manim_code"):
             manim_code = manim_result["manim_code"]
     except Exception as e:
-        print(f"Manim error for unified section {section_index}: {e}")
+        logger.error(f"Manim error for unified section {section_index}: {e}")
         import traceback
         traceback.print_exc()
         write_status(section_dir, "fixing_error", str(e))
         return result
 
     if not video_path:
-        print(f"Section {section_index}: Failed to generate unified video")
+        logger.error(f"Section {section_index}: Failed to generate unified video")
         write_status(section_dir, "fixing_error", "No video generated")
         return result
 
@@ -372,7 +383,7 @@ async def process_segments_audio_first(
     audio_duration_actual = await get_media_duration(str(section_audio_path))
     video_duration_actual = await get_media_duration(video_path)
 
-    print(f"Section {section_index}: Merging video ({video_duration_actual:.1f}s) with audio ({audio_duration_actual:.1f}s)")
+    logger.info(f"Section {section_index}: Merging video ({video_duration_actual:.1f}s) with audio ({audio_duration_actual:.1f}s)")
 
     cmd = build_retime_merge_cmd(
         video_path=video_path,
@@ -393,13 +404,13 @@ async def process_segments_audio_first(
         if process.returncode == 0 and merged_path.exists():
             result["video_path"] = str(merged_path)
             result["duration"] = total_duration
-            print(f"Section {section_index}: Successfully created unified video")
+            logger.info(f"Section {section_index}: Successfully created unified video")
             write_status(section_dir, "completed")
         else:
-            print(f"Section {section_index}: FFmpeg merge failed: {stderr.decode()[:500]}")
+            logger.error(f"Section {section_index}: FFmpeg merge failed: {stderr.decode()[:500]}")
             write_status(section_dir, "fixing_error", "FFmpeg merge failed")
     except Exception as e:
-        print(f"Section {section_index}: Error merging video and audio: {e}")
+        logger.error(f"Section {section_index}: Error merging video and audio: {e}")
         write_status(section_dir, "fixing_error", str(e))
 
     return result
@@ -442,7 +453,7 @@ async def merge_segments(
             if result.returncode == 0 and merged_path.exists():
                 merged_clips.append(str(merged_path))
         except Exception as e:
-            print(f"Error merging segment {seg_idx}: {e}")
+            logger.error(f"Error merging segment {seg_idx}: {e}")
 
     if not merged_clips:
         return {"video_path": None, "audio_path": None}
@@ -451,30 +462,10 @@ async def merge_segments(
     final_video = output_dir / "final_section.mp4"
     final_audio = output_dir / "audio.mp3"
 
-    concat_file = output_dir / "concat_list.txt"
-    with open(concat_file, "w") as f:
-        for clip in merged_clips:
-            f.write(f"file '{clip}'\n")
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(concat_file),
-        "-c", "copy",
-        str(final_video)
-    ]
-
     try:
-        await asyncio.to_thread(
-            subprocess.run,
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=300
-        )
+        await concatenate_videos(merged_clips, str(final_video))
     except Exception as e:
-        print(f"Error concatenating segments: {e}")
+        logger.error(f"Error concatenating segments: {e}")
         if merged_clips:
             shutil.copy(merged_clips[0], str(final_video))
 
@@ -539,9 +530,9 @@ async def merge_subsections(
             if result.returncode == 0 and merged_path.exists():
                 merged_clips.append(str(merged_path))
             else:
-                print(f"FFmpeg error merging subsection {sub_idx}: {result.stderr}")
+                logger.error(f"FFmpeg error merging subsection {sub_idx}: {result.stderr}")
         except Exception as e:
-            print(f"Error merging subsection {sub_idx}: {e}")
+            logger.error(f"Error merging subsection {sub_idx}: {e}")
 
     if not merged_clips:
         return {"video_path": None, "audio_path": None}
@@ -549,32 +540,10 @@ async def merge_subsections(
     final_video = output_dir / "final_section.mp4"
     final_audio = output_dir / "audio.mp3"
 
-    concat_file = output_dir / "concat_list.txt"
-    with open(concat_file, "w", encoding="utf-8") as f:
-        for clip in merged_clips:
-            f.write(f"file '{clip}'\n")
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(concat_file),
-        "-c", "copy",
-        str(final_video)
-    ]
-
     try:
-        result = await asyncio.to_thread(
-            subprocess.run,
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=300
-        )
-        if result.returncode != 0:
-            print(f"FFmpeg concat error: {result.stderr}")
+        await concatenate_videos(merged_clips, str(final_video))
     except Exception as e:
-        print(f"Error concatenating subsections: {e}")
+        logger.error(f"Error concatenating subsections: {e}")
         if merged_clips:
             shutil.copy(merged_clips[0], str(final_video))
 
@@ -595,7 +564,7 @@ async def merge_subsections(
                 timeout=120
             )
         except Exception as e:
-            print(f"Error extracting audio: {e}")
+            logger.error(f"Error extracting audio: {e}")
 
     return {
         "video_path": str(final_video) if final_video.exists() else None,

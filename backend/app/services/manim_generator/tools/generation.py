@@ -103,7 +103,6 @@ class GenerationToolHandler:
         
         config = PromptConfig(
             temperature=0.7,
-            max_output_tokens=8192,
             timeout=300,
             enable_thinking=False  # Disable thinking for agentic iteration
         )
@@ -238,7 +237,7 @@ class GenerationToolHandler:
         # Try to find code block or code-like content
         import re
         # Look for python code pattern
-        pattern = r'```python\n(.*?)\n```'
+        pattern = r'```python\n(.*)\n```'
         match = re.search(pattern, response, re.DOTALL)
         if match:
             return match.group(1)

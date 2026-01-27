@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 # Regex patterns for SEARCH/REPLACE markers - more flexible matching
 # Matches: <<<<<<< SEARCH, <<<<< SEARCH, <<< SEARCH, SEARCH:, etc.
-HEAD = r"^<{3,9}\s*SEARCH>?\s*$"
+HEAD = r"^<{3,9}\s*SEARCH>\s*$"
 DIVIDER = r"^={3,9}\s*$"
 UPDATED = r"^>{3,9}\s*REPLACE\s*$"
 
@@ -107,7 +107,7 @@ def extract_blocks_from_fenced(content: str) -> List[SearchReplaceBlock]:
     """
     # Remove markdown code fences but preserve content
     # This handles cases where LLM wraps response in ```python ... ```
-    fence_pattern = r"```(?:\w+)?\n(.*?)```"
+    fence_pattern = r"```(?:\w+)?\n(.*)```"
 
     # First try to find blocks in the raw content
     blocks = find_search_replace_blocks(content)

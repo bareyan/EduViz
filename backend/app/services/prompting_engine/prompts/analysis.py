@@ -81,56 +81,98 @@ Output as JSON.""",
 ANALYZE_PDF_CONTENT = PromptTemplate(
     template="""You are an expert educator preparing comprehensive educational video content with animated visuals.
 
-Analyze this PDF document content and suggest video topics.
-IMPORTANT: Detect the SUBJECT AREA (math, cs, physics, economics, biology, engineering, general).
+Analyze this content and determine the best video structure.
+IMPORTANT: Detect the SUBJECT AREA (math, computer science, physics, economics, biology, engineering, general) from the content.
 
 DOCUMENT INFO:
 - Total pages: {total_pages}
-- Has mathematical content: {has_math}
+- {size_note}
 
-CONTENT SAMPLE:
+CONTENT:
 {content_sample}
 
-Create ONE comprehensive video that covers ALL the material:
-- The video should thoroughly cover the ENTIRE document
-- Include all key concepts, examples, and visual elements
-- Target duration: 15-30 minutes (longer for complex material)
-- Consider Manim animations for mathematical/visual content
+{instructions}
+
+VIDEO PHILOSOPHY:
+1. The video should show concepts VISUALLY - not just narrate them
+2. Sometimes let the content "speak for itself" without constant narration
+3. For derivations/algorithms: show step-by-step work
+4. Include visual demonstration sections
+5. Balance: 60% narrated content, 40% visual demonstrations
+
+CONTENT ADAPTATION (analyze and identify):
+- MATHEMATICS: Focus on equations, proofs, theorems, derivations
+- COMPUTER SCIENCE: Focus on algorithms, data structures, code, complexity
+- PHYSICS: Focus on phenomena, equations, experiments, applications
+- ECONOMICS: Focus on models, graphs, market dynamics, policies
+- BIOLOGY/CHEMISTRY: Focus on processes, structures, reactions
+- ENGINEERING: Focus on systems, designs, trade-offs
+- GENERAL: Focus on concepts, examples, analogies
 
 Respond with ONLY valid JSON (no markdown, no code blocks):
 {{{{
-    "summary": "Comprehensive summary",
-    "main_subject": "Primary topic",
+    "summary": "Comprehensive summary of the material",
+    "main_subject": "The primary topic",
     "subject_area": "math|cs|physics|economics|biology|engineering|general",
-    "key_concepts": ["all major concepts"],
-    "detected_math_elements": 0,
+    "key_concepts": ["all", "major", "concepts", "covered"],
+    "detected_math_elements": {detected_math_elements},
+    "document_structure": "single_topic|multi_chapter",
     "suggested_topics": [
         {{{{
             "index": 0,
             "title": "[Descriptive Topic Name]",
-            "description": "Comprehensive coverage",
+            "description": "Comprehensive video covering all material. Includes all key concepts, explanations, and examples.",
             "estimated_duration": 20,
-            "complexity": "intermediate",
-            "subtopics": ["all sections"],
-            "prerequisites": ["background needed"],
-            "visual_ideas": ["animation ideas"]
+            "complexity": "comprehensive",
+            "subject_area": "math|cs|physics|economics|biology|engineering|general",
+            "subtopics": ["all", "major", "sections"],
+            "prerequisites": ["required background"],
+            "visual_ideas": ["step-by-step explanations", "visualizations", "worked examples"]
         }}}}
     ],
     "estimated_total_videos": 1
-}}}}""",
+}}}}
+
+{closing_instruction}""",
     description="Analyze PDF content for educational videos"
 )
 
 
 ANALYZE_IMAGE = PromptTemplate(
-    template="""Analyze this image for educational video content.
+    template="""You are an expert educator preparing COMPREHENSIVE educational video content.
 
-Describe:
-- What the image shows
-- Key concepts illustrated
-- How to animate/explain it
-- Subject area
+Analyze this content from the image. Extract all text, equations, diagrams, concepts, code, or information visible.
+IMPORTANT: Detect the SUBJECT AREA (math, computer science, physics, economics, biology, engineering, general).
 
-Output as JSON.""",
+Create ONE comprehensive video that covers ALL the content in this image:
+- The video should REPLACE reading/studying this image entirely
+- Include all concepts, explanations, and examples visible
+- Show step-by-step explanations visually
+
+Respond with ONLY valid JSON (no markdown, no code blocks):
+{
+    "summary": "Comprehensive summary of ALL content in this image",
+    "main_subject": "The primary topic",
+    "subject_area": "math|cs|physics|economics|biology|engineering|general",
+    "key_concepts": ["all", "concepts", "visible", "in", "image"],
+    "detected_math_elements": 5,
+    "extracted_content": ["key content items"],
+    "suggested_topics": [
+        {
+            "index": 0,
+            "title": "[Descriptive Topic Name]",
+            "description": "Comprehensive video covering EVERYTHING in this image.",
+            "estimated_duration": 20,
+            "complexity": "comprehensive",
+            "subject_area": "math|cs|physics|economics|biology|engineering|general",
+            "subtopics": ["every", "concept", "visible"],
+            "prerequisites": ["required background"],
+            "visual_ideas": ["step-by-step explanations", "visualizations"]
+        }
+    ],
+    "estimated_total_videos": 1
+}
+
+CRITICAL: Create exactly ONE comprehensive video covering everything.""",
     description="Analyze image for video creation"
 )

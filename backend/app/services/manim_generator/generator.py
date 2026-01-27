@@ -194,7 +194,7 @@ class ManimGenerator:
 
         # Retry if needed
         if output_video is None and clean_retry < self.MAX_CLEAN_RETRIES:
-            print(f"[ManimGenerator] ⚠️ Section {section_index} failed, retry {clean_retry + 1}/{self.MAX_CLEAN_RETRIES}")
+            print(f"[ManimGenerator] WARN Section {section_index} failed, retry {clean_retry + 1}/{self.MAX_CLEAN_RETRIES}")
             if clean_retry == 0:
                 self.stats["regenerated_sections"] += 1
             self.stats["total_retries"] += 1
@@ -265,7 +265,7 @@ class ManimGenerator:
                     f.write(visual_script_text)
                 visual_script = visual_script_text
             
-            print(f"[ManimGenerator] ✓ Code generated: {len(code)} chars")
+            print(f"[ManimGenerator] OK Code generated: {len(code)} chars")
             return (code, visual_script)
         
         # Fallback: basic generation
@@ -313,9 +313,9 @@ Generate code for the construct() method only. Keep it simple and reliable."""
             validation = self.validator.validate_code(code)
             
             if validation["valid"]:
-                print("[ManimGenerator] ✓ Fallback code passed validation")
+                print("[ManimGenerator] OK Fallback code passed validation")
             else:
-                print(f"[ManimGenerator] ⚠ Fallback validation issues")
+                print(f"[ManimGenerator] WARN Fallback validation issues")
             
             return code
         else:

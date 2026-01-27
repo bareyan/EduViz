@@ -271,12 +271,9 @@ class SectionOrchestrator:
                     "narration_length": len(clean_narration)
                 })
 
-                # Import generator here to avoid circular import
-                from . import VideoGenerator
-                generator = VideoGenerator(str(self.progress_tracker.output_base_dir))
-
                 subsection_results = await process_single_subsection(
-                    generator=generator,
+                    manim_generator=self.manim_generator,
+                    tts_engine=self.tts_engine,
                     section=section,
                     narration=clean_narration,
                     section_dir=section_dir,
@@ -302,12 +299,9 @@ class SectionOrchestrator:
                     "segment_count": len(narration_segments)
                 })
 
-                # Import generator here to avoid circular import
-                from . import VideoGenerator
-                generator = VideoGenerator(str(self.progress_tracker.output_base_dir))
-
                 segment_result = await process_segments_audio_first(
-                    generator=generator,
+                    manim_generator=self.manim_generator,
+                    tts_engine=self.tts_engine,
                     section=section,
                     narration_segments=narration_segments,
                     section_dir=section_dir,

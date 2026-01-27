@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import shutil
+from pathlib import Path
 from typing import List
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import PlainTextResponse, FileResponse
@@ -152,6 +153,13 @@ async def update_section_code(job_id: str, section_id: str, request: CodeUpdateR
         logger.warning("Invalid job_id format", extra={"job_id": job_id})
         raise HTTPException(status_code=400, detail="Invalid job ID format")
     sections_dir = OUTPUT_DIR / job_id / "sections" / section_id
+    if not validate_path_within_directory(sections_dir, OUTPUT_DIR / job_id / "sections"):
+        logger.warning("Path traversal attempt in update_section_code", extra={
+            "job_id": job_id,
+            "section_id": section_id,
+            "sections_dir": str(sections_dir)
+        })
+        raise HTTPException(status_code=403, detail="Access denied")
 
     if not sections_dir.exists():
         raise HTTPException(status_code=404, detail="Section not found")
@@ -193,9 +201,7 @@ async def get_file_content(path: str):
     """Get the content of a file by path"""
 
     abs_path = os.path.abspath(path)
-    abs_output_dir = os.path.abspath(str(OUTPUT_DIR))
-
-    if not abs_path.startswith(abs_output_dir):
+    if not validate_path_within_directory(Path(abs_path), OUTPUT_DIR):
         raise HTTPException(status_code=403, detail="Access denied - path outside outputs directory")
 
     if not os.path.exists(abs_path):
@@ -470,6 +476,13 @@ async def regenerate_section(job_id: str, section_id: str):
     """Regenerate the video for a single section using its current Manim code"""
 
     sections_dir = OUTPUT_DIR / job_id / "sections" / section_id
+    if not validate_path_within_directory(sections_dir, OUTPUT_DIR / job_id / "sections"):
+        logger.warning("Path traversal attempt in regenerate_section", extra={
+            "job_id": job_id,
+            "section_id": section_id,
+            "sections_dir": str(sections_dir)
+        })
+        raise HTTPException(status_code=403, detail="Access denied")
     if not sections_dir.exists():
         raise HTTPException(status_code=404, detail="Section not found")
 

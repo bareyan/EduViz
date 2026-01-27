@@ -12,13 +12,12 @@ Features:
 - Package version context (Manim 0.18.1)
 
 Usage:
-    from app.services.diff_correction import DiffCorrector, correct_manim_code_with_diff
+    from app.services.diff_correction import correct_manim_code_with_diff
     
     # Drop-in replacement for renderer
     corrected = await correct_manim_code_with_diff(generator, code, error, section)
 """
 
-from .corrector import DiffCorrector
 from .parser import find_search_replace_blocks, SearchReplaceBlock
 from .applier import apply_search_replace, apply_all_blocks, validate_syntax
 from .integration import correct_manim_code_with_diff
@@ -27,7 +26,6 @@ from .prompts import MANIM_VERSION, MANIM_CONTEXT, parse_error_context
 
 __all__ = [
     # Main interface
-    'DiffCorrector',
     'correct_manim_code_with_diff',
     # Visual QC diff correction
     'fix_visual_errors_with_diff',

@@ -104,7 +104,7 @@ class SpatialValidator:
         
         for line_num, line in enumerate(lines, 1):
             # Look for .move_to([x, y, z]) or .move_to([x, y])
-            move_to_match = re.search(r'\.move_to\(\[([+-]?\d+\.?\d*),\s*([+-]?\d+\.?\d*)(?:,\s*[+-]?\d+\.?\d*)?\]', line)
+            move_to_match = re.search(r'\.move_to\(\[([+-]?\d+\.?\d*),\s*([+-]?\d+\.?\d*)(?:,\s*[+-]?\d+\.?\d*)?\]\)', line)
             if move_to_match:
                 x, y = float(move_to_match.group(1)), float(move_to_match.group(2))
                 objects.append({
@@ -116,7 +116,7 @@ class SpatialValidator:
                 })
             
             # Look for .shift([x, y, z]) or .shift([x, y])
-            shift_match = re.search(r'\.shift\(\[([+-]?\d+\.?\d*),\s*([+-]?\d+\.?\d*)(?:,\s*[+-]?\d+\.?\d*)?\]', line)
+            shift_match = re.search(r'\.shift\(\[([+-]?\d+\.?\d*),\s*([+-]?\d+\.?\d*)(?:,\s*[+-]?\d+\.?\d*)?\]\)', line)
             if shift_match:
                 x, y = float(shift_match.group(1)), float(shift_match.group(2))
                 objects.append({
@@ -179,7 +179,7 @@ class SpatialValidator:
         
         for line_num, line in enumerate(lines, 1):
             # Find Text objects
-            text_match = re.search(r'Text\(["\']([^"\']+)["\'](?:.*?font_size\s*=\s*(\d+))?', line)
+            text_match = re.search(r'Text\(["\']([^"\']+)["\'](?:.*font_size\s*=\s*(\d+))?', line)
             if text_match:
                 text_content = text_match.group(1)
                 font_size = int(text_match.group(2)) if text_match.group(2) else 24

@@ -99,29 +99,32 @@ class BaseScriptGenerator:
     async def generate_with_engine(
         self,
         prompt: str,
-        response_format: str = "json",
-        response_schema: Optional[dict] = None,
-        timeout: float = 120.0
-    ) -> dict:
+        config: Optional["PromptConfig"] = None,
+        response_schema: Optional[dict] = None
+    ) -> Optional[str]:
         """
         Unified generation method using PromptingEngine.
         
         Args:
             prompt: The prompt text
-            response_format: "text" or "json"
+            config: Optional PromptConfig override
             response_schema: Optional JSON schema for structured output
-            timeout: Timeout in seconds
             
         Returns:
-            Result dict from engine
+            Response text if successful, else None
         """
         from app.services.prompting_engine import PromptConfig
         
-        config = PromptConfig(
+        config = config or PromptConfig(
             enable_thinking=self.prompt_config.enable_thinking,
             temperature=self.prompt_config.temperature,
-            response_format=response_format,
-            timeout=timeout
+            timeout=self.prompt_config.timeout,
+            response_format="json"
         )
+        if response_schema is not None:
+            config.response_schema = response_schema
         
-        return await self.engine.generate(prompt, config)
+        result = await self.engine.generate(prompt, config)
+        if result.get("success"):
+            return result.get("response", "")
+        return None

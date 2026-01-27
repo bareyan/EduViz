@@ -180,7 +180,7 @@ class SectionGenerator:
                             section["tts_narration"] = section.get("narration", "")
                         
                         generated_sections.append(section)
-                        print(f"[SectionGen] ✓ Section {section_idx + 1} generated successfully")
+                        print(f"[SectionGen] OK Section {section_idx + 1} generated successfully")
                         success = True
                         break
                         

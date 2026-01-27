@@ -150,11 +150,13 @@ async def _try_structured_visual_correction(
             response_format="json"
         )
         
-        response_text = await generator.correction_engine.generate(
+        result = await generator.correction_engine.generate(
             prompt=prompt,
             config=correction_config,
             response_schema=VISUAL_QC_DIFF_SCHEMA
         )
+
+        response_text = result.get("response", "") if result.get("success") else ""
 
         if not response_text:
             print("[VisualQCDiff] Empty response from LLM")
@@ -198,9 +200,9 @@ async def _try_structured_visual_correction(
         new_code, successes, errors = apply_all_blocks(code, blocks)
 
         for msg in successes:
-            print(f"[VisualQCDiff] ✓ {msg}")
+            print(f"[VisualQCDiff] OK {msg}")
         for msg in errors:
-            print(f"[VisualQCDiff] ✗ {msg}")
+            print(f"[VisualQCDiff] FAIL {msg}")
 
         if not successes:
             print("[VisualQCDiff] No blocks applied successfully")
@@ -212,7 +214,7 @@ async def _try_structured_visual_correction(
             print(f"[VisualQCDiff] Syntax error after fixes: {syntax_error}")
             return None
 
-        print(f"[VisualQCDiff] ✓ Visual issues fixed ({len(successes)} changes)")
+        print(f"[VisualQCDiff] OK Visual issues fixed ({len(successes)} changes)")
         return new_code
 
     except Exception as e:
@@ -274,10 +276,12 @@ replacement code
             timeout=90
         )
         
-        response_text = await generator.correction_engine.generate(
+        result = await generator.correction_engine.generate(
             prompt=prompt,
             config=correction_config
         )
+
+        response_text = result.get("response", "") if result.get("success") else ""
 
         if not response_text:
             print("[VisualQCDiff] Empty response from LLM")
@@ -298,9 +302,9 @@ replacement code
         new_code, successes, errors = apply_all_blocks(code, blocks)
 
         for msg in successes:
-            print(f"[VisualQCDiff] ✓ {msg}")
+            print(f"[VisualQCDiff] OK {msg}")
         for msg in errors:
-            print(f"[VisualQCDiff] ✗ {msg}")
+            print(f"[VisualQCDiff] FAIL {msg}")
 
         if not successes:
             print("[VisualQCDiff] No blocks applied successfully")
@@ -312,7 +316,7 @@ replacement code
             print(f"[VisualQCDiff] Syntax error after fixes: {syntax_error}")
             return None
 
-        print(f"[VisualQCDiff] ✓ Visual issues fixed via text blocks ({len(successes)} changes)")
+        print(f"[VisualQCDiff] OK Visual issues fixed via text blocks ({len(successes)} changes)")
         return new_code
 
     except Exception as e:

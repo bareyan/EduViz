@@ -161,7 +161,8 @@ class GeminiAPIModels:
         self,
         model: str,
         contents: Union[str, List[Any]],
-        config: Optional[GenerationConfig] = None
+        config: Optional[GenerationConfig] = None,
+        tools: Optional[List[Any]] = None,
     ):
         """
         Generate content using Gemini API.
@@ -199,28 +200,53 @@ class GeminiAPIModels:
         if config.response_schema:
             gen_config_dict["response_schema"] = config.response_schema
 
+        if config.system_instruction:
+            gen_config_dict["system_instruction"] = config.system_instruction
+
         gen_config = types.GenerateContentConfig(**gen_config_dict)
 
-        # Make the API call
+        # Attach tools to config if supported (google.genai expects tools in config)
+        if tools and hasattr(gen_config, "tools"):
+            try:
+                gen_config.tools = tools
+            except Exception:
+                # If assignment fails, we'll fall back to passing via kwargs below
+                pass
+
+        # Make the API call (handle older clients that might require tools kwarg)
+        kwargs = {
+            "model": model,
+            "contents": contents,
+            "config": gen_config,
+        }
+
+        # Only pass tools kwarg if config didn't capture it
+        if tools and not getattr(gen_config, "tools", None):
+            kwargs["tools"] = tools
+
         try:
-            response = self.client.models.generate_content(
-                model=model,
-                contents=contents,
-                config=gen_config
-            )
+            response = self.client.models.generate_content(**kwargs)
         except Exception as e:
-            # If the error is about thinking_config not being supported, retry without it
             error_msg = str(e)
-            if config.thinking_config and ("thinking_level is not supported" in error_msg or "thinking" in error_msg.lower()):
+
+            # Retry without tools if the client version doesn't support them
+            if "unexpected keyword argument 'tools'" in error_msg or "got an unexpected keyword argument 'tools'" in error_msg:
+                kwargs.pop("tools", None)
+                response = self.client.models.generate_content(**kwargs)
+            # If the error is about thinking_config not being supported, retry without it
+            elif config.thinking_config and ("thinking_level is not supported" in error_msg or "thinking" in error_msg.lower()):
                 print(f"[UnifiedGeminiClient] Model doesn't support thinking_config, retrying without it...")
-                # Rebuild config without thinking_config
                 gen_config_dict_no_thinking = {k: v for k, v in gen_config_dict.items() if k != "thinking_config"}
                 gen_config = types.GenerateContentConfig(**gen_config_dict_no_thinking)
-                response = self.client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=gen_config
-                )
+                kwargs["config"] = gen_config
+                try:
+                    response = self.client.models.generate_content(**kwargs)
+                except Exception as e2:
+                    if "unexpected keyword argument 'tools'" in str(e2) or "got an unexpected keyword argument 'tools'" in str(e2):
+                        kwargs.pop("tools", None)
+                        response = self.client.models.generate_content(**kwargs)
+                    else:
+                        raise
             else:
                 raise
 
@@ -238,7 +264,8 @@ class VertexAIModels:
         self,
         model: str,
         contents: Union[str, List[Any]],
-        config: Optional[GenerationConfig] = None
+        config: Optional[GenerationConfig] = None,
+        tools: Optional[List[Any]] = None,
     ):
         """
         Generate content using Vertex AI.
@@ -295,15 +322,28 @@ class VertexAIModels:
 
         vertex_config = VertexGenerationConfig(**gen_config_dict)
 
+        if tools and hasattr(vertex_config, "tools"):
+            try:
+                vertex_config.tools = tools
+            except Exception:
+                pass
+
         # Convert contents to Vertex AI format if needed
         if isinstance(contents, str):
             contents = [contents]
 
         # Make the API call
-        response = model_instance.generate_content(
-            contents,
-            generation_config=vertex_config,
-        )
+        try:
+            response = model_instance.generate_content(
+                contents,
+                generation_config=vertex_config,
+                tools=tools
+            )
+        except TypeError:
+            response = model_instance.generate_content(
+                contents,
+                generation_config=vertex_config,
+            )
 
         return response
 

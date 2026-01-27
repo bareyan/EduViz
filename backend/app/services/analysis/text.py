@@ -82,10 +82,11 @@ class TextAnalyzer(BaseAnalyzer):
             response_format="json"
         )
 
-        response_text = await self.engine.generate(
+        result = await self.engine.generate(
             prompt=prompt,
             config=config,
             response_schema=response_schema
         )
 
+        response_text = result.get("response", "") if result.get("success") else ""
         return self._parse_json_response(response_text)

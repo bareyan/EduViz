@@ -139,3 +139,20 @@ class CodeValidator:
     def validate_and_get_dict(self, code: str) -> Dict[str, Any]:
         """Convenience method to validate and return dict"""
         return self.validate(code).to_dict()
+
+    def validate_code(self, code: str) -> Dict[str, Any]:
+        """Backward-compatible wrapper returning a simple dict.
+
+        Returns:
+            {
+              "valid": bool,
+              "error": str (summary if invalid),
+              "details": full validation dict
+            }
+        """
+        result = self.validate(code)
+        return {
+            "valid": result.valid,
+            "error": None if result.valid else result.get_error_summary(),
+            "details": result.to_dict()
+        }

@@ -158,6 +158,38 @@ class CostTracker:
         print(f"\n💵 Total Cost:        ${summary['total_cost_usd']:.4f}")
         print("=" * 60 + "\n")
 
+    def track_request(self, model_name: str, input_tokens: int = 0, output_tokens: int = 0) -> None:
+        """Track usage when token counts are already provided.
+
+        Args:
+            model_name: Model identifier
+            input_tokens: Prompt tokens used
+            output_tokens: Completion tokens used
+        """
+        try:
+            self.token_usage["input_tokens"] += input_tokens
+            self.token_usage["output_tokens"] += output_tokens
+
+            if model_name not in self.token_usage["by_model"]:
+                self.token_usage["by_model"][model_name] = {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cost": 0.0
+                }
+
+            self.token_usage["by_model"][model_name]["input_tokens"] += input_tokens
+            self.token_usage["by_model"][model_name]["output_tokens"] += output_tokens
+
+            if model_name in PRICING:
+                pricing = PRICING[model_name]
+                input_cost = (input_tokens / 1_000_000) * pricing["input"]
+                output_cost = (output_tokens / 1_000_000) * pricing["output"]
+                call_cost = input_cost + output_cost
+                self.token_usage["by_model"][model_name]["cost"] += call_cost
+                self.token_usage["total_cost"] += call_cost
+        except Exception as e:
+            print(f"[CostTracker] Warning: Could not track request: {e}")
+
 
 def track_cost_safely(cost_tracker, response, model_name: str) -> None:
     """Safely track API usage cost without raising exceptions.

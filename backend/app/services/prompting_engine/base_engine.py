@@ -26,11 +26,15 @@ class PromptConfig:
     """Configuration for a prompt execution"""
     model_name: Optional[str] = None  # If None, uses config's model
     temperature: float = 1.0
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    max_output_tokens: Optional[int] = None
     max_retries: int = 3
     timeout: Optional[float] = None
     enable_thinking: bool = False
     response_format: str = "text"  # "text", "json", or "function_call"
     system_instruction: Optional[str] = None
+    response_schema: Optional[Any] = None
 
 
 class PromptingEngine:
@@ -65,14 +69,22 @@ class PromptingEngine:
 
     def _get_generation_config(
         self,
-        prompt_config: PromptConfig,
-        tools: Optional[List[Any]] = None
+        prompt_config: PromptConfig
     ) -> Optional[UnifiedGenerationConfig]:
         """Build generation config from prompt config"""
         kwargs = {}
         
         if prompt_config.temperature != 1.0:
             kwargs["temperature"] = prompt_config.temperature
+
+        if prompt_config.top_p is not None:
+            kwargs["top_p"] = prompt_config.top_p
+
+        if prompt_config.top_k is not None:
+            kwargs["top_k"] = prompt_config.top_k
+
+        if prompt_config.max_output_tokens is not None:
+            kwargs["max_output_tokens"] = prompt_config.max_output_tokens
             
         if prompt_config.enable_thinking:
             thinking_config = get_thinking_config(self.config)
@@ -81,9 +93,12 @@ class PromptingEngine:
                 
         if prompt_config.response_format == "json":
             kwargs["response_mime_type"] = "application/json"
-            
-        if tools:
-            kwargs["tools"] = tools
+
+        if prompt_config.response_schema is not None:
+            kwargs["response_schema"] = prompt_config.response_schema
+
+        if prompt_config.system_instruction:
+            kwargs["system_instruction"] = prompt_config.system_instruction
             
         return UnifiedGenerationConfig(**kwargs) if kwargs else None
 
@@ -93,6 +108,11 @@ class PromptingEngine:
         config: Optional[PromptConfig] = None,
         tools: Optional[List[Any]] = None,
         context: Optional[Dict[str, Any]] = None,
+        system_prompt: Optional[str] = None,
+        system_instruction: Optional[str] = None,
+        response_schema: Optional[Any] = None,
+        model: Optional[str] = None,
+        contents: Optional[Union[str, List[Any]]] = None,
     ) -> Dict[str, Any]:
         """
         Generate a response from the LLM.
@@ -113,18 +133,23 @@ class PromptingEngine:
                 - usage: Dict (token usage info)
         """
         config = config or PromptConfig()
-        model_name = config.model_name or self.config.model_name
+        if system_instruction or system_prompt:
+            config.system_instruction = system_instruction or system_prompt
+        if response_schema is not None:
+            config.response_schema = response_schema
+        model_name = model or config.model_name or self.config.model_name
+        payload = contents if contents is not None else prompt
         
         for attempt in range(config.max_retries):
             try:
                 # Build generation config
-                gen_config = self._get_generation_config(config, tools)
+                gen_config = self._get_generation_config(config)
                 
                 # Get model - use client.models.generate_content for unified client
                 response = await asyncio.to_thread(
                     self.client.models.generate_content,
                     model=model_name,
-                    contents=prompt,
+                    contents=payload,
                     tools=tools,
                     config=gen_config
                 )
@@ -214,6 +239,23 @@ class PromptingEngine:
         config: Optional[PromptConfig] = None,
         tools: Optional[List[Any]] = None,
         context: Optional[Dict[str, Any]] = None,
+        system_prompt: Optional[str] = None,
+        system_instruction: Optional[str] = None,
+        response_schema: Optional[Any] = None,
+        model: Optional[str] = None,
+        contents: Optional[Union[str, List[Any]]] = None,
     ) -> Dict[str, Any]:
         """Synchronous wrapper for generate()"""
-        return asyncio.run(self.generate(prompt, config, tools, context))
+        return asyncio.run(
+            self.generate(
+                prompt,
+                config,
+                tools,
+                context,
+                system_prompt,
+                system_instruction,
+                response_schema,
+                model,
+                contents,
+            )
+        )

@@ -8,13 +8,7 @@ import asyncio
 import re
 from typing import Dict, Any, List, Optional
 
-# Unified Gemini client (works with both API and Vertex AI)
-from app.services.gemini import get_gemini_client, get_types_module
-from app.core import LANGUAGE_NAMES
-create_client = get_gemini_client
-
-# Model configuration
-from app.config.models import get_model_config
+from app.core import LANGUAGE_NAMES, get_logger
 
 
 class TranslationService:
@@ -25,6 +19,7 @@ class TranslationService:
         from app.services.prompting_engine import PromptingEngine, PromptConfig
         self.engine = PromptingEngine("translation")
         self.prompt_config = PromptConfig(temperature=0.3, timeout=60.0)
+        self.logger = get_logger(__name__, component="translation_service")
 
     async def translate_script(
         self,
@@ -51,7 +46,10 @@ class TranslationService:
         target_name = LANGUAGE_NAMES.get(target_language, target_language)
         source_name = LANGUAGE_NAMES.get(source_language, source_language)
 
-        print(f"[TranslationService] Translating from {source_name} to {target_name}")
+        self.logger.info("Translating script", extra={
+            "source_language": source_name,
+            "target_language": target_name
+        })
 
         # Deep copy the script
         translated_script = json.loads(json.dumps(script))
@@ -71,7 +69,9 @@ class TranslationService:
         # Translate all sections in parallel
         sections = script.get("sections", [])
         if sections:
-            print(f"[TranslationService] Translating {len(sections)} sections in parallel...")
+            self.logger.info("Translating sections in parallel", extra={
+                "section_count": len(sections)
+            })
 
             async def translate_one_section(idx: int, section: Dict[str, Any]) -> tuple:
                 """Translate all texts in a single section."""
@@ -134,7 +134,10 @@ class TranslationService:
                 if section.get("tts_narration") and section.get("narration"):
                     translated["narration"] = translated.get("tts_narration", "")
 
-                print(f"[TranslationService] Completed section {idx + 1}: {section_title[:40]}")
+                self.logger.info("Completed section translation", extra={
+                    "section_index": idx + 1,
+                    "section_title": section_title[:40]
+                })
                 return (idx, translated)
 
             # Run all section translations in parallel
@@ -145,7 +148,9 @@ class TranslationService:
             translated_sections = [None] * len(sections)
             for result in results:
                 if isinstance(result, Exception):
-                    print(f"[TranslationService] Section translation error: {result}")
+                    self.logger.warning("Section translation error", extra={
+                        "error": str(result)
+                    })
                 else:
                     idx, translated_section = result
                     translated_sections[idx] = translated_section
@@ -162,7 +167,7 @@ class TranslationService:
         translated_script["output_language"] = target_language
         translated_script["translated_from"] = source_language
 
-        print("[TranslationService] Translation complete")
+        self.logger.info("Translation complete")
         return translated_script
 
     async def _translate_section_texts(
@@ -207,11 +212,11 @@ class TranslationService:
                 timeout=120
             )
             
-            result_text = await self.engine.generate(
+            result = await self.engine.generate(
                 prompt=prompt,
-                config=config,
-                model=self.MODEL
+                config=config
             )
+            result_text = result.get("response", "") if result.get("success") else ""
 
             # Parse translations
             translated_texts = []
@@ -223,13 +228,15 @@ class TranslationService:
                     translated = translated.replace("[TEXT\\_", "[TEXT_")
                     translated_texts.append(translated)
                 else:
-                    print(f"[TranslationService] Warning: TEXT_{i} not found, using original")
+                    self.logger.warning("Missing translated block, using original", extra={
+                        "block_index": i
+                    })
                     translated_texts.append(texts[i])
 
             return translated_texts
 
         except Exception as e:
-            print(f"[TranslationService] Translation failed: {e}")
+            self.logger.error("Translation failed", extra={"error": str(e)})
             return texts
 
     # Non-Latin scripts that can't mix with LaTeX in Tex()
@@ -262,19 +269,27 @@ class TranslationService:
         Returns:
             Manim code with translated Text() strings
         """
-        print(f"[TranslationService] translate_manim_code called: source={source_language}, target={target_language}")
-        print(f"[TranslationService] Code length: {len(manim_code) if manim_code else 0}")
+        self.logger.info("translate_manim_code called", extra={
+            "source_language": source_language,
+            "target_language": target_language,
+            "code_length": len(manim_code) if manim_code else 0
+        })
 
         if not manim_code:
-            print("[TranslationService] No manim_code provided, returning empty")
+            self.logger.warning("No manim_code provided, returning empty")
             return manim_code
 
         is_non_latin = target_language in self.NON_LATIN_LANGUAGES
-        print(f"[TranslationService] is_non_latin={is_non_latin} (target={target_language}, NON_LATIN_LANGUAGES={self.NON_LATIN_LANGUAGES})")
+        self.logger.info("Non-Latin translation mode", extra={
+            "is_non_latin": is_non_latin,
+            "target_language": target_language
+        })
 
         # For non-Latin languages, first handle Tex() with mixed content
         if is_non_latin:
-            print(f"[TranslationService] Running _convert_tex_for_non_latin for {target_language}")
+            self.logger.info("Converting Tex for non-Latin language", extra={
+                "target_language": target_language
+            })
             manim_code = await self._convert_tex_for_non_latin(manim_code, target_language, source_language)
 
         # Extract all Text("...") strings with their positions
@@ -282,10 +297,10 @@ class TranslationService:
         text_pattern = r'(Text)\s*\(\s*(["\'])((?:(?!\2)[^\\]|\\.)*)\2'
 
         matches = list(re.finditer(text_pattern, manim_code))
-        print(f"[TranslationService] Found {len(matches)} Text() matches")
+        self.logger.info("Found Text() matches", extra={"match_count": len(matches)})
 
         if not matches:
-            print("[TranslationService] No Text() strings found in Manim code")
+            self.logger.info("No Text() strings found in Manim code")
             return manim_code
 
         # Extract the text content (group 3 is the string content)
@@ -305,10 +320,12 @@ class TranslationService:
             match_info.append((match, func_name, quote_char, text_content))
 
         if not texts_to_translate:
-            print("[TranslationService] No translatable Text() strings found")
+            self.logger.info("No translatable Text() strings found")
             return manim_code
 
-        print(f"[TranslationService] Found {len(texts_to_translate)} Text() strings to translate")
+        self.logger.info("Found Text() strings to translate", extra={
+            "text_count": len(texts_to_translate)
+        })
 
         # Translate all texts in one batch call
         translated_texts = await self._translate_manim_texts(
@@ -460,11 +477,11 @@ TRANSLATIONS (same format):
                 timeout=120
             )
             
-            result_text = await self.engine.generate(
+            result = await self.engine.generate(
                 prompt=prompt,
-                config=config,
-                model=self.MODEL
+                config=config
             )
+            result_text = result.get("response", "") if result.get("success") else ""
 
             # Parse translations
             translated_texts = []
@@ -475,13 +492,15 @@ TRANSLATIONS (same format):
                     translated = match.group(1).strip()
                     translated_texts.append(translated)
                 else:
-                    print(f"[TranslationService] Warning: TEXT_{i} not found, using original")
+                    self.logger.warning("Missing translated block, using original", extra={
+                        "block_index": i
+                    })
                     translated_texts.append(texts[i])
 
             return translated_texts
 
         except Exception as e:
-            print(f"[TranslationService] Manim text translation failed: {e}")
+            self.logger.error("Manim text translation failed", extra={"error": str(e)})
             return texts
 
     async def _translate_text(
@@ -538,11 +557,11 @@ SPOKEN {target_name.upper()} VERSION:"""
                 timeout=60
             )
             
-            translated = await self.engine.generate(
+            result = await self.engine.generate(
                 prompt=prompt,
-                config=config,
-                model=self.MODEL
+                config=config
             )
+            translated = result.get("response", "") if result.get("success") else ""
 
             # Remove any prefix if the model included it
             prefixes_to_remove = [
@@ -563,7 +582,7 @@ SPOKEN {target_name.upper()} VERSION:"""
             return translated
 
         except Exception as e:
-            print(f"[TranslationService] Translation failed: {e}")
+            self.logger.error("Translation failed", extra={"error": str(e)})
             return self._convert_latex_to_spoken(text)  # Return cleaned original on failure
 
     def _convert_latex_to_spoken(self, text: str) -> str:
@@ -700,27 +719,27 @@ TRANSLATIONS:"""
             
             result = await self.engine.generate(
                 prompt=prompt,
-                config=config,
-                model=self.MODEL
+                config=config
             )
+            result_text = result.get("response", "") if result.get("success") else ""
 
             # Remove prefix if present
-            if result.upper().startswith("TRANSLATIONS:"):
-                result = result[13:].strip()
+            if result_text.upper().startswith("TRANSLATIONS:"):
+                result_text = result_text[13:].strip()
 
             # Split back into items
-            translated_items = result.split("---ITEM---")
+            translated_items = result_text.split("---ITEM---")
             translated_items = [item.strip() for item in translated_items if item.strip()]
 
             # Ensure same number of items
             if len(translated_items) == len(items):
                 return translated_items
             else:
-                print("[TranslationService] Item count mismatch, falling back to individual translation")
+                self.logger.warning("Item count mismatch, falling back to individual translation")
                 return [await self._translate_text(item, source_language, target_language) for item in items]
 
         except Exception as e:
-            print(f"[TranslationService] List translation failed: {e}")
+            self.logger.error("List translation failed", extra={"error": str(e)})
             return items
 
 

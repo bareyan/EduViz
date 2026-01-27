@@ -418,7 +418,7 @@ You MUST distinguish between:
             if output_path.exists():
                 # Get file size for logging
                 size_mb = output_path.stat().st_size / (1024 * 1024)
-                print(f"[VisualQC] ✓ Prepared video for analysis: {size_mb:.2f} MB ({self.TARGET_HEIGHT}p @ {self.TARGET_FPS}fps)")
+                print(f"[VisualQC] OK Prepared video for analysis: {size_mb:.2f} MB ({self.TARGET_HEIGHT}p @ {self.TARGET_FPS}fps)")
                 return str(output_path)
             else:
                 return None
@@ -543,7 +543,7 @@ You MUST distinguish between:
                 max_output_tokens=2048
             )
             
-            response_text = await self.engine.generate(
+            result = await self.engine.generate(
                 prompt="",  # Empty as we're using contents directly
                 config=prompt_config,
                 contents=contents,
@@ -551,7 +551,7 @@ You MUST distinguish between:
                 response_schema=self.error_schema
             )
             
-            # Already a string from engine
+            response_text = result.get("response", "") if result.get("success") else ""
             response_text = response_text.strip() if response_text else "{}"
 
             try:
@@ -619,7 +619,7 @@ You MUST distinguish between:
 
                 if error_reports:
                     full_report = "\n".join(error_reports)
-                    print(f"[VisualQC] ⚠️  Found {len(error_reports)} PERSISTENT issue(s):")
+                    print(f"[VisualQC] WARN  Found {len(error_reports)} PERSISTENT issue(s):")
                     for report in error_reports:
                         print(f"[VisualQC]    {report}")
 
@@ -628,13 +628,13 @@ You MUST distinguish between:
                         "error_report": full_report
                     }
                 else:
-                    print("[VisualQC] ✅ QC PASSED - All detected issues were transient (animation artifacts)")
+                    print("[VisualQC] OK QC PASSED - All detected issues were transient (animation artifacts)")
                     return {
                         "status": "ok",
                         "error_report": ""
                     }
             else:
-                print("[VisualQC] ✅ QC PASSED - No visual errors detected")
+                print("[VisualQC] OK QC PASSED - No visual errors detected")
                 return {
                     "status": "ok",
                     "error_report": ""
@@ -678,7 +678,7 @@ You MUST distinguish between:
         temp_video_path = self._prepare_video_for_analysis(video_path)
 
         if not temp_video_path:
-            print("[VisualQC] ❌ Failed to prepare video for analysis")
+            print("[VisualQC] ERROR Failed to prepare video for analysis")
             return {
                 "status": "error",
                 "error_report": "Failed to prepare video for analysis",

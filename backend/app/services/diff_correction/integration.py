@@ -155,11 +155,14 @@ Provide fixes as search/replace pairs. The "search" field must EXACTLY match tex
             response_format="json"
         )
         
-        response_text = await generator.correction_engine.generate(
+        result = await generator.correction_engine.generate(
             prompt=prompt,
             config=correction_config,
-            response_schema=DIFF_CORRECTION_SCHEMA
+            response_schema=DIFF_CORRECTION_SCHEMA,
+            model=generator.CORRECTION_MODEL
         )
+
+        response_text = result.get("response", "") if result.get("success") else ""
 
         if not response_text:
             print("[DiffCorrector] Empty response from LLM")
@@ -171,7 +174,8 @@ Provide fixes as search/replace pairs. The "search" field must EXACTLY match tex
             fixes = result.get("fixes", [])
         except json.JSONDecodeError as e:
             print(f"[DiffCorrector] Failed to parse JSON: {e}")
-            print(f"[DiffCorrector] Response: {response.text[:300]}...")
+            preview = response_text[:300] if response_text else ""
+            print(f"[DiffCorrector] Response: {preview}...")
             return None
 
         if not fixes:
@@ -204,9 +208,9 @@ Provide fixes as search/replace pairs. The "search" field must EXACTLY match tex
         new_code, successes, errors = apply_all_blocks(code, blocks)
 
         for msg in successes:
-            print(f"[DiffCorrector] ✓ {msg}")
+            print(f"[DiffCorrector] OK {msg}")
         for msg in errors:
-            print(f"[DiffCorrector] ✗ {msg}")
+            print(f"[DiffCorrector] FAIL {msg}")
 
         if not successes:
             print("[DiffCorrector] No blocks applied successfully")
@@ -218,7 +222,7 @@ Provide fixes as search/replace pairs. The "search" field must EXACTLY match tex
             print(f"[DiffCorrector] Syntax error after fixes: {syntax_error}")
             return None
 
-        print(f"[DiffCorrector] ✓ Code fixed via structured output ({len(successes)} changes)")
+        print(f"[DiffCorrector] OK Code fixed via structured output ({len(successes)} changes)")
         return new_code
 
     except Exception as e:
@@ -278,11 +282,14 @@ replacement code
             timeout=90
         )
         
-        response_text = await generator.correction_engine.generate(
+        result = await generator.correction_engine.generate(
             prompt=prompt,
-            config=correction_config
+            config=correction_config,
+            response_schema=DIFF_CORRECTION_SCHEMA,
+            model=model
         )
 
+        response_text = result.get("response", "") if result.get("success") else ""
         if not response_text:
             print("[DiffCorrector] Empty response from LLM")
             return None
@@ -302,9 +309,9 @@ replacement code
         new_code, successes, errors = apply_all_blocks(code, blocks)
 
         for msg in successes:
-            print(f"[DiffCorrector] ✓ {msg}")
+            print(f"[DiffCorrector] OK {msg}")
         for msg in errors:
-            print(f"[DiffCorrector] ✗ {msg}")
+            print(f"[DiffCorrector] FAIL {msg}")
 
         if not successes:
             print("[DiffCorrector] No blocks applied successfully")
@@ -316,7 +323,7 @@ replacement code
             print(f"[DiffCorrector] Syntax error after fixes: {syntax_error}")
             return None
 
-        print(f"[DiffCorrector] ✓ Code fixed via text blocks ({len(successes)} changes)")
+        print(f"[DiffCorrector] OK Code fixed via text blocks ({len(successes)} changes)")
         return new_code
 
     except Exception as e:

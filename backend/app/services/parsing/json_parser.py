@@ -187,7 +187,7 @@ def extract_markdown_code_blocks(text: str, language: str = "python") -> List[st
     blocks = []
 
     # Pattern for fenced code blocks with optional language
-    pattern = rf'```{language}?\n(.*?)```'
+    pattern = rf'```{language}\n(.*)```'
     matches = re.findall(pattern, text, re.DOTALL)
     blocks.extend(matches)
 

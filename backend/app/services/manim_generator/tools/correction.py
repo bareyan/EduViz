@@ -109,15 +109,15 @@ class CorrectionToolHandler:
                 response_schema=SEARCH_REPLACE_SCHEMA
             )
             
-            if not response:
-                return CorrectionResult(success=False, error="Empty response from LLM")
+            if not response or not response.get("success"):
+                return CorrectionResult(success=False, error="Empty or failed response from LLM")
             
             # Parse response
             import json
-            if isinstance(response, str):
-                result = json.loads(response)
-            else:
-                result = response
+            result = response.get("parsed_json")
+            if result is None:
+                response_text = response.get("response", "")
+                result = json.loads(response_text) if response_text else {}
             
             fixes = result.get("fixes", [])
             
@@ -183,7 +183,7 @@ class CorrectionToolHandler:
             reason = fix.get("reason", "")
             
             if not search:
-                details.append(f"⚠ Skipped: empty search text")
+                details.append(f"WARN Skipped: empty search text")
                 continue
             
             if search in new_code:
@@ -192,11 +192,11 @@ class CorrectionToolHandler:
                 if count == 1:
                     new_code = new_code.replace(search, replace)
                     applied += 1
-                    details.append(f"✓ Applied: {reason}" if reason else f"✓ Applied fix")
+                    details.append(f"OK Applied: {reason}" if reason else f"OK Applied fix")
                 else:
-                    details.append(f"⚠ Skipped: search text appears {count} times (must be unique)")
+                    details.append(f"WARN Skipped: search text appears {count} times (must be unique)")
             else:
-                details.append(f"✗ Not found: search text not in code")
+                details.append(f"FAIL Not found: search text not in code")
         
         return new_code, applied, details
     

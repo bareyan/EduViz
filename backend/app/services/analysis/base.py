@@ -17,7 +17,7 @@ class BaseAnalyzer:
 
     def __init__(self):
         # Use PromptingEngine for all LLM interactions
-        self.engine = PromptingEngine()
+        self.engine = PromptingEngine("analysis")
 
     def _get_representative_sample(self, text: str, max_chars: int = 15000) -> str:
         """Extract a representative sample from the document for analysis.

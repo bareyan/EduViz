@@ -60,71 +60,43 @@ class PDFAnalyzer(BaseAnalyzer):
         # - For long docs: use beginning (intro/abstract), middle (core content), and end (conclusions)
         content_sample = self._get_representative_sample(text, max_chars=15000)
 
-        prompt = f"""You are an expert educator preparing comprehensive educational video content with animated visuals.
+        size_note = (
+            "This is a LARGE document - consider splitting into logical chapter-based videos"
+            if is_massive else
+            "This is a standard-sized document - create ONE comprehensive video"
+        )
+        instructions = (
+            "LARGE DOCUMENT INSTRUCTIONS:\n"
+            "Since this is a large document with multiple distinct chapters/sections:\n"
+            "- Create separate video topics ONLY if there are clearly distinct chapters\n"
+            "- Each video should cover ONE complete chapter thoroughly\n"
+            "- Maximum 3-4 videos even for large documents\n"
+            "- Each video should be 15-25 minutes (comprehensive)"
+            if is_massive else
+            "STANDARD DOCUMENT INSTRUCTIONS:\n"
+            "Create ONE comprehensive video that covers ALL the material:\n"
+            "- The video should be thorough enough to REPLACE reading the document\n"
+            "- Include all key concepts, proofs/algorithms, and examples\n"
+            "- Target duration: 15-25 minutes for complete coverage\n"
+            "- Show step-by-step explanations visually"
+        )
+        closing_instruction = (
+            "If the document has 5+ clearly distinct chapters, you may suggest up to 3 separate videos. "
+            "Otherwise, create ONE comprehensive video."
+            if is_massive else
+            "Create exactly ONE comprehensive video covering everything."
+        )
 
-Analyze this content and determine the best video structure.
-IMPORTANT: Detect the SUBJECT AREA (math, computer science, physics, economics, biology, engineering, general) from the content.
-
-DOCUMENT INFO:
-- Total pages: {total_pages}
-- {"This is a LARGE document - consider splitting into logical chapter-based videos" if is_massive else "This is a standard-sized document - create ONE comprehensive video"}
-
-CONTENT:
-{content_sample}
-
-{"LARGE DOCUMENT INSTRUCTIONS:" if is_massive else "STANDARD DOCUMENT INSTRUCTIONS:"}
-{'''Since this is a large document with multiple distinct chapters/sections:
-- Create separate video topics ONLY if there are clearly distinct chapters
-- Each video should cover ONE complete chapter thoroughly
-- Maximum 3-4 videos even for large documents
-- Each video should be 15-25 minutes (comprehensive)''' if is_massive else '''Create ONE comprehensive video that covers ALL the material:
-- The video should be thorough enough to REPLACE reading the document
-- Include all key concepts, proofs/algorithms, and examples
-- Target duration: 15-25 minutes for complete coverage
-- Show step-by-step explanations visually'''}
-
-VIDEO PHILOSOPHY:
-1. The video should show concepts VISUALLY - not just narrate them
-2. Sometimes let the content "speak for itself" without constant narration
-3. For derivations/algorithms: show step-by-step work
-4. Include visual demonstration sections
-5. Balance: 60% narrated content, 40% visual demonstrations
-
-CONTENT ADAPTATION (analyze and identify):
-- MATHEMATICS: Focus on equations, proofs, theorems, derivations
-- COMPUTER SCIENCE: Focus on algorithms, data structures, code, complexity
-- PHYSICS: Focus on phenomena, equations, experiments, applications
-- ECONOMICS: Focus on models, graphs, market dynamics, policies
-- BIOLOGY/CHEMISTRY: Focus on processes, structures, reactions
-- ENGINEERING: Focus on systems, designs, trade-offs
-- GENERAL: Focus on concepts, examples, analogies
-
-Respond with ONLY valid JSON (no markdown, no code blocks):
-{{
-    "summary": "Comprehensive summary of the material",
-    "main_subject": "The primary topic",
-    "subject_area": "math|cs|physics|economics|biology|engineering|general",
-    "key_concepts": ["all", "major", "concepts", "covered"],
-    "detected_math_elements": {total_pages * 3},
-    "document_structure": "single_topic|multi_chapter",
-    "suggested_topics": [
-        {{
-            "index": 0,
-            "title": "[Descriptive Topic Name]",
-            "description": "Comprehensive video covering all material. Includes all key concepts, explanations, and examples.",
-            "estimated_duration": 20,
-            "complexity": "comprehensive",
-            "subject_area": "math|cs|physics|economics|biology|engineering|general",
-            "subtopics": ["all", "major", "sections"],
-            "prerequisites": ["required background"],
-            "visual_ideas": ["step-by-step explanations", "visualizations", "worked examples"]
-        }}
-    ],
-    "estimated_total_videos": 1
-}}
-
-{"If the document has 5+ clearly distinct chapters, you may suggest up to 3 separate videos. Otherwise, create ONE comprehensive video." if is_massive else "Create exactly ONE comprehensive video covering everything."}
-The goal is THOROUGH coverage - the video should contain ALL information from the source."""
+        from app.services.prompting_engine import format_prompt
+        prompt = format_prompt(
+            "ANALYZE_PDF_CONTENT",
+            total_pages=total_pages,
+            size_note=size_note,
+            content_sample=content_sample,
+            instructions=instructions,
+            detected_math_elements=total_pages * 3,
+            closing_instruction=closing_instruction
+        )
 
         # Define response schema for structured JSON output
         response_schema = {
@@ -167,10 +139,11 @@ The goal is THOROUGH coverage - the video should contain ALL information from th
             response_format="json"
         )
 
-        response_text = await self.engine.generate(
+        result = await self.engine.generate(
             prompt=prompt,
             config=config,
             response_schema=response_schema
         )
 
+        response_text = result.get("response", "") if result.get("success") else ""
         return self._parse_json_response(response_text)
