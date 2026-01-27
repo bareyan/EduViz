@@ -1,8 +1,8 @@
 """
-Manim Generator - Uses Centralized PromptingEngine
+Manim Generator - Uses Tool-based Generation
 
-Generates Manim animations using the unified prompting engine.
-All prompts are centralized in: app.services.prompting_engine.prompts
+Generates Manim animations using the unified prompting engine with tool calling.
+All generation logic uses: app.services.manim_generator.tools
 """
 
 import json
@@ -10,8 +10,8 @@ import asyncio
 from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
 
-# Prompting engine with centralized prompts
-from app.services.prompting_engine import PromptingEngine, PromptConfig, ToolHandler, format_prompt
+# Prompting engine
+from app.services.prompting_engine import PromptingEngine, PromptConfig
 
 # Model configuration
 from app.config.models import get_model_config
@@ -25,16 +25,15 @@ except ImportError:
 
 # Local imports
 from app.services.cost_tracker import CostTracker
-from .prompts import (
-    get_language_instructions,
-    get_color_instructions,
+
+# Tool-based generation (unified approach)
+from .tools import (
+    GenerationToolHandler,
+    CorrectionToolHandler,
+    build_context,
+    get_style_instructions,
     get_animation_guidance,
-    build_generation_prompt,
-    build_timing_context,
-    build_visual_script_prompt,
-    build_visual_script_analysis_prompt,
-    get_visual_script_analysis_schema,
-    build_code_from_script_prompt,
+    get_language_instructions,
 )
 from .code_helpers import clean_code, create_scene_file
 from .validation import CodeValidator
@@ -43,14 +42,14 @@ from . import renderer
 
 class ManimGenerator:
     """
-    Generates Manim animations using centralized prompting engine.
+    Generates Manim animations using tool-based approach.
     
-    Uses separate engines for different generation stages:
-    - script_engine: Visual script/storyboard generation
-    - code_engine: Manim code generation
-    - correction_engine: Error analysis and corrections
+    Uses GenerationToolHandler and CorrectionToolHandler for:
+    - Visual script generation (structured output)
+    - Manim code generation (function calling)
+    - Error correction (tool-based fixes)
     
-    All prompts centralized in: prompting_engine.prompts
+    All logic centralized in: tools/
     """
 
     MAX_CLEAN_RETRIES = 2
@@ -68,6 +67,10 @@ class ManimGenerator:
         
         # Initialize validator
         self.validator = CodeValidator()
+        
+        # Initialize tool handlers (unified approach)
+        self.generation_handler = GenerationToolHandler(self.code_engine, self.validator)
+        self.correction_handler = CorrectionToolHandler(self.correction_engine, self.validator)
 
         # Initialize stats
         self.stats = {
@@ -222,190 +225,90 @@ class ManimGenerator:
         reuse_visual_script: bool = False
     ) -> Tuple[str, Optional[str]]:
         """
-        Generate Manim code using 2-shot approach with prompting engine.
+        Generate Manim code using tool-based approach.
+        
+        Uses GenerationToolHandler for structured generation.
         
         Returns:
             Tuple of (manim_code, visual_script)
         """
-        # Get context
         style = section.get('style', '3b1b')
         language = section.get('language', 'en')
-        animation_type = section.get('animation_type', 'text')
         
-        language_instructions = get_language_instructions(language)
-        color_instructions = get_color_instructions(style)
-        type_guidance = get_animation_guidance(animation_type)
-        
-        narration_segments = section.get('narration_segments', [])
-        timing_context = build_timing_context(section, narration_segments)
-
-        # SHOT 1: Generate visual script
-        visual_script = await self._generate_visual_script(
-            section, audio_duration, timing_context,
-            output_dir, section_index, reuse_visual_script
-        )
-
-        # SHOT 1.5: Analyze for spatial issues
-        spatial_fixes = []
-        if visual_script:
-            spatial_fixes = await self._analyze_visual_script(
-                visual_script, audio_duration, output_dir, section_index
-            )
-
-        # SHOT 2: Generate code from visual script
-        if visual_script:
-            code = await self._generate_code_from_script(
-                section, visual_script, audio_duration,
-                language_instructions, color_instructions,
-                type_guidance, spatial_fixes
-            )
-            if code:
-                return (code, visual_script)
-
-        # Fallback: Single-shot generation
-        print("[ManimGenerator] Using single-shot fallback...")
-        code = await self._generate_code_single_shot(
-            section, audio_duration, timing_context,
-            language_instructions, color_instructions, type_guidance
-        )
-        
-        return (code, None)
-
-    async def _generate_visual_script(
-        self,
-        section: Dict[str, Any],
-        audio_duration: float,
-        timing_context: str,
-        output_dir: str,
-        section_index: int,
-        reuse: bool
-    ) -> Optional[str]:
-        """Generate visual script (Shot 1)"""
-        # Try to reuse existing
-        if reuse and output_dir:
+        # Try to reuse existing visual script
+        visual_script = None
+        if reuse_visual_script and output_dir:
             script_file = Path(output_dir) / f"visual_script_{section_index}.md"
             if script_file.exists():
                 print(f"[ManimGenerator] ♻️ Reusing visual script")
                 with open(script_file, "r", encoding="utf-8") as f:
-                    return f.read().strip()
+                    visual_script = f.read().strip()
 
-        print("[ManimGenerator] Shot 1: Generating visual script...")
-        
-        prompt = build_visual_script_prompt(section, audio_duration, timing_context)
-        config = PromptConfig(enable_thinking=True, timeout=180.0)
-        
-        result = await self.script_engine.generate(prompt, config)
-        
-        if result["success"]:
-            visual_script = result["response"].strip()
-            print(f"[ManimGenerator] Shot 1 complete: {len(visual_script)} chars")
-            
-            # Save immediately
-            if output_dir:
-                script_file = Path(output_dir) / f"visual_script_{section_index}.md"
-                with open(script_file, "w", encoding="utf-8") as f:
-                    f.write(visual_script)
-            
-            return visual_script
-        else:
-            print(f"[ManimGenerator] Shot 1 failed: {result.get('error')}")
-            return None
-
-    async def _analyze_visual_script(
-        self,
-        visual_script: str,
-        audio_duration: float,
-        output_dir: str,
-        section_index: int
-    ) -> List[Dict[str, Any]]:
-        """Analyze visual script for spatial issues (Shot 1.5)"""
-        print("[ManimGenerator] Shot 1.5: Analyzing visual script...")
-        
-        prompt = build_visual_script_analysis_prompt(visual_script, audio_duration)
-        config = PromptConfig(response_format="json", timeout=60.0)
-        
-        result = await self.correction_engine.generate(prompt, config)
-        
-        if result["success"] and "parsed_json" in result:
-            analysis = result["parsed_json"]
-            status = analysis.get('status', 'ok')
-            issues_count = analysis.get('issues_found', 0)
-            fixes = analysis.get('fixes', [])
-            
-            if status == 'ok':
-                print("[ManimGenerator] Shot 1.5: Layout OK ✓")
-            else:
-                print(f"[ManimGenerator] Shot 1.5: Found {issues_count} issues, {len(fixes)} fixes")
-            
-            # Save analysis
-            if output_dir:
-                analysis_file = Path(output_dir) / f"visual_script_analysis_{section_index}.json"
-                with open(analysis_file, "w", encoding="utf-8") as f:
-                    json.dump(analysis, f, indent=2)
-            
-            return fixes
-        else:
-            print(f"[ManimGenerator] Shot 1.5 failed: {result.get('error')}")
-            return []
-
-    async def _generate_code_from_script(
-        self,
-        section: Dict[str, Any],
-        visual_script: str,
-        audio_duration: float,
-        language_instructions: str,
-        color_instructions: str,
-        type_guidance: str,
-        spatial_fixes: List[Dict[str, Any]]
-    ) -> Optional[str]:
-        """Generate code from visual script (Shot 2)"""
-        print("[ManimGenerator] Shot 2: Generating Manim code...")
-        
-        prompt = build_code_from_script_prompt(
-            section, visual_script, audio_duration,
-            language_instructions, color_instructions,
-            type_guidance,
-            spatial_fixes if spatial_fixes else None
+        # Use tool-based generation
+        print("[ManimGenerator] Generating code with tool handler...")
+        result = await self.generation_handler.generate(
+            section=section,
+            style=style,
+            target_duration=audio_duration,
+            language=language,
+            use_visual_script=(visual_script is None)  # Generate script if we don't have one
         )
         
-        config = PromptConfig(enable_thinking=True, timeout=300.0)
-        result = await self.code_engine.generate(prompt, config)
+        if result.success and result.code:
+            code = clean_code(result.code)
+            
+            # Save visual script if generated
+            if result.visual_script and output_dir:
+                script_file = Path(output_dir) / f"visual_script_{section_index}.md"
+                visual_script_text = json.dumps(result.visual_script, indent=2)
+                with open(script_file, "w", encoding="utf-8") as f:
+                    f.write(visual_script_text)
+                visual_script = visual_script_text
+            
+            print(f"[ManimGenerator] ✓ Code generated: {len(code)} chars")
+            return (code, visual_script)
         
-        if result["success"]:
-            code = clean_code(result["response"])
-            
-            # Validate
-            validation = self.validator.validate_code(code)
-            if validation["valid"]:
-                print("[ManimGenerator] ✓ Code passed validation")
-            else:
-                print(f"[ManimGenerator] ⚠ Validation issues: {validation.get('error')}")
-            
-            print(f"[ManimGenerator] Shot 2 complete: {len(code)} chars")
-            return code
-        else:
-            print(f"[ManimGenerator] Shot 2 failed: {result.get('error')}")
-            return None
+        # Fallback: basic generation
+        print(f"[ManimGenerator] Tool generation failed: {result.error}")
+        print("[ManimGenerator] Using fallback...")
+        
+        code = await self._generate_fallback(section, audio_duration, style, language)
+        return (code, None)
 
-    async def _generate_code_single_shot(
+    async def _generate_fallback(
         self,
         section: Dict[str, Any],
         audio_duration: float,
-        timing_context: str,
-        language_instructions: str,
-        color_instructions: str,
-        type_guidance: str
+        style: str,
+        language: str
     ) -> str:
         """Fallback single-shot code generation"""
-        prompt = build_generation_prompt(
-            section, audio_duration, timing_context,
-            language_instructions, color_instructions, type_guidance
+        title = section.get("title", "Section")
+        narration = section.get("narration", section.get("tts_narration", ""))[:300]
+        
+        context = build_context(
+            style=style,
+            animation_type="text",
+            target_duration=audio_duration,
+            language=language
         )
         
-        config = PromptConfig(enable_thinking=True, timeout=300.0)
-        result = await self.code_engine.generate(prompt, config)
+        prompt = f"""Generate simple Manim code for this section:
+
+TITLE: {title}
+NARRATION: {narration}
+DURATION: {audio_duration}s
+
+Generate code for the construct() method only. Keep it simple and reliable."""
         
-        if result["success"]:
+        config = PromptConfig(enable_thinking=True, timeout=300.0)
+        result = await self.code_engine.generate(
+            prompt, 
+            config,
+            system_prompt=context.to_system_prompt()
+        )
+        
+        if result.get("success"):
             code = clean_code(result["response"])
             validation = self.validator.validate_code(code)
             
@@ -416,10 +319,11 @@ class ManimGenerator:
             
             return code
         else:
-            # Ultimate fallback
-            return '''        text = Text("Section", font_size=48)
-        self.play(Write(text))
-        self.wait(2)'''
+            # Ultimate fallback - guaranteed to work
+            return f'''        title = Text("{title[:30]}", font_size=36).to_edge(UP)
+        self.play(Write(title))
+        self.wait({max(1.0, audio_duration - 2)})
+        self.play(FadeOut(title))'''
 
     async def render_from_code(
         self,
