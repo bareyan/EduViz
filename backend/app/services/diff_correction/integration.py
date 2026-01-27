@@ -147,31 +147,27 @@ Provide fixes as search/replace pairs. The "search" field must EXACTLY match tex
     try:
         print("[DiffCorrector] Using structured JSON output mode")
 
-        response = await asyncio.to_thread(
-            generator.client.models.generate_content,
-            model=generator.CORRECTION_MODEL,
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=prompt)]
-                )
-            ],
-            config=config
+        from app.services.prompting_engine import PromptConfig
+        correction_config = PromptConfig(
+            temperature=0.1,
+            max_output_tokens=4096,
+            timeout=90,
+            response_format="json"
+        )
+        
+        response_text = await generator.correction_engine.generate(
+            prompt=prompt,
+            config=correction_config,
+            response_schema=DIFF_CORRECTION_SCHEMA
         )
 
-        # Track cost
-        try:
-            generator.cost_tracker.track_usage(response, generator.CORRECTION_MODEL)
-        except Exception:
-            pass
-
-        if not response or not response.text:
+        if not response_text:
             print("[DiffCorrector] Empty response from LLM")
             return None
 
         # Parse JSON response
         try:
-            result = json.loads(response.text)
+            result = json.loads(response_text)
             fixes = result.get("fixes", [])
         except json.JSONDecodeError as e:
             print(f"[DiffCorrector] Failed to parse JSON: {e}")
@@ -275,29 +271,21 @@ replacement code
     )
 
     try:
-        response = await asyncio.to_thread(
-            generator.client.models.generate_content,
-            model=model,
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text=prompt)]
-                )
-            ],
-            config=config
+        from app.services.prompting_engine import PromptConfig
+        correction_config = PromptConfig(
+            temperature=0.1 + (attempt * 0.15),
+            max_output_tokens=4096,
+            timeout=90
+        )
+        
+        response_text = await generator.correction_engine.generate(
+            prompt=prompt,
+            config=correction_config
         )
 
-        # Track cost
-        try:
-            generator.cost_tracker.track_usage(response, model)
-        except Exception:
-            pass
-
-        if not response or not response.text:
+        if not response_text:
             print("[DiffCorrector] Empty response from LLM")
             return None
-
-        response_text = response.text
 
         # Parse SEARCH/REPLACE blocks
         blocks = extract_blocks_from_fenced(response_text)

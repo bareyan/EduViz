@@ -122,17 +122,19 @@ CRITICAL: Create exactly ONE comprehensive video covering everything."""
             "required": ["summary", "main_subject", "subject_area", "key_concepts", "suggested_topics", "estimated_total_videos"]
         }
 
-        config = self.types.GenerateContentConfig(
-            response_mime_type="application/json",
+        from app.services.prompting_engine import PromptConfig
+        config = PromptConfig(
+            temperature=0.7,
+            max_output_tokens=4096,
+            timeout=90,
+            response_format="json"
+        )
+
+        response_text = await self.engine.generate(
+            prompt=prompt,
+            config=config,
             response_schema=response_schema,
-            temperature=0.7
+            contents=[prompt, image_part]
         )
 
-        response = await asyncio.to_thread(
-            self.client.models.generate_content,
-            model=self.MODEL,
-            contents=[prompt, image_part],
-            config=config
-        )
-
-        return self._parse_json_response(response.text)
+        return self._parse_json_response(response_text)

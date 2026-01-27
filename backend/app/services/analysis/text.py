@@ -37,42 +37,12 @@ class TextAnalyzer(BaseAnalyzer):
         # Use representative sample for long texts
         content_sample = self._get_representative_sample(text, max_chars=15000)
 
-        prompt = f"""You are an expert educator preparing comprehensive educational video content.
-
-Analyze this text content and suggest video topics.
-IMPORTANT: Detect the SUBJECT AREA (math, computer science, physics, economics, biology, engineering, general).
-
-DOCUMENT INFO:
-- Estimated pages: {total_pages}
-
-CONTENT:
-{content_sample}
-
-Create ONE comprehensive video that covers ALL the material:
-- The video should be thorough enough to REPLACE reading the document
-- Include all key concepts and examples
-- Target duration: 15-25 minutes
-
-Respond with ONLY valid JSON (no markdown, no code blocks):
-{{
-    "summary": "Comprehensive summary of the material",
-    "main_subject": "The primary topic",
-    "subject_area": "math|cs|physics|economics|biology|engineering|general",
-    "key_concepts": ["all", "major", "concepts"],
-    "detected_math_elements": 3,
-    "suggested_topics": [
-        {{
-            "index": 0,
-            "title": "[Descriptive Topic Name]",
-            "description": "Comprehensive video covering all material",
-            "estimated_duration": 20,
-            "complexity": "intermediate",
-            "subtopics": ["all", "major", "sections"],
-            "prerequisites": ["required background"]
-        }}
-    ],
-    "estimated_total_videos": 1
-}}"""
+        from app.services.prompting_engine import format_prompt
+        prompt = format_prompt(
+            "ANALYZE_TEXT_CONTENT",
+            total_pages=total_pages,
+            content_sample=content_sample
+        )
 
         # Define response schema for structured JSON output
         response_schema = {
@@ -104,17 +74,18 @@ Respond with ONLY valid JSON (no markdown, no code blocks):
             "required": ["summary", "main_subject", "subject_area", "key_concepts", "suggested_topics", "estimated_total_videos"]
         }
 
-        config = self.types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=response_schema,
-            temperature=0.7
+        from app.services.prompting_engine import PromptConfig
+        config = PromptConfig(
+            temperature=0.7,
+            max_output_tokens=4096,
+            timeout=90,
+            response_format="json"
         )
 
-        response = await asyncio.to_thread(
-            self.client.models.generate_content,
-            model=self.MODEL,
-            contents=prompt,
-            config=config
+        response_text = await self.engine.generate(
+            prompt=prompt,
+            config=config,
+            response_schema=response_schema
         )
 
-        return self._parse_json_response(response.text)
+        return self._parse_json_response(response_text)

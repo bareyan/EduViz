@@ -20,14 +20,11 @@ from app.config.models import get_model_config
 class TranslationService:
     """Translates video content to different languages"""
 
-    # Model configuration - loaded from centralized config
-    _config = get_model_config("translation")
-    MODEL = _config.model_name
-
     def __init__(self):
-        # Unified client automatically detects Gemini API vs Vertex AI
-        self.client = create_client()
-        self.types = get_types_module()
+        # Use centralized prompting engine
+        from app.services.prompting_engine import PromptingEngine, PromptConfig
+        self.engine = PromptingEngine("translation")
+        self.prompt_config = PromptConfig(temperature=0.3, timeout=60.0)
 
     async def translate_script(
         self,
@@ -191,44 +188,30 @@ class TranslationService:
             safe_text = text.replace("[TEXT_", "[TEXT\\_")
             texts_block += f"[TEXT_{i}]\n{safe_text}\n[/TEXT_{i}]\n\n"
 
-        prompt = f"""Translate educational narration from {source_name} to {target_name}.
-
-CONTEXT: {section_context}
-
-CRITICAL RULES:
-1. Translate the MEANING naturally, not word-by-word
-2. These texts may contain code-like patterns - DO NOT translate:
-   - Variable names in curly braces: {{variable}}, {{x}}, {{n}}
-   - Python f-string patterns: f"text {{var}}" - translate "text" but keep {{var}}
-   - Technical identifiers: function_name, ClassName, method_name
-3. Convert LaTeX math to SPOKEN form in {target_name}:
-   - "$x^2$" → say "x squared" in {target_name}
-   - "$\\frac{{a}}{{b}}$" → say "a over b" in {target_name}
-   - Remove $ and LaTeX commands, keep only speakable words
-4. Preserve markers exactly: [pause], [PAUSE], ...
-5. Keep consistent terminology within this section
-6. Output ONLY translations, no commentary
-
-TEXTS:
-{texts_block}
-
-OUTPUT (same format, translated):
-"""
+        from app.services.prompting_engine import format_prompt
+        prompt = format_prompt(
+            "TRANSLATE_NARRATION_BULK",
+            source_name=source_name,
+            target_name=target_name,
+            section_context=section_context,
+            texts_block=texts_block
+        )
         for i in range(len(texts)):
             prompt += f"[TEXT_{i}]\n...\n[/TEXT_{i}]\n"
 
         try:
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.MODEL,
-                contents=prompt,
-                config=self.types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=4000,
-                )
+            from app.services.prompting_engine import PromptConfig
+            config = PromptConfig(
+                temperature=0.3,
+                max_output_tokens=4000,
+                timeout=120
             )
-
-            result_text = response.text.strip()
+            
+            result_text = await self.engine.generate(
+                prompt=prompt,
+                config=config,
+                model=self.MODEL
+            )
 
             # Parse translations
             translated_texts = []
@@ -470,17 +453,18 @@ TRANSLATIONS (same format):
             prompt += f"[TEXT_{i}]\n...\n[/TEXT_{i}]\n"
 
         try:
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.MODEL,
-                contents=prompt,
-                config=self.types.GenerateContentConfig(
-                    temperature=0.2,
-                    max_output_tokens=4000,
-                )
+            from app.services.prompting_engine import PromptConfig
+            config = PromptConfig(
+                temperature=0.2,
+                max_output_tokens=4000,
+                timeout=120
             )
-
-            result_text = response.text.strip()
+            
+            result_text = await self.engine.generate(
+                prompt=prompt,
+                config=config,
+                model=self.MODEL
+            )
 
             # Parse translations
             translated_texts = []
@@ -547,16 +531,18 @@ INPUT TEXT:
 SPOKEN {target_name.upper()} VERSION:"""
 
         try:
-            response = self.client.models.generate_content(
-                model=self.MODEL,
-                contents=prompt,
-                config=self.types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=2000,
-                )
+            from app.services.prompting_engine import PromptConfig
+            config = PromptConfig(
+                temperature=0.3,
+                max_output_tokens=2000,
+                timeout=60
             )
-
-            translated = response.text.strip()
+            
+            translated = await self.engine.generate(
+                prompt=prompt,
+                config=config,
+                model=self.MODEL
+            )
 
             # Remove any prefix if the model included it
             prefixes_to_remove = [
@@ -705,16 +691,18 @@ ITEMS:
 TRANSLATIONS:"""
 
         try:
-            response = self.client.models.generate_content(
-                model=self.MODEL,
-                contents=prompt,
-                config=self.types.GenerateContentConfig(
-                    temperature=0.3,
-                    max_output_tokens=2000,
-                )
+            from app.services.prompting_engine import PromptConfig
+            config = PromptConfig(
+                temperature=0.3,
+                max_output_tokens=2000,
+                timeout=60
             )
-
-            result = response.text.strip()
+            
+            result = await self.engine.generate(
+                prompt=prompt,
+                config=config,
+                model=self.MODEL
+            )
 
             # Remove prefix if present
             if result.upper().startswith("TRANSLATIONS:"):

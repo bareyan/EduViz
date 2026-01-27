@@ -55,31 +55,26 @@ class OverviewGenerator:
         try:
             print("[OverviewGen] Generating complete overview script...")
             
-            config = self.base.types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=response_schema,
+            from app.services.prompting_engine import PromptConfig
+            config = PromptConfig(
                 temperature=0.7,
                 max_output_tokens=8192,
-            )
-            
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.base.client.models.generate_content,
-                    model=self.base.MODEL,
-                    contents=prompt,
-                    config=config,
-                ),
                 timeout=120,
+                response_format="json"
             )
             
-            self.base.cost_tracker.track_usage(response, self.base.MODEL)
+            response_text = await self.base.generate_with_engine(
+                prompt=prompt,
+                config=config,
+                response_schema=response_schema
+            )
             
-            if not response or not getattr(response, "text", None):
+            if not response_text:
                 print("[OverviewGen] ERROR: Empty response from API")
                 return self._fallback_script(topic)
             
-            print(f"[OverviewGen] Received response: {len(response.text)} chars")
-            script = parse_json_response(response.text)
+            print(f"[OverviewGen] Received response: {len(response_text)} chars")
+            script = parse_json_response(response_text)
             
             if not script:
                 print("[OverviewGen] ERROR: Failed to parse JSON response")

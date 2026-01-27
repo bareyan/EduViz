@@ -136,12 +136,11 @@ class ScriptGenerator:
 
     async def _detect_language(self, content_sample: str) -> str:
         """Detect language using prompting engine"""
-        prompt = f"""Detect the primary language of this text. Respond with ONLY the ISO 639-1 code (e.g., "en", "fr", "es").
-
-Text:
-{content_sample}
-
-Language code:"""
+        from app.services.prompting_engine import format_prompt
+        prompt = format_prompt(
+            "LANGUAGE_DETECTION",
+            content=content_sample
+        )
         
         config = PromptConfig(temperature=0.1, timeout=30.0)
         result = await self.lang_engine.generate(prompt, config)

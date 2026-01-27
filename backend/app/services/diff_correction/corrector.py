@@ -97,37 +97,22 @@ class DiffCorrector:
         # Build prompt
         prompt = build_diff_correction_prompt(code, error_message, section)
 
-        # Configure for fast, focused response
-        config = types.GenerateContentConfig(
-            system_instruction=DIFF_CORRECTION_SYSTEM,
-            temperature=0.1,
-            max_output_tokens=2048,  # Diffs are small
-        )
-
         try:
-            response = await asyncio.to_thread(
-                self.generator.client.models.generate_content,
-                model=self.generator.CORRECTION_MODEL,
-                contents=[
-                    types.Content(
-                        role="user",
-                        parts=[types.Part.from_text(text=prompt)]
-                    )
-                ],
-                config=config
+            from app.services.prompting_engine import PromptConfig
+            correction_config = PromptConfig(
+                temperature=0.1,
+                max_output_tokens=2048,
+                timeout=60
+            )
+            
+            response_text = await self.generator.correction_engine.generate(
+                prompt=prompt,
+                config=correction_config
             )
 
-            # Track cost
-            try:
-                self.generator.cost_tracker.track_usage(response, self.generator.CORRECTION_MODEL)
-            except Exception:
-                pass
-
-            if not response or not response.text:
+            if not response_text:
                 print("[DiffCorrector] Empty response from LLM")
                 return None
-
-            response_text = response.text
 
             # Parse SEARCH/REPLACE blocks
             blocks = extract_blocks_from_fenced(response_text)

@@ -4,9 +4,8 @@ Base analyzer class with shared logic for all analysis types
 
 from typing import Dict, Any
 from app.config.models import get_model_config
-from app.services.gemini import get_gemini_client, get_types_module
+from app.services.prompting_engine import PromptingEngine, PromptConfig
 from app.services.parsing import parse_json_response
-create_client = get_gemini_client
 
 
 class BaseAnalyzer:
@@ -17,9 +16,8 @@ class BaseAnalyzer:
     MODEL = _config.model_name
 
     def __init__(self):
-        # Unified client automatically detects Gemini API vs Vertex AI
-        self.client = create_client()
-        self.types = get_types_module()
+        # Use PromptingEngine for all LLM interactions
+        self.engine = PromptingEngine()
 
     def _get_representative_sample(self, text: str, max_chars: int = 15000) -> str:
         """Extract a representative sample from the document for analysis.

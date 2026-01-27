@@ -132,46 +132,42 @@ class SectionGenerator:
                     
                     # Try with thinking_config first
                     try:
-                        config = self.base.types.GenerateContentConfig(
-                            thinking_config=self.base.types.ThinkingConfig(thinking_level="MEDIUM"),
+                        from app.services.prompting_engine import PromptConfig
+                        
+                        # Try with thinking config first
+                        config = PromptConfig(
+                            temperature=0.7,
                             max_output_tokens=8192,
-                            response_mime_type="application/json",
-                            response_schema=response_schema,
-                        )
-                        response = await asyncio.wait_for(
-                            asyncio.to_thread(
-                                self.base.client.models.generate_content,
-                                model=self.base.MODEL,
-                                contents=prompt,
-                                config=config,
-                            ),
                             timeout=120,
+                            response_format="json",
+                            enable_thinking=True
+                        )
+                        response_text = await self.base.generate_with_engine(
+                            prompt=prompt,
+                            config=config,
+                            response_schema=response_schema
                         )
                     except Exception as e:
                         error_msg = str(e)
                         if "thinking_level is not supported" in error_msg or "thinking_config" in error_msg.lower():
                             print(f"[SectionGen] Model doesn't support thinking_config, retrying without it...")
-                            config = self.base.types.GenerateContentConfig(
+                            config = PromptConfig(
+                                temperature=0.7,
                                 max_output_tokens=8192,
-                                response_mime_type="application/json",
-                                response_schema=response_schema,
-                            )
-                            response = await asyncio.wait_for(
-                                asyncio.to_thread(
-                                    self.base.client.models.generate_content,
-                                    model=self.base.MODEL,
-                                    contents=prompt,
-                                    config=config,
-                                ),
                                 timeout=120,
+                                response_format="json",
+                                enable_thinking=False
+                            )
+                            response_text = await self.base.generate_with_engine(
+                                prompt=prompt,
+                                config=config,
+                                response_schema=response_schema
                             )
                         else:
                             raise
                     
-                    self.base.cost_tracker.track_usage(response, self.base.MODEL)
-
-                    if response and getattr(response, "text", None):
-                        section = self.base.parse_json(response.text)
+                    if response_text:
+                        section = self.base.parse_json(response_text)
                         if not section or (section.get("title") == "Mathematical Exploration" and "narration" not in section):
                             print(f"[SectionGen] WARNING: Invalid section data received (attempt {attempt + 1})")
                             raise ValueError("JSON parse failed")

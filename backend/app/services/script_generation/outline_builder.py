@@ -115,23 +115,20 @@ class OutlineBuilder:
 
         try:
             # Create config with structured JSON output
-            config = self.base.types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=response_schema,
-                temperature=0.7
+            from app.services.prompting_engine import PromptConfig
+            config = PromptConfig(
+                temperature=0.7,
+                max_output_tokens=4096,
+                timeout=300,
+                response_format="json"
             )
 
-            response = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.base.client.models.generate_content,
-                    model=self.base.MODEL,
-                    contents=phase1_prompt,
-                    config=config,
-                ),
-                timeout=300,
+            response_text = await self.base.generate_with_engine(
+                prompt=phase1_prompt,
+                config=config,
+                response_schema=response_schema
             )
-            self.base.cost_tracker.track_usage(response, self.base.MODEL)
-            outline = self.base.parse_json(response.text)
+            outline = self.base.parse_json(response_text)
             if not outline:
                 outline = self._fallback_outline(topic)
         except Exception:

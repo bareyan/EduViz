@@ -126,9 +126,10 @@ You MUST distinguish between:
 
         self.model = model or self.DEFAULT_MODEL
 
-        # Initialize unified Gemini client (works with both API and Vertex AI)
-        self.client = create_client()
-        self.types = get_types_module()
+        # Use centralized prompting engine
+        from app.services.prompting_engine import PromptingEngine, PromptConfig
+        self.engine = PromptingEngine("visual_qc")
+        self.prompt_config = PromptConfig(temperature=0.1, timeout=120.0)
         print(f"[VisualQC] Initialized with model: {self.model} (video mode, {self.TARGET_HEIGHT}p @ {self.TARGET_FPS}fps)")
 
         # Token usage tracking
@@ -481,46 +482,14 @@ You MUST distinguish between:
             segment_context = "\n".join(segment_lines)
 
         # Build the analysis prompt
-        user_prompt = f"""Analyze this Manim educational animation video for PERSISTENT VISUAL ERRORS.
-
-VIDEO CONTEXT:
-- Section Title: "{section_title}"
-- Total Duration: {duration:.1f} seconds
-- Expected Content: {visual_description[:300] if visual_description else "Educational mathematical animation"}
-
-NARRATION TIMELINE (what should be shown when):
-{segment_context if segment_context else full_narration[:500]}
-
-## CRITICAL: ANIMATION-AWARE ANALYSIS
-
-This is an ANIMATED video. Objects constantly fade in/out, move, transform, and transition.
-
-**ONLY REPORT ERRORS THAT:**
-1. Persist for AT LEAST 2 SECONDS in a STATIC state (not during animation)
-2. Remain visible AFTER the animation/transition completes
-3. Represent a final rendered state that is broken
-
-**DO NOT REPORT:**
-- Issues visible for only 1 frame during a transition
-- Temporary overlaps that resolve as animation continues
-- Brief edge proximity during movement
-- Any issue that disappears when the animation settles
-
-## ANALYSIS INSTRUCTIONS:
-1. Watch the ENTIRE video carefully
-2. When you see a potential issue, WAIT to see if it persists
-3. If the issue resolves within 1-2 seconds (during animation), IGNORE IT
-4. If the issue remains for 2+ seconds in a STATIC state, REPORT IT
-5. Note BOTH the start_second AND end_second for each error
-6. Set is_during_animation=true for any issue that only appears during transitions (these should NOT be in your final list)
-
-## EXAMPLES:
-- Text overlaps another element during FadeIn but separates when animation ends → IGNORE (transient)
-- Text overlaps another element and stays overlapped for 5 seconds → REPORT (persistent)
-- Equation briefly touches screen edge during Transform animation → IGNORE (transient)  
-- Equation is cut off at screen edge for the rest of the video → REPORT (persistent)
-
-REMEMBER: When in doubt, check if the issue persists in a "settled" state. Only report PERSISTENT issues."""
+        from app.services.prompting_engine import format_prompt
+        user_prompt = format_prompt(
+            "VISUAL_QC_VIDEO_ANALYSIS",
+            section_title=section_title,
+            duration=duration,
+            visual_description=visual_description[:300] if visual_description else "Educational mathematical animation",
+            segment_context=segment_context if segment_context else full_narration[:500]
+        )
 
         try:
             # Read video file as bytes
@@ -563,20 +532,27 @@ REMEMBER: When in doubt, check if the issue persists in a "settled" state. Only 
                 response_schema=self.error_schema
             )
 
-            # Call Gemini API
+            # Call Gemini API via PromptingEngine
             print("[VisualQC] Sending video to Gemini for analysis...")
-            response = await asyncio.to_thread(
-                self.client.models.generate_content,
-                model=self.model,
-                contents=contents,
-                config=config
+            
+            from app.services.prompting_engine import PromptConfig
+            prompt_config = PromptConfig(
+                temperature=0.1,
+                timeout=600,
+                response_format="json",
+                max_output_tokens=2048
             )
-
-            # Track usage
-            self._track_usage(response, num_videos=1)
-
-            # Parse structured JSON response
-            response_text = response.text.strip() if response.text else "{}"
+            
+            response_text = await self.engine.generate(
+                prompt="",  # Empty as we're using contents directly
+                config=prompt_config,
+                contents=contents,
+                model=self.model,
+                response_schema=self.error_schema
+            )
+            
+            # Already a string from engine
+            response_text = response_text.strip() if response_text else "{}"
 
             try:
                 result = json.loads(response_text)
