@@ -78,6 +78,7 @@ class StructuredFormatter(logging.Formatter):
             "process",
             "getMessage",
             "message",
+            "taskName",  # Added in Python 3.12
         }
 
         extra: Dict[str, Any] = {}

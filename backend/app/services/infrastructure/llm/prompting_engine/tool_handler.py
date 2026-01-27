@@ -128,19 +128,24 @@ class ToolHandler:
         """
         import asyncio
         
+        # Check if we're in an async context
         try:
-            # Check if an event loop is already running
-            loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
+            # If we reach here, there IS a running loop - can't use asyncio.run()
             raise RuntimeError(
                 "execute_tool_sync() cannot be called from an async context. "
                 "Use await execute_tool() instead."
             )
         except RuntimeError as e:
-            # If we get "no running event loop", that's good - we can proceed
-            if "no running event loop" in str(e):
-                return asyncio.run(self.execute_tool(name, args))
-            # Otherwise, re-raise the error we created above
-            raise
+            # Check if this is OUR error or asyncio's "no running loop" error
+            if "cannot be called from an async context" in str(e):
+                # This is our error - re-raise it
+                raise
+            # Otherwise it's asyncio's error meaning no loop exists - we can proceed
+            pass
+        
+        # No running loop, safe to use asyncio.run()
+        return asyncio.run(self.execute_tool(name, args))
 
 
 def create_manim_tools(types_module, code_context: Dict[str, Any]) -> ToolHandler:

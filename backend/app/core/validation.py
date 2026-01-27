@@ -81,10 +81,10 @@ def validate_upload_path(file_id: str) -> Path:
         >>> path = validate_upload_path("safe-id-123")
         >>> assert path.parent == UPLOAD_DIR
     """
-    safe_path = (UPLOAD_DIR / file_id).resolve()
+    safe_path = UPLOAD_DIR / file_id
     if not validate_path_within_directory(safe_path, UPLOAD_DIR):
         raise HTTPException(status_code=400, detail="Invalid file path")
-    return safe_path
+    return safe_path.resolve()
 
 
 def validate_job_path(job_id: str) -> Path:
@@ -107,10 +107,10 @@ def validate_job_path(job_id: str) -> Path:
         >>> path = validate_job_path("job-456")
         >>> assert path.parent == OUTPUT_DIR
     """
-    safe_path = (OUTPUT_DIR / job_id).resolve()
+    safe_path = OUTPUT_DIR / job_id
     if not validate_path_within_directory(safe_path, OUTPUT_DIR):
         raise HTTPException(status_code=400, detail="Invalid job path")
-    return safe_path
+    return safe_path.resolve()
 
 
 def find_uploaded_file(file_id: str) -> str:
