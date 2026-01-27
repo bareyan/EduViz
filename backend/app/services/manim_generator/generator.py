@@ -1,23 +1,20 @@
 """
-Manim Generator - Uses Gemini to generate Manim code for each video section
+Manim Generator - Uses Centralized PromptingEngine
 
-This module provides the ManimGenerator class for generating animated math
-videos using Manim Community Edition and Google's Gemini AI.
+Generates Manim animations using the unified prompting engine.
+All prompts are centralized in: app.services.prompting_engine.prompts
 """
 
 import json
 import asyncio
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
 
-# Unified Gemini client (works with both API and Vertex AI)
-from app.services.gemini.client import create_client, get_types_module, GenerationConfig as UnifiedGenerationConfig
+# Prompting engine with centralized prompts
+from app.services.prompting_engine import PromptingEngine, PromptConfig, ToolHandler, format_prompt
 
 # Model configuration
-from app.config.models import (
-    get_model_config,
-    get_thinking_config,
-)
+from app.config.models import get_model_config
 
 # Visual Quality Control
 try:
@@ -25,10 +22,9 @@ try:
     VISUAL_QC_AVAILABLE = True
 except ImportError:
     VISUAL_QC_AVAILABLE = False
-    print("[ManimGenerator] Visual QC not available")
 
 # Local imports
-from .cost_tracker import CostTracker
+from app.services.cost_tracker import CostTracker
 from .prompts import (
     get_language_instructions,
     get_color_instructions,
@@ -41,29 +37,37 @@ from .prompts import (
     build_code_from_script_prompt,
 )
 from .code_helpers import clean_code, create_scene_file
-from .tool_generator import ToolBasedGenerator
+from .validation import CodeValidator
 from . import renderer
 
 
 class ManimGenerator:
-    """Generates Manim animations using Gemini AI"""
+    """
+    Generates Manim animations using centralized prompting engine.
+    
+    Uses separate engines for different generation stages:
+    - script_engine: Visual script/storyboard generation
+    - code_engine: Manim code generation
+    - correction_engine: Error analysis and corrections
+    
+    All prompts centralized in: prompting_engine.prompts
+    """
 
     MAX_CLEAN_RETRIES = 2
-
-    # Visual QC settings
-    ENABLE_VISUAL_QC = True  # Toggle: Enable visual QC to check rendered videos
-    MAX_QC_ITERATIONS = 3  # Allow up to 3 fix attempts before accepting
+    ENABLE_VISUAL_QC = True
+    MAX_QC_ITERATIONS = 3
 
     def __init__(self):
-        # Unified client automatically detects Gemini API vs Vertex AI
-        self.client = create_client()
-        self.types = get_types_module()
-
         # Initialize cost tracker
         self.cost_tracker = CostTracker()
         
-        # Initialize tool-based generator for function calling
-        self.tool_generator = ToolBasedGenerator(self.client, self.cost_tracker)
+        # Initialize prompting engines for different stages
+        self.script_engine = PromptingEngine("visual_script_generation", self.cost_tracker)
+        self.code_engine = PromptingEngine("manim_generation", self.cost_tracker)
+        self.correction_engine = PromptingEngine("code_correction", self.cost_tracker)
+        
+        # Initialize validator
+        self.validator = CodeValidator()
 
         # Initialize stats
         self.stats = {
@@ -74,65 +78,47 @@ class ManimGenerator:
             "failed_sections": []
         }
 
-        # Visual QC controller (initialized lazily)
+        # Visual QC controller
         self.visual_qc = None
         self._qc_initialized = False
-
-        # Load initial config
+        
+        # Load config
         self._refresh_config()
 
     def _refresh_config(self):
-        """Refresh model configuration from active pipeline (call before each generation)"""
+        """Refresh model configuration"""
         self._manim_config = get_model_config("manim_generation")
-        self._visual_script_config = get_model_config("visual_script_generation")
-        self._correction_config = get_model_config("code_correction")
-        self._correction_strong_config = get_model_config("code_correction_strong")
         self._visual_qc_config = get_model_config("visual_qc")
-
-        self.MODEL = self._manim_config.model_name
-        self.VISUAL_SCRIPT_MODEL = self._visual_script_config.model_name
-        self.CORRECTION_MODEL = self._correction_config.model_name
-        self.STRONG_MODEL = self._correction_strong_config.model_name
-        self.QC_MODEL = self._visual_qc_config.model_name
-
+        
         self.MAX_CORRECTION_ATTEMPTS = getattr(self._manim_config, 'max_correction_attempts', 3)
 
-        # Update generation configs
-        thinking_config = get_thinking_config(self._manim_config)
-        script_thinking_config = get_thinking_config(self._visual_script_config)
-
-        self.generation_config = UnifiedGenerationConfig(thinking_config=thinking_config) if thinking_config else None
-        self.visual_script_generation_config = UnifiedGenerationConfig(thinking_config=script_thinking_config) if script_thinking_config else None
-
-        # Reinitialize Visual QC if needed
+        # Initialize Visual QC if needed
         if VISUAL_QC_AVAILABLE and self.ENABLE_VISUAL_QC and not self._qc_initialized:
             try:
-                self.visual_qc = VisualQualityController(model=self.QC_MODEL)
+                qc_model = self._visual_qc_config.model_name
+                self.visual_qc = VisualQualityController(model=qc_model)
                 self._qc_initialized = True
             except Exception as e:
                 print(f"[ManimGenerator] Failed to initialize Visual QC: {e}")
                 self.visual_qc = None
 
     def get_cost_summary(self) -> Dict[str, Any]:
-        """Get a summary of token usage and costs"""
+        """Get cost summary"""
         return self.cost_tracker.get_summary(self.visual_qc)
 
     def print_cost_summary(self):
-        """Print a formatted cost summary to console"""
-        self.cost_tracker.print_summary(self.visual_qc)
-
-    def print_generation_stats(self):
-        """Print statistics about the generation process"""
+        """Print cost summary"""
+        summary = self.get_cost_summary()
         print("\n" + "="*60)
-        print("GENERATION STATISTICS")
+        print("COST SUMMARY")
         print("="*60)
-        print(f"Total Sections Processed: {self.stats['total_sections']}")
-        print(f"Sections Regenerated:     {self.stats['regenerated_sections']}")
-        print(f"Total Retries Performed:  {self.stats['total_retries']}")
-        print(f"Skipped/Failed Sections:  {self.stats['skipped_sections']}")
-
-        if self.stats['failed_sections']:
-            print(f"Failed Section Indices:   {', '.join(map(str, self.stats['failed_sections']))}")
+        for key, value in summary.items():
+            if isinstance(value, dict):
+                print(f"\n{key}:")
+                for k, v in value.items():
+                    print(f"  {k}: {v}")
+            else:
+                print(f"{key}: {value}")
         print("="*60 + "\n")
 
     async def generate_section_video(
@@ -145,38 +131,34 @@ class ManimGenerator:
         language: str = "en",
         clean_retry: int = 0
     ) -> Dict[str, Any]:
-        """Generate a video for a single section
+        """
+        Generate a Manim video for a section.
         
         Args:
-            section: Section data with title, narration, visual_description, etc.
-            output_dir: Directory to save output files
-            section_index: Index of this section
-            audio_duration: Actual audio duration in seconds
-            style: Visual style - "3b1b" for dark, "clean" for light
-            language: Language code for proper text/LaTeX handling
-            clean_retry: Current clean retry attempt
-        
+            section: Section data
+            output_dir: Output directory
+            section_index: Section index
+            audio_duration: Actual audio duration
+            style: Visual style
+            language: Language code
+            clean_retry: Current retry attempt
+            
         Returns:
             Dict with video_path and manim_code
         """
-
-        # Refresh model config from active pipeline (ensures latest settings are used)
         if clean_retry == 0:
             self._refresh_config()
-            print(f"[ManimGenerator] Using pipeline models: manim={self.MODEL}, visual_script={self.VISUAL_SCRIPT_MODEL}")
             self.stats["total_sections"] += 1
 
-        # Use audio duration as the target if available
         target_duration = audio_duration if audio_duration else section.get("duration_seconds", 60)
         section["target_duration"] = target_duration
         section["language"] = language
         section["style"] = style
 
-        # Generate Manim code using Gemini (2-shot approach)
         retry_note = f" (clean retry {clean_retry})" if clean_retry > 0 else ""
         print(f"[ManimGenerator] Generating code for section {section_index}{retry_note}")
 
-        # On clean retry, reuse the existing visual script to save cost and maintain consistency
+        # Generate code (2-shot with visual script)
         reuse_visual_script = (clean_retry > 0)
         manim_code, visual_script = await self._generate_manim_code(
             section,
@@ -186,21 +168,17 @@ class ManimGenerator:
             reuse_visual_script=reuse_visual_script
         )
 
-        # Write the code to a temp file
+        # Write code file
         section_id = section.get("id", f"section_{section_index}").replace("-", "_").replace(" ", "_")
         scene_name = f"Section{section_id.title().replace('_', '')}"
-
         code_file = Path(output_dir) / f"scene_{section_index}.py"
-
-        # Visual script is already saved in _generate_manim_code immediately after generation
-
-        # Create the full scene file with theme enforcement
+        
         full_code = create_scene_file(manim_code, section_id, target_duration, style)
-
+        
         with open(code_file, "w", encoding="utf-8") as f:
             f.write(full_code)
 
-        # Render the scene
+        # Render
         output_video = await renderer.render_scene(
             self,
             code_file,
@@ -211,28 +189,21 @@ class ManimGenerator:
             clean_retry=clean_retry
         )
 
-        # Check if we need to retry from clean
-        if output_video is None:
-            if clean_retry < self.MAX_CLEAN_RETRIES:
-                print(f"[ManimGenerator] ⚠️ Section {section_index} failed, attempting clean retry {clean_retry + 1}/{self.MAX_CLEAN_RETRIES}")
-                if clean_retry == 0:
-                    self.stats["regenerated_sections"] += 1
-                self.stats["total_retries"] += 1
+        # Retry if needed
+        if output_video is None and clean_retry < self.MAX_CLEAN_RETRIES:
+            print(f"[ManimGenerator] ⚠️ Section {section_index} failed, retry {clean_retry + 1}/{self.MAX_CLEAN_RETRIES}")
+            if clean_retry == 0:
+                self.stats["regenerated_sections"] += 1
+            self.stats["total_retries"] += 1
+            
+            return await self.generate_section_video(
+                section, output_dir, section_index,
+                audio_duration, style, language, clean_retry + 1
+            )
+        elif output_video is None:
+            self.stats["skipped_sections"] += 1
+            self.stats["failed_sections"].append(section_index)
 
-                return await self.generate_section_video(
-                    section=section,
-                    output_dir=output_dir,
-                    section_index=section_index,
-                    audio_duration=audio_duration,
-                    style=style,
-                    language=language,
-                    clean_retry=clean_retry + 1
-                )
-            else:
-                self.stats["skipped_sections"] += 1
-                self.stats["failed_sections"].append(section_index)
-
-        # Re-read the final code
         with open(code_file, "r", encoding="utf-8") as f:
             final_code = f.read()
 
@@ -242,312 +213,231 @@ class ManimGenerator:
             "manim_code_path": str(code_file)
         }
 
+    async def _generate_manim_code(
+        self,
+        section: Dict[str, Any],
+        audio_duration: float,
+        output_dir: str,
+        section_index: int,
+        reuse_visual_script: bool = False
+    ) -> Tuple[str, Optional[str]]:
+        """
+        Generate Manim code using 2-shot approach with prompting engine.
+        
+        Returns:
+            Tuple of (manim_code, visual_script)
+        """
+        # Get context
+        style = section.get('style', '3b1b')
+        language = section.get('language', 'en')
+        animation_type = section.get('animation_type', 'text')
+        
+        language_instructions = get_language_instructions(language)
+        color_instructions = get_color_instructions(style)
+        type_guidance = get_animation_guidance(animation_type)
+        
+        narration_segments = section.get('narration_segments', [])
+        timing_context = build_timing_context(section, narration_segments)
+
+        # SHOT 1: Generate visual script
+        visual_script = await self._generate_visual_script(
+            section, audio_duration, timing_context,
+            output_dir, section_index, reuse_visual_script
+        )
+
+        # SHOT 1.5: Analyze for spatial issues
+        spatial_fixes = []
+        if visual_script:
+            spatial_fixes = await self._analyze_visual_script(
+                visual_script, audio_duration, output_dir, section_index
+            )
+
+        # SHOT 2: Generate code from visual script
+        if visual_script:
+            code = await self._generate_code_from_script(
+                section, visual_script, audio_duration,
+                language_instructions, color_instructions,
+                type_guidance, spatial_fixes
+            )
+            if code:
+                return (code, visual_script)
+
+        # Fallback: Single-shot generation
+        print("[ManimGenerator] Using single-shot fallback...")
+        code = await self._generate_code_single_shot(
+            section, audio_duration, timing_context,
+            language_instructions, color_instructions, type_guidance
+        )
+        
+        return (code, None)
+
+    async def _generate_visual_script(
+        self,
+        section: Dict[str, Any],
+        audio_duration: float,
+        timing_context: str,
+        output_dir: str,
+        section_index: int,
+        reuse: bool
+    ) -> Optional[str]:
+        """Generate visual script (Shot 1)"""
+        # Try to reuse existing
+        if reuse and output_dir:
+            script_file = Path(output_dir) / f"visual_script_{section_index}.md"
+            if script_file.exists():
+                print(f"[ManimGenerator] ♻️ Reusing visual script")
+                with open(script_file, "r", encoding="utf-8") as f:
+                    return f.read().strip()
+
+        print("[ManimGenerator] Shot 1: Generating visual script...")
+        
+        prompt = build_visual_script_prompt(section, audio_duration, timing_context)
+        config = PromptConfig(enable_thinking=True, timeout=180.0)
+        
+        result = await self.script_engine.generate(prompt, config)
+        
+        if result["success"]:
+            visual_script = result["response"].strip()
+            print(f"[ManimGenerator] Shot 1 complete: {len(visual_script)} chars")
+            
+            # Save immediately
+            if output_dir:
+                script_file = Path(output_dir) / f"visual_script_{section_index}.md"
+                with open(script_file, "w", encoding="utf-8") as f:
+                    f.write(visual_script)
+            
+            return visual_script
+        else:
+            print(f"[ManimGenerator] Shot 1 failed: {result.get('error')}")
+            return None
+
+    async def _analyze_visual_script(
+        self,
+        visual_script: str,
+        audio_duration: float,
+        output_dir: str,
+        section_index: int
+    ) -> List[Dict[str, Any]]:
+        """Analyze visual script for spatial issues (Shot 1.5)"""
+        print("[ManimGenerator] Shot 1.5: Analyzing visual script...")
+        
+        prompt = build_visual_script_analysis_prompt(visual_script, audio_duration)
+        config = PromptConfig(response_format="json", timeout=60.0)
+        
+        result = await self.correction_engine.generate(prompt, config)
+        
+        if result["success"] and "parsed_json" in result:
+            analysis = result["parsed_json"]
+            status = analysis.get('status', 'ok')
+            issues_count = analysis.get('issues_found', 0)
+            fixes = analysis.get('fixes', [])
+            
+            if status == 'ok':
+                print("[ManimGenerator] Shot 1.5: Layout OK ✓")
+            else:
+                print(f"[ManimGenerator] Shot 1.5: Found {issues_count} issues, {len(fixes)} fixes")
+            
+            # Save analysis
+            if output_dir:
+                analysis_file = Path(output_dir) / f"visual_script_analysis_{section_index}.json"
+                with open(analysis_file, "w", encoding="utf-8") as f:
+                    json.dump(analysis, f, indent=2)
+            
+            return fixes
+        else:
+            print(f"[ManimGenerator] Shot 1.5 failed: {result.get('error')}")
+            return []
+
+    async def _generate_code_from_script(
+        self,
+        section: Dict[str, Any],
+        visual_script: str,
+        audio_duration: float,
+        language_instructions: str,
+        color_instructions: str,
+        type_guidance: str,
+        spatial_fixes: List[Dict[str, Any]]
+    ) -> Optional[str]:
+        """Generate code from visual script (Shot 2)"""
+        print("[ManimGenerator] Shot 2: Generating Manim code...")
+        
+        prompt = build_code_from_script_prompt(
+            section, visual_script, audio_duration,
+            language_instructions, color_instructions,
+            type_guidance,
+            spatial_fixes if spatial_fixes else None
+        )
+        
+        config = PromptConfig(enable_thinking=True, timeout=300.0)
+        result = await self.code_engine.generate(prompt, config)
+        
+        if result["success"]:
+            code = clean_code(result["response"])
+            
+            # Validate
+            validation = self.validator.validate_code(code)
+            if validation["valid"]:
+                print("[ManimGenerator] ✓ Code passed validation")
+            else:
+                print(f"[ManimGenerator] ⚠ Validation issues: {validation.get('error')}")
+            
+            print(f"[ManimGenerator] Shot 2 complete: {len(code)} chars")
+            return code
+        else:
+            print(f"[ManimGenerator] Shot 2 failed: {result.get('error')}")
+            return None
+
+    async def _generate_code_single_shot(
+        self,
+        section: Dict[str, Any],
+        audio_duration: float,
+        timing_context: str,
+        language_instructions: str,
+        color_instructions: str,
+        type_guidance: str
+    ) -> str:
+        """Fallback single-shot code generation"""
+        prompt = build_generation_prompt(
+            section, audio_duration, timing_context,
+            language_instructions, color_instructions, type_guidance
+        )
+        
+        config = PromptConfig(enable_thinking=True, timeout=300.0)
+        result = await self.code_engine.generate(prompt, config)
+        
+        if result["success"]:
+            code = clean_code(result["response"])
+            validation = self.validator.validate_code(code)
+            
+            if validation["valid"]:
+                print("[ManimGenerator] ✓ Fallback code passed validation")
+            else:
+                print(f"[ManimGenerator] ⚠ Fallback validation issues")
+            
+            return code
+        else:
+            # Ultimate fallback
+            return '''        text = Text("Section", font_size=48)
+        self.play(Write(text))
+        self.wait(2)'''
+
     async def render_from_code(
         self,
         manim_code: str,
         output_dir: str,
         section_index: int = 0
     ) -> Optional[str]:
-        """Render a Manim scene from existing code (e.g., translated code)"""
-        return await renderer.render_from_code(self, manim_code, output_dir, section_index)
-
-    async def _generate_manim_code(
-        self,
-        section: Dict[str, Any],
-        target_duration: float,
-        output_dir: Optional[str] = None,
-        section_index: int = 0,
-        reuse_visual_script: bool = False
-    ) -> Tuple[str, Optional[str]]:
-        """Use Gemini to generate Manim code for a section using 2-shot approach
+        """Render video from existing code"""
+        section_id = f"section_{section_index}"
+        scene_name = f"Section{section_id.title().replace('_', '')}"
+        code_file = Path(output_dir) / f"scene_{section_index}.py"
         
-        Shot 1: Generate detailed visual script with object descriptions, positions, timing
-        Shot 1.5: Quick spatial safety check with structured JSON output
-        Shot 2: Convert visual script to Manim code (with fixes if any)
+        full_code = create_scene_file(manim_code, section_id, 60, "3b1b")
         
-        Args:
-            section: Section data
-            target_duration: Target duration in seconds
-            output_dir: Directory to save visual script immediately (optional)
-            section_index: Index of the section for naming the visual script file
-            reuse_visual_script: If True, reuse existing visual script instead of regenerating
-        
-        Returns:
-            Tuple of (manim_code: str, visual_script: Optional[str])
-        """
+        with open(code_file, "w", encoding="utf-8") as f:
+            f.write(full_code)
 
-        audio_duration = target_duration
-
-        # Get style and language settings
-        style = section.get('style', '3b1b')
-        language = section.get('language', 'en')
-        animation_type = section.get('animation_type', 'text')
-
-        # Get instructions from prompts module
-        language_instructions = get_language_instructions(language)
-        color_instructions = get_color_instructions(style)
-        type_guidance = get_animation_guidance(animation_type)
-
-        # Build timing context using the prompts module function
-        narration_segments = section.get('narration_segments', [])
-        timing_context = build_timing_context(section, narration_segments)
-
-        # ══════════════════════════════════════════════════════════════════════
-        # SHOT 1: Generate Visual Script (Storyboard) - OR REUSE EXISTING
-        # ══════════════════════════════════════════════════════════════════════
-
-        visual_script = None
-
-        # Try to reuse existing visual script on clean retry
-        if reuse_visual_script and output_dir:
-            script_file = Path(output_dir) / f"visual_script_{section_index}.md"
-            if script_file.exists():
-                print(f"[ManimGenerator] ♻️ Reusing existing visual script from {script_file}")
-                with open(script_file, "r", encoding="utf-8") as f:
-                    visual_script = f.read().strip()
-                print(f"[ManimGenerator] Loaded existing visual script: {len(visual_script)} chars")
-
-        # Generate new visual script if not reusing or file doesn't exist
-        if not visual_script:
-            print("[ManimGenerator] Shot 1: Generating visual script...")
-
-            visual_script_prompt = build_visual_script_prompt(
-                section=section,
-                audio_duration=audio_duration,
-                timing_context=timing_context
-            )
-
-            try:
-                response1 = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.client.models.generate_content,
-                        model=self.VISUAL_SCRIPT_MODEL,
-                        contents=visual_script_prompt,
-                        config=self.visual_script_generation_config
-                    ),
-                    timeout=180
-                )
-
-                self.cost_tracker.track_usage(response1, self.VISUAL_SCRIPT_MODEL)
-                visual_script = response1.text.strip()
-                print(f"[ManimGenerator] Shot 1 complete: {len(visual_script)} chars")
-
-                # Save visual script IMMEDIATELY after generation (before analysis)
-                if output_dir and visual_script:
-                    script_file = Path(output_dir) / f"visual_script_{section_index}.md"
-                    with open(script_file, "w", encoding="utf-8") as f:
-                        f.write(visual_script)
-                    print(f"[ManimGenerator] Visual script saved to {script_file}")
-
-            except asyncio.TimeoutError:
-                print("[ManimGenerator] Shot 1 timed out, falling back to single-shot")
-                visual_script = None
-            except Exception as e:
-                print(f"[ManimGenerator] Shot 1 error: {e}, falling back to single-shot")
-                visual_script = None
-
-        # ══════════════════════════════════════════════════════════════════════
-        # SHOT 1.5: Analyze Visual Script for Spatial Issues (Structured Output)
-        # ══════════════════════════════════════════════════════════════════════
-
-        spatial_fixes = []  # Will hold any fixes from analysis
-
-        if visual_script:
-            print("[ManimGenerator] Shot 1.5: Checking visual script for spatial issues...")
-
-            analysis_prompt = build_visual_script_analysis_prompt(
-                visual_script=visual_script,
-                audio_duration=audio_duration
-            )
-
-            # Get the structured output schema
-            analysis_schema = get_visual_script_analysis_schema()
-
-            try:
-                # Use structured output config if schema is available
-                if analysis_schema:
-                    analysis_config = self.types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=analysis_schema
-                    )
-                else:
-                    analysis_config = self.generation_config
-
-                analysis_response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.client.models.generate_content,
-                        model=self.CORRECTION_MODEL,  # Use cheaper model for analysis
-                        contents=analysis_prompt,
-                        config=analysis_config
-                    ),
-                    timeout=60  # Shorter timeout for quick check
-                )
-
-                self.cost_tracker.track_usage(analysis_response, self.CORRECTION_MODEL)
-                analysis_text = analysis_response.text.strip()
-
-                # Parse JSON response
-                try:
-                    analysis_result = json.loads(analysis_text)
-                    status = analysis_result.get('status', 'ok')
-                    issues_count = analysis_result.get('issues_found', 0)
-                    spatial_fixes = analysis_result.get('fixes', [])
-
-                    if status == 'ok':
-                        print("[ManimGenerator] Shot 1.5: Layout OK ✓")
-                    else:
-                        print(f"[ManimGenerator] Shot 1.5: Found {issues_count} issues, {len(spatial_fixes)} fixes")
-
-                    # Save analysis report
-                    if output_dir:
-                        analysis_file = Path(output_dir) / f"visual_script_analysis_{section_index}.json"
-                        with open(analysis_file, "w", encoding="utf-8") as f:
-                            json.dump(analysis_result, f, indent=2)
-                        print(f"[ManimGenerator] Analysis saved to {analysis_file}")
-
-                except json.JSONDecodeError:
-                    print("[ManimGenerator] Shot 1.5: Could not parse JSON, skipping fixes")
-                    # Save raw response for debugging
-                    if output_dir:
-                        analysis_file = Path(output_dir) / f"visual_script_analysis_{section_index}.txt"
-                        with open(analysis_file, "w", encoding="utf-8") as f:
-                            f.write(analysis_text)
-
-            except asyncio.TimeoutError:
-                print("[ManimGenerator] Shot 1.5 timed out, proceeding without fixes")
-            except Exception as e:
-                print(f"[ManimGenerator] Shot 1.5 error: {e}, proceeding without fixes")
-
-        # ══════════════════════════════════════════════════════════════════════
-        # SHOT 2: Generate Manim Code from Visual Script (with fixes if any)
-        # ══════════════════════════════════════════════════════════════════════
-
-        if visual_script:
-            print("[ManimGenerator] Shot 2: Generating Manim code with tool-based validation...")
-
-            code_prompt = build_code_from_script_prompt(
-                section=section,
-                visual_script=visual_script,
-                audio_duration=audio_duration,
-                language_instructions=language_instructions,
-                color_instructions=color_instructions,
-                type_guidance=type_guidance,
-                spatial_fixes=spatial_fixes if spatial_fixes else None
-            )
-
-            try:
-                # Use function calling tools for iterative generation with validation
-                code, validation_result = await self._generate_with_tools(
-                    prompt=code_prompt,
-                    model=self.MODEL,
-                    max_attempts=3
-                )
-                
-                if code:
-                    print(f"[ManimGenerator] Shot 2 complete: {len(code)} chars of validated code")
-                    print(f"[ManimGenerator] Validation: syntax={validation_result['syntax']['valid']}, "
-                          f"structure={validation_result['structure']['valid']}, "
-                          f"imports={validation_result['imports']['valid']}, "
-                          f"spatial={validation_result['spatial']['valid']}")
-                    return (code, visual_script)
-                else:
-                    print("[ManimGenerator] Tool-based generation failed, trying fallback...")
-
-            except asyncio.TimeoutError:
-                print("[ManimGenerator] Shot 2 timed out, falling back to single-shot")
-            except Exception as e:
-                print(f"[ManimGenerator] Shot 2 error: {e}, falling back to single-shot")
-
-        # ══════════════════════════════════════════════════════════════════════
-        # FALLBACK: Single-shot generation (with validation but no tools)
-        # ══════════════════════════════════════════════════════════════════════
-        print("[ManimGenerator] Using single-shot fallback with validation...")
-
-        prompt = build_generation_prompt(
-            section=section,
-            audio_duration=audio_duration,
-            timing_context=timing_context,
-            language_instructions=language_instructions,
-            color_instructions=color_instructions,
-            type_guidance=type_guidance
-        )
-
-        try:
-            try:
-                response = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        self.client.models.generate_content,
-                        model=self.MODEL,
-                        contents=prompt,
-                        config=self.generation_config
-                    ),
-                    timeout=300
-                )
-            except Exception as e:
-                error_msg = str(e)
-                if "thinking_level is not supported" in error_msg or "thinking_config" in error_msg.lower():
-                    print(f"[ManimGenerator] Model doesn't support thinking_config, retrying without it...")
-                    response = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            self.client.models.generate_content,
-                            model=self.MODEL,
-                            contents=prompt,
-                            config=None
-                        ),
-                        timeout=300
-                    )
-                else:
-                    raise
-
-            self.cost_tracker.track_usage(response, self.MODEL)
-
-        except asyncio.TimeoutError:
-            print("[ManimGenerator] Gemini API timed out for section code generation")
-            return ('''        text = Text("Section", font_size=48)
-        self.play(Write(text))
-        self.wait(2)''', None)
-        except Exception as e:
-            print(f"[ManimGenerator] Gemini API error: {e}")
-            return ('''        text = Text("Section", font_size=48)
-        self.play(Write(text))
-        self.wait(2)''', None)
-
-        code = response.text.strip()
-        code = clean_code(code)
-        
-        # Validate the generated code
-        validation = self.tool_generator.tool_executor.validator.validate(code)
-        if validation.valid:
-            print(f"[ManimGenerator] ✓ Code passed all validation checks")
-        else:
-            print(f"[ManimGenerator] ⚠ Code has validation issues:")
-            print(f"  Syntax: {validation.syntax.valid}, Structure: {validation.structure.valid}, "
-                  f"Imports: {validation.imports.valid}, Spatial: {validation.spatial.valid}")
-
-        return (code, None)
-
-    async def _generate_with_tools(
-        self,
-        prompt: str,
-        model: str,
-        max_attempts: int = 3
-    ) -> Tuple[Optional[str], Dict[str, Any]]:
-        """
-        Generate code using function calling tools with iterative validation.
-        
-        Delegates to ToolBasedGenerator for clean separation of concerns.
-        
-        Args:
-            prompt: Generation prompt
-            model: Model to use
-            max_attempts: Maximum tool call iterations
-            
-        Returns:
-            Tuple of (final_code, validation_dict) or (None, {}) on failure
-        """
-        return await self.tool_generator.generate_with_validation(
-            prompt=prompt,
-            model=model,
-            max_iterations=max_attempts * 3,  # Allow multiple tool calls per attempt
-            config=self.generation_config
+        return await renderer.render_scene(
+            self, code_file, scene_name, output_dir,
+            section_index, section={}, clean_retry=0
         )

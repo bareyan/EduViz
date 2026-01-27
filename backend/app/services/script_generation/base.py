@@ -15,7 +15,7 @@ except ImportError:
 
 from app.config.models import get_model_config, get_thinking_config
 from app.services.gemini.client import create_client, get_types_module, GenerationConfig as UnifiedGenerationConfig
-from app.services.manim_generator.cost_tracker import CostTracker
+from app.services.cost_tracker import CostTracker
 from app.services.parsing import parse_json_response
 
 

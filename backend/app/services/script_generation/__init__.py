@@ -1,11 +1,11 @@
 """
-Script generation package
+Script Generation Package
 
-Provides two script generation modes:
-1) Overview mode: Single-prompt generation for short ~5 minute videos
-2) Comprehensive mode: Two-phase approach (outline + sections) for detailed lectures
+Generates video scripts using centralized prompting engine.
 
-Main entry point: ScriptGenerator
+Modes:
+- Overview: Single-prompt for short videos (~5 min)
+- Comprehensive: Two-phase (outline + sections) for detailed lectures
 """
 
 from .generator import ScriptGenerator
