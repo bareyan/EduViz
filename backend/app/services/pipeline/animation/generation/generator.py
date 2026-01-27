@@ -15,13 +15,6 @@ from app.services.infrastructure.llm import PromptingEngine, PromptConfig, CostT
 # Model configuration
 from app.config.models import get_model_config
 
-# Visual Quality Control
-try:
-    from ..visual_qc import VisualQualityController
-    VISUAL_QC_AVAILABLE = True
-except ImportError:
-    VISUAL_QC_AVAILABLE = False
-
 # Tool-based generation (unified approach)
 from .tools import (
     GenerationToolHandler,
@@ -46,8 +39,6 @@ class ManimGenerator:
     """
 
     MAX_CLEAN_RETRIES = 2
-    ENABLE_VISUAL_QC = True
-    MAX_QC_ITERATIONS = 3
 
     def __init__(self, pipeline_name: Optional[str] = None):
         self.pipeline_name = pipeline_name
@@ -75,10 +66,6 @@ class ManimGenerator:
             "skipped_sections": 0,
             "failed_sections": []
         }
-
-        # Visual QC controller
-        self.visual_qc = None
-        self._qc_initialized = False
         
         # Load config
         self._refresh_config()
@@ -86,23 +73,12 @@ class ManimGenerator:
     def _refresh_config(self):
         """Refresh model configuration"""
         self._manim_config = get_model_config("manim_generation", self.pipeline_name)
-        self._visual_qc_config = get_model_config("visual_qc", self.pipeline_name)
         
         self.MAX_CORRECTION_ATTEMPTS = getattr(self._manim_config, 'max_correction_attempts', 3)
 
-        # Initialize Visual QC if needed
-        if VISUAL_QC_AVAILABLE and self.ENABLE_VISUAL_QC and not self._qc_initialized:
-            try:
-                qc_model = self._visual_qc_config.model_name
-                self.visual_qc = VisualQualityController(model=qc_model)
-                self._qc_initialized = True
-            except Exception as e:
-                print(f"[ManimGenerator] Failed to initialize Visual QC: {e}")
-                self.visual_qc = None
-
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost summary"""
-        return self.cost_tracker.get_summary(self.visual_qc)
+        return self.cost_tracker.get_summary(None)
 
     def print_cost_summary(self):
         """Print cost summary"""

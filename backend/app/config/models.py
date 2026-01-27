@@ -143,15 +143,7 @@ class PipelineModels:
         description="Stronger model for complex code fixes"
     ))
 
-    # Step 7: Visual Quality Control
-    # Analyze rendered videos for visual issues
-    visual_qc: ModelConfig = field(default_factory=lambda: ModelConfig(
-        model_name="gemini-2.5-flash",
-        thinking_level=None,
-        description="Fast visual quality analysis"
-    ))
-
-    # Step 8: Manual Code Fix
+    # Step 7: Manual Code Fix
     # User-requested code improvements via API
     manual_code_fix: ModelConfig = field(default_factory=lambda: ModelConfig(
         model_name="gemini-3-flash-preview",
@@ -209,11 +201,6 @@ HIGH_QUALITY_PIPELINE = PipelineModels(
         thinking_level=ThinkingLevel.HIGH,
         description="Deep reasoning for complex fixes"
     ),
-    visual_qc=ModelConfig(
-        model_name="gemini-2.5-flash",
-        thinking_level=None,
-        description="Better visual analysis"
-    ),
     manual_code_fix=ModelConfig(
         model_name="gemini-3-pro-preview",
         thinking_level=ThinkingLevel.MEDIUM,
@@ -258,10 +245,6 @@ COST_OPTIMIZED_PIPELINE = PipelineModels(
     code_correction_strong=ModelConfig(
         model_name="gemini-2.0-flash",
         description="Fallback code correction"
-    ),
-    visual_qc=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Budget visual QC"
     ),
     manual_code_fix=ModelConfig(
         model_name="gemini-2.5-flash",

@@ -10,8 +10,7 @@ Structure:
     ├── manim.py         # Manim code generation
     ├── code_correction.py    # Error fixing
     ├── translation.py   # Translation prompts
-    ├── analysis.py      # Content analysis
-    └── visual_qc.py     # Visual quality control
+    └── analysis.py      # Content analysis
 
 Usage:
     from app.services.infrastructure.llm.prompting_engine.prompts import format_prompt
@@ -62,11 +61,6 @@ from .analysis import (
     ANALYZE_IMAGE,
 )
 
-from .visual_qc import (
-    VISUAL_QC_ANALYSIS,
-    VISUAL_QC_VIDEO_ANALYSIS,
-)
-
 
 # =============================================================================
 # REGISTRY - Maps string names to prompt templates
@@ -103,10 +97,6 @@ _REGISTRY: Dict[str, PromptTemplate] = {
     "ANALYZE_PDF": ANALYZE_PDF,
     "ANALYZE_PDF_CONTENT": ANALYZE_PDF_CONTENT,
     "ANALYZE_IMAGE": ANALYZE_IMAGE,
-    
-    # Visual QC
-    "VISUAL_QC_ANALYSIS": VISUAL_QC_ANALYSIS,
-    "VISUAL_QC_VIDEO_ANALYSIS": VISUAL_QC_VIDEO_ANALYSIS,
 }
 
 
@@ -146,7 +136,6 @@ def list_prompts_by_domain() -> Dict[str, list]:
             "TRANSLATE_BATCH", "TRANSLATE_ITEMS_BATCH"
         ],
         "analysis": ["ANALYZE_TEXT", "ANALYZE_TEXT_CONTENT", "ANALYZE_PDF", "ANALYZE_PDF_CONTENT", "ANALYZE_IMAGE"],
-        "visual_qc": ["VISUAL_QC_ANALYSIS", "VISUAL_QC_VIDEO_ANALYSIS"],
     }
 
 

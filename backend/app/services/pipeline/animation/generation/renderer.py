@@ -15,8 +15,6 @@ from .code_helpers import ensure_manim_structure
 
 # Feature flag for diff-based correction (set to False to disable)
 USE_DIFF_BASED_CORRECTION = True
-# Feature flag for diff-based visual QC correction
-USE_DIFF_BASED_VISUAL_QC = True
 
 # Quality to Manim output directory mapping
 QUALITY_DIR_MAP = {
@@ -209,87 +207,7 @@ async def render_scene(
             print(f"Could not find rendered video for section {section_index}")
             return None
 
-        # Visual Quality Control - Always run QC if enabled
-        if generator.visual_qc and section:
-            can_still_fix = qc_iteration < generator.MAX_QC_ITERATIONS
-            status_label = f"(fix attempt {qc_iteration + 1}/{generator.MAX_QC_ITERATIONS})" if can_still_fix else "(final verification)"
-            print(f"[ManimGenerator] Running Visual QC {status_label}...")
-
-            try:
-                if not await generator.visual_qc.check_model_available():
-                    print("[ManimGenerator] Visual QC model not available, skipping QC")
-                else:
-                    qc_result = await generator.visual_qc.check_video_quality(
-                        rendered_video,
-                        section,
-                        qc_iteration=qc_iteration
-                    )
-
-                    # Clean up temporary video after analysis
-                    if qc_result.get("temp_video_path"):
-                        generator.visual_qc.cleanup_frames(temp_video_path=qc_result["temp_video_path"])
-
-                    if qc_result.get("status") == "issues" and qc_result.get("error_report"):
-                        error_report = qc_result.get("error_report")
-                        print("[ManimGenerator] Found visual issues:")
-                        for line in error_report.split('\n'):
-                            print(f"[ManimGenerator]   {line}")
-
-                        # Only attempt fix if we haven't exhausted our fix attempts
-                        if can_still_fix:
-                            print(f"[ManimGenerator] Generating visual fix (attempt {qc_iteration + 1}/{generator.MAX_QC_ITERATIONS})...")
-
-                            # Try diff-based visual QC correction first (cheaper, faster)
-                            fixed_code = None
-                            if USE_DIFF_BASED_VISUAL_QC:
-                                from app.services.pipeline.animation.correction.visual_qc_diff import fix_visual_errors_with_diff
-                                fixed_code = await fix_visual_errors_with_diff(
-                                    generator,
-                                    content,
-                                    error_report,
-                                    section=section
-                                )
-
-                            # Fall back to full regeneration if diff failed
-                            if not fixed_code:
-                                print("[ManimGenerator] Diff-based fix failed, using full regeneration...")
-                                fixed_code = await generate_visual_fix(
-                                    generator,
-                                    content,
-                                    error_report,
-                                    section=section
-                                )
-
-                            if fixed_code:
-                                print("[ManimGenerator] Applying visual QC fix and re-rendering...")
-                                with open(code_file, "w", encoding="utf-8") as f:
-                                    f.write(fixed_code)
-
-                                # Clean up partial movie files before re-rendering
-                                cleanup_partial_movie_files(output_dir, code_file, quality)
-
-                                return await render_scene(
-                                    generator,
-                                    code_file,
-                                    scene_name,
-                                    output_dir,
-                                    section_index,
-                                    section,
-                                    attempt=0,
-                                    qc_iteration=qc_iteration + 1,
-                                    clean_retry=clean_retry,
-                                    quality=quality  # Pass through quality
-                                )
-                            else:
-                                print("[ManimGenerator] Failed to generate visual fix, using current video")
-                        else:
-                            print(f"[ManimGenerator] WARN Max QC fix attempts ({generator.MAX_QC_ITERATIONS}) exhausted - accepting video with remaining issues")
-                    else:
-                        print("[ManimGenerator] OK Visual QC passed - no issues detected")
-
-            except Exception as qc_error:
-                print(f"[ManimGenerator] Visual QC error (non-fatal): {qc_error}")
-
+        # Successfully rendered and validated
         return rendered_video
 
     except subprocess.TimeoutExpired:

@@ -91,11 +91,8 @@ class CostTracker:
         except Exception as e:
             print(f"[CostTracker] Warning: Could not track token usage: {e}")
 
-    def get_summary(self, visual_qc=None) -> Dict[str, Any]:
+    def get_summary(self) -> Dict[str, Any]:
         """Get a summary of token usage and costs
-        
-        Args:
-            visual_qc: Optional VisualQualityController for QC stats
         
         Returns:
             Dict with token counts, costs, and breakdown by model
@@ -116,18 +113,11 @@ class CostTracker:
             }
         }
 
-        # Add Visual QC stats if available
-        if visual_qc:
-            qc_stats = visual_qc.get_usage_stats()
-            summary["visual_qc"] = qc_stats
-            # Add QC cost to total (convert to same precision)
-            summary["total_cost_usd"] = round(summary["total_cost_usd"] + qc_stats["total_cost_usd"], 4)
-
         return summary
 
-    def print_summary(self, visual_qc=None):
+    def print_summary(self):
         """Print a formatted cost summary to console"""
-        summary = self.get_summary(visual_qc)
+        summary = self.get_summary()
 
         print("\n" + "=" * 60)
         print("💰 GEMINI API COST SUMMARY")

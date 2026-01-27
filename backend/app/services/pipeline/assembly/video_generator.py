@@ -240,9 +240,6 @@ class VideoGenerator:
                 tracker.report_stage_progress("combining", 100, "Video complete!")
 
                 # Step 6: Report summaries and costs
-                if self.manim_generator.visual_qc:
-                    self.manim_generator.visual_qc.print_error_summary()
-
                 self.manim_generator.print_generation_stats()
                 self.manim_generator.print_cost_summary()
 
