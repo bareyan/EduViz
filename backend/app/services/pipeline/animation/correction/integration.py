@@ -19,9 +19,7 @@ from .applier import apply_all_blocks, validate_syntax
 from .prompts import (
     DIFF_CORRECTION_SYSTEM,
     DIFF_CORRECTION_SCHEMA,
-    MANIM_CONTEXT,
-    build_diff_correction_prompt,
-    build_structured_prompt
+    build_diff_correction_prompt
 )
 
 if TYPE_CHECKING:
@@ -125,14 +123,12 @@ async def _try_structured_correction(
     types = generator.types
 
     # Build prompt for structured output
-    prompt = build_structured_prompt(code, error_message, section)
+    from app.services.pipeline.animation.prompts import build_structured_correction_prompt
+    prompt = build_structured_correction_prompt(code, error_message, section)
 
     # System instruction with Manim context
-    system_instruction = f"""You are a Manim code debugger. Analyze errors and provide fixes.
-
-{MANIM_CONTEXT}
-
-Provide fixes as search/replace pairs. The "search" field must EXACTLY match text in the code."""
+    from app.services.pipeline.animation.prompts import STRUCTURED_CORRECTION_SYSTEM, MANIM_CONTEXT
+    system_instruction = STRUCTURED_CORRECTION_SYSTEM.format(manim_context=MANIM_CONTEXT)
 
     # Configure with JSON schema response
     _ = types.GenerateContentConfig(

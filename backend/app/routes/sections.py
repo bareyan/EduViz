@@ -408,30 +408,16 @@ async def fix_section_code(job_id: str, section_id: str, request: FixCodeRequest
     client = create_client()
     types = get_types_module()
 
-    system_prompt = """You are an expert Manim animator, skilled at creating beautiful 3Blue1Brown-style mathematical animations.
-Your task is to fix or improve the provided Manim code based on the user's request.
-
-RULES:
-1. Return ONLY the complete fixed Python code, no explanations
-2. Keep the same class name and structure
-3. Ensure the code is valid Manim CE (Community Edition) code
-4. Make animations smooth and visually appealing
-5. Use proper positioning, colors, and timing
-
-Return ONLY the Python code, nothing else."""
-
-    user_prompt = f"""Section Title: {section_info.get('title', 'Unknown')}
-Section Description: {section_info.get('visual_description', 'N/A')}
-Narration: {section_info.get('narration', 'N/A')}
-
-CURRENT MANIM CODE:
-```python
-{request.current_code}
-```
-
-USER REQUEST: {request.prompt if request.prompt else 'Please review and fix any issues with this code.'}
-
-Please provide the fixed/improved Manim code."""
+    from app.services.pipeline.animation.prompts import RECOMPILE_SYSTEM, RECOMPILE_USER
+    
+    system_prompt = RECOMPILE_SYSTEM.template
+    user_prompt = RECOMPILE_USER.format(
+        title=section_info.get('title', 'Unknown'),
+        visual_description=section_info.get('visual_description', 'N/A'),
+        narration=section_info.get('narration', 'N/A'),
+        current_code=request.current_code,
+        user_request=request.prompt if request.prompt else 'Please review and fix any issues with this code.'
+    )
 
     # Extract image bytes from base64 frames
     image_bytes_list = []

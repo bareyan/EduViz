@@ -250,19 +250,8 @@ class GenerationToolHandler:
     
     def _build_system_prompt(self, context: ManimContext) -> str:
         """Build system prompt for agentic generation"""
-        return f"""{context.to_system_prompt()}
-
-TOOL-BASED ITERATION:
-You have two tools: generate_manim_code and fix_manim_code
-
-PROCESS:
-1. Call generate_manim_code with your best attempt
-2. You'll receive validation feedback
-3. If there are errors, call fix_manim_code with corrections
-4. Iterate until code validates or max attempts reached
-
-CRITICAL: Only use the tools to submit code. Do NOT write code in messages.
-Each tool call returns validation results to guide your fixes."""
+        from app.services.pipeline.animation.prompts import AGENTIC_GENERATION_SYSTEM
+        return AGENTIC_GENERATION_SYSTEM.format(manim_context=context.to_system_prompt())
     
     def _detect_animation_type(self, section: Dict[str, Any]) -> str:
         """Detect animation type from section content"""
@@ -283,37 +272,16 @@ Each tool call returns validation results to guide your fixes."""
     
     def _build_generation_prompt(self, section: Dict[str, Any], context: ManimContext) -> str:
         """Build the user prompt for generation"""
+        from app.services.pipeline.animation.prompts import AGENTIC_GENERATION_USER, format_timing_context
+        
         title = section.get("title", "Section")
         narration = section.get("narration", section.get("tts_narration", ""))
         visual_desc = section.get("visual_description", "")
         
-        # Build timing context from segments if available
-        timing_context = ""
-        if "segments" in section:
-            segments = section["segments"]
-            timing_lines = []
-            cumulative = 0.0
-            for seg in segments:
-                seg_duration = seg.get("duration", 5.0)
-                seg_text = seg.get("tts_text", seg.get("narration", ""))[:50]
-                timing_lines.append(f"  [{cumulative:.1f}s-{cumulative + seg_duration:.1f}s]: \"{seg_text}...\"")
-                cumulative += seg_duration
-            timing_context = "TIMING:\n" + "\n".join(timing_lines)
-        
-        return f"""Use the generate_manim_code tool to create animation code for this section:
-
-TITLE: {title}
-
-NARRATION:
-{narration[:500]}
-
-VISUAL DESCRIPTION:
-{visual_desc[:300] if visual_desc else 'Create appropriate visuals for the narration'}
-
-{timing_context}
-
-TARGET DURATION: {context.target_duration} seconds
-
-Generate the construct() method body that creates engaging animations matching the narration.
-Use self.wait() to sync with narration timing.
-"""
+        return AGENTIC_GENERATION_USER.format(
+            title=title,
+            narration=narration[:500],
+            visual_description=visual_desc[:300] if visual_desc else 'Create appropriate visuals for the narration',
+            timing_context=format_timing_context(section),
+            target_duration=context.target_duration
+        )

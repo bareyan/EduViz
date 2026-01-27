@@ -7,10 +7,11 @@ Structure:
     ├── base.py          # PromptTemplate class
     ├── language.py      # Language detection
     ├── script_generation.py  # Script/outline prompts
-    ├── manim.py         # Manim code generation
-    ├── code_correction.py    # Error fixing
     ├── translation.py   # Translation prompts
     └── analysis.py      # Content analysis
+
+Note: Manim generation uses tool-based prompts in pipeline/animation/generation/tools/
+      Error correction uses inline system instructions in pipeline/animation/correction/
 
 Usage:
     from app.services.infrastructure.llm.prompting_engine.prompts import format_prompt
@@ -33,13 +34,6 @@ from .script_generation import (
     SCRIPT_OVERVIEW,
     SCRIPT_OUTLINE,
     SCRIPT_SECTION,
-)
-
-from .code_correction import (
-    CODE_FIX_SIMPLE,
-    CODE_FIX_ANALYSIS,
-    CODE_FIX_MULTIPLE,
-    VISUAL_FIX,
 )
 
 from .translation import (
@@ -74,12 +68,6 @@ _REGISTRY: Dict[str, PromptTemplate] = {
     "SCRIPT_OVERVIEW": SCRIPT_OVERVIEW,
     "SCRIPT_OUTLINE": SCRIPT_OUTLINE,
     "SCRIPT_SECTION": SCRIPT_SECTION,
-    
-    # Code Correction
-    "CODE_FIX_SIMPLE": CODE_FIX_SIMPLE,
-    "CODE_FIX_ANALYSIS": CODE_FIX_ANALYSIS,
-    "CODE_FIX_MULTIPLE": CODE_FIX_MULTIPLE,
-    "VISUAL_FIX": VISUAL_FIX,
     
     # Translation
     "TRANSLATE_NARRATION": TRANSLATE_NARRATION,
@@ -127,8 +115,6 @@ def list_prompts_by_domain() -> Dict[str, list]:
     return {
         "language": ["LANGUAGE_DETECTION"],
         "script_generation": ["SCRIPT_OVERVIEW", "SCRIPT_OUTLINE", "SCRIPT_SECTION"],
-        "manim": ["VISUAL_SCRIPT", "VISUAL_SCRIPT_ANALYSIS", "MANIM_CODE_FROM_SCRIPT", "MANIM_SINGLE_SHOT"],
-        "code_correction": ["CODE_FIX_SIMPLE", "CODE_FIX_ANALYSIS", "CODE_FIX_MULTIPLE", "VISUAL_FIX"],
         "translation": [
             "TRANSLATE_NARRATION", "TRANSLATE_NARRATION_BULK",
             "TRANSLATE_DISPLAY_TEXT", "TRANSLATE_DISPLAY_TEXT_BATCH",
@@ -161,18 +147,6 @@ __all__ = [
     "SCRIPT_OUTLINE", 
     "SCRIPT_SECTION",
     
-    # Manim
-    "VISUAL_SCRIPT",
-    "VISUAL_SCRIPT_ANALYSIS",
-    "MANIM_CODE_FROM_SCRIPT",
-    "MANIM_SINGLE_SHOT",
-    
-    # Code Correction
-    "CODE_FIX_SIMPLE",
-    "CODE_FIX_ANALYSIS",
-    "CODE_FIX_MULTIPLE",
-    "VISUAL_FIX",
-    
     # Translation
     "TRANSLATE_NARRATION",
     "TRANSLATE_NARRATION_BULK",
@@ -189,8 +163,4 @@ __all__ = [
     "ANALYZE_PDF",
     "ANALYZE_PDF_CONTENT",
     "ANALYZE_IMAGE",
-    
-    # Visual QC
-    "VISUAL_QC_ANALYSIS",
-    "VISUAL_QC_VIDEO_ANALYSIS",
 ]
