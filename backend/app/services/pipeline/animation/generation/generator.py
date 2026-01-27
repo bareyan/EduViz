@@ -76,22 +76,11 @@ class ManimGenerator:
 
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost summary"""
-        return self.cost_tracker.get_summary(None)
+        return self.cost_tracker.get_summary()
 
     def print_cost_summary(self):
         """Print cost summary"""
-        summary = self.get_cost_summary()
-        print("\n" + "="*60)
-        print("COST SUMMARY")
-        print("="*60)
-        for key, value in summary.items():
-            if isinstance(value, dict):
-                print(f"\n{key}:")
-                for k, v in value.items():
-                    print(f"  {k}: {v}")
-            else:
-                print(f"{key}: {value}")
-        print("="*60 + "\n")
+        self.cost_tracker.print_summary()
 
     async def generate_section_video(
         self,
