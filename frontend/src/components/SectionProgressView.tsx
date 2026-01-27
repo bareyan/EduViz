@@ -171,6 +171,7 @@ function getStatusConfig(status: SectionProgress['status']) {
         textColor: 'text-math-green',
         label: 'Completed'
       }
+    case 'generating_video':
     case 'generating_manim':
       return {
         icon: <Loader2 className="w-3.5 h-3.5 animate-spin" />,
@@ -178,6 +179,7 @@ function getStatusConfig(status: SectionProgress['status']) {
         textColor: 'text-math-blue',
         label: 'Creating animation...'
       }
+    case 'fixing_error':
     case 'fixing_manim':
       return {
         icon: <Wrench className="w-3.5 h-3.5 animate-pulse" />,

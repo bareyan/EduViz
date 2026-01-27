@@ -1,0 +1,175 @@
+{
+  "title": "Taming the Web: Simplifying Massive Knowledge Graphs with ML",
+  "subject_area": "cs",
+  "overview": "The public web generates massive amounts of structured data, often resulting in cluttered and noisy knowledge graphs. This video introduces a fascinating machine learning approach used to automatically prune these graphs, keeping only the most useful types and properties. You will learn how statistical analysis and light neural models work together to create cleaner, more efficient datasets for real-world applications.",
+  "learning_objectives": [
+    "Understand the problem of noise and clutter in large knowledge graphs derived from the web.",
+    "Grasp the two-stage simplification process: type-level pruning and predicate-level analysis.",
+    "Recognize how metrics like PageRank and statistical features guide the machine learning filtering process."
+  ],
+  "sections": [
+    {
+      "id": "intro_and_problem",
+      "title": "The Messy Web: Why Knowledge Graphs Need Cleaning",
+      "narration": "The internet is full of structured data, often collected into massive knowledge graphs, like those based on schema dot org. But this data is messy! Many types appear rarely, and properties are used inconsistently, leading to storage nightmares and slow queries. Our goal is not to throw data away, but to intelligently shrink the graph while preserving the core information people actually need. We focus on trimming the long-tail clutter that swamps the central, useful structure, like keeping 'Product' and 'Book' types while discarding the obscure ones.",
+      "tts_narration": "The internet is full of structured data, often collected into massive knowledge graphs, like those based on schema dot org. But this data is messy! Many types appear rarely, and properties are used inconsistently, leading to storage nightmares and slow queries. Our goal is not to throw data away, but to intelligently shrink the graph while preserving the core information people actually use. We focus on trimming the long-tail clutter that swamps the central, useful structure, like keeping 'Product' and 'Book' types while discarding the obscure ones.",
+      "key_points": [
+        "Web RDF data is noisy and expensive to store/query.",
+        "The goal is to keep central structure (e.g., Product, Offer) and shed clutter.",
+        "Simplification happens in two main phases: type pruning and predicate filtering."
+      ],
+      "visual_type": "animated",
+      "duration_seconds": 44.16,
+      "narration_segments": [
+        {
+          "text": "The internet is full of structured data, often collected into massive knowledge graphs, like those based on schema dot org. But this data is messy!",
+          "estimated_duration": 11.76,
+          "segment_index": 0
+        },
+        {
+          "text": "Many types appear rarely, and properties are used inconsistently, leading to storage nightmares and slow queries.",
+          "estimated_duration": 9.04,
+          "segment_index": 1
+        },
+        {
+          "text": "Our goal is not to throw data away, but to intelligently shrink the graph while preserving the core information people actually use.",
+          "estimated_duration": 10.56,
+          "segment_index": 2
+        },
+        {
+          "text": "We focus on trimming the long-tail clutter that swamps the central, useful structure, like keeping 'Product' and 'Book' types while discarding the obscure ones.",
+          "estimated_duration": 12.8,
+          "segment_index": 3
+        }
+      ]
+    },
+    {
+      "id": "type_simplification",
+      "title": "Stage One: Scoring and Pruning Graph Types",
+      "narration": "The first crucial step is simplifying the schema types themselves. Instead of looking at millions of individual entities, we create a compact 'type interaction graph.' This graph tracks how often one type connects to another via a predicate. We then score each type using a blend of statistics, including its overall entity count and its 'prominence' derived from PageRank walks—both forward and reverse. A final score combines these factors, allowing us to use a softmax function to keep only the most cumulatively significant types, effectively cutting off the least important branches of the graph structure.",
+      "tts_narration": "The first crucial step is simplifying the schema types themselves. Instead of looking at millions of individual entities, we create a compact 'type interaction graph.' This graph tracks how often one type connects to another via a predicate. We then score each type using a blend of statistics, including its overall entity count and its 'prominence' derived from PageRank walks—both forward and reverse. A final score combines these factors, allowing us to use a softmax function to keep only the most cumulatively significant types, effectively cutting off the least important branches of the graph structure.",
+      "key_points": [
+        "Type simplification uses a 'type interaction graph'.",
+        "PageRank scores (forward and reverse) measure type prominence.",
+        "A composite score determines which types meet the cumulative threshold to be kept."
+      ],
+      "visual_type": "diagram",
+      "duration_seconds": 48.64,
+      "narration_segments": [
+        {
+          "text": "The first crucial step is simplifying the schema types themselves.",
+          "estimated_duration": 5.28,
+          "segment_index": 0
+        },
+        {
+          "text": "Instead of looking at millions of individual entities, we create a compact 'type interaction graph.' This graph tracks how often one type connects to another via a predicate.",
+          "estimated_duration": 13.92,
+          "segment_index": 1
+        },
+        {
+          "text": "We then score each type using a blend of statistics, including its overall entity count and its 'prominence' derived from PageRank walks—both forward and reverse.",
+          "estimated_duration": 12.96,
+          "segment_index": 2
+        },
+        {
+          "text": "A final score combines these factors, allowing us to use a softmax function to keep only the most cumulatively significant types, effectively cutting off the least important branches of the graph structure.",
+          "estimated_duration": 16.48,
+          "segment_index": 3
+        }
+      ]
+    },
+    {
+      "id": "predicate_analysis",
+      "title": "Stage Two: Filtering Properties with Statistics and ML",
+      "narration": "Once the core types are stable, we analyze the predicates—the properties—associated with each type independently. For a given type, we calculate several features for each predicate, such as its frequency, how unique its object values are, and entropy. These statistics are combined into a structural score. Crucially, this scoring system is augmented by a small neural network trained on manually reviewed decisions. This hybrid approach leverages the power of statistical metrics while incorporating learned patterns, ensuring that core descriptive fields like 'name' or 'sku' are retained while rare or low-impact fields are safely discarded.",
+      "tts_narration": "Once the core types are stable, we analyze the predicates—the properties—associated with each type independently. For a given type, we calculate several features for each predicate, such as its frequency, how unique its object values are, and entropy. These statistics are combined into a structural score. Crucially, this scoring system is augmented by a small neural network trained on manually reviewed decisions. This hybrid approach leverages the power of statistical metrics while incorporating learned patterns, ensuring that core descriptive fields like 'name' or 'sku' are retained while rare or low-impact fields are safely discarded.",
+      "key_points": [
+        "Predicate analysis is done independently for each surviving type.",
+        "Features include frequency, uniqueness, and entropy of object values.",
+        "A hybrid system combines statistical scores with a small neural network for final retention decisions."
+      ],
+      "visual_type": "diagram",
+      "duration_seconds": 51.2,
+      "narration_segments": [
+        {
+          "text": "Once the core types are stable, we analyze the predicates—the properties—associated with each type independently.",
+          "estimated_duration": 9.04,
+          "segment_index": 0
+        },
+        {
+          "text": "For a given type, we calculate several features for each predicate, such as its frequency, how unique its object values are, and entropy.",
+          "estimated_duration": 10.96,
+          "segment_index": 1
+        },
+        {
+          "text": "These statistics are combined into a structural score.",
+          "estimated_duration": 4.32,
+          "segment_index": 2
+        },
+        {
+          "text": "Crucially, this scoring system is augmented by a small neural network trained on manually reviewed decisions.",
+          "estimated_duration": 8.72,
+          "segment_index": 3
+        },
+        {
+          "text": "This hybrid approach leverages the power of statistical metrics while incorporating learned patterns, ensuring that core descriptive fields like 'name' or 'sku' are retained while rare or low-impact fields are safely discarded.",
+          "estimated_duration": 18.16,
+          "segment_index": 4
+        }
+      ]
+    },
+    {
+      "id": "conclusion",
+      "title": "The Result: A Leaner, More Powerful Graph",
+      "narration": "By applying this two-step automated pipeline—first pruning types, then refining predicates—we successfully shrink massive, noisy knowledge graphs down to their essential descriptive core. This process is fast, adaptable to the data, and retains high-value information like product names and addresses. While limitations exist, such as the reliance on heuristic weights, this method provides a working framework for managing web data at scale. Future steps involve refining entity merging, but for now, we have a much cleaner foundation for analysis and querying!",
+      "tts_narration": "By applying this two-step automated pipeline—first pruning types, then refining predicates—we successfully shrink massive, noisy knowledge graphs down to their essential descriptive core. This process is fast, adaptable to the data, and retains high-value information like product names and addresses. While limitations exist, such as the reliance on heuristic weights, this method provides a working framework for managing web data at scale. Future steps involve refining entity merging, but for now, we have a much cleaner foundation for analysis and querying!",
+      "key_points": [
+        "The result is a fast pipeline that shrinks both type and predicate space.",
+        "The system adapts to keep data that is actually being used.",
+        "Next steps include better evaluation and key inference."
+      ],
+      "visual_type": "static",
+      "duration_seconds": 44.72,
+      "narration_segments": [
+        {
+          "text": "By applying this two-step automated pipeline—first pruning types, then refining predicates—we successfully shrink massive, noisy knowledge graphs down to their essential descriptive core.",
+          "estimated_duration": 14.96,
+          "segment_index": 0
+        },
+        {
+          "text": "This process is fast, adaptable to the data, and retains high-value information like product names and addresses.",
+          "estimated_duration": 9.04,
+          "segment_index": 1
+        },
+        {
+          "text": "While limitations exist, such as the reliance on heuristic weights, this method provides a working framework for managing web data at scale.",
+          "estimated_duration": 11.2,
+          "segment_index": 2
+        },
+        {
+          "text": "Future steps involve refining entity merging, but for now, we have a much cleaner foundation for analysis and querying!",
+          "estimated_duration": 9.52,
+          "segment_index": 3
+        }
+      ]
+    }
+  ],
+  "total_duration_seconds": 188.72,
+  "output_language": "en",
+  "source_language": "en",
+  "video_mode": "overview",
+  "cost_summary": {
+    "total_input_tokens": 4113,
+    "total_output_tokens": 1530,
+    "total_tokens": 5643,
+    "total_cost_usd": 0.0008,
+    "by_model": {
+      "gemini-flash-lite-latest": {
+        "input_tokens": 4113,
+        "output_tokens": 1530,
+        "total_tokens": 5643,
+        "cost_usd": 0.0008
+      }
+    }
+  }
+}

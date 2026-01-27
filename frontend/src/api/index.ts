@@ -84,7 +84,7 @@ export interface SectionProgress {
   index: number
   id: string
   title: string
-  status: 'waiting' | 'generating_script' | 'generating_manim' | 'fixing_manim' | 'generating_audio' | 'completed' | 'failed'
+  status: 'waiting' | 'generating_script' | 'generating_manim' | 'fixing_manim' | 'generating_audio' | 'generating_video' | 'fixing_error' | 'completed' | 'failed'
   duration_seconds?: number
   narration_preview?: string
   has_video: boolean

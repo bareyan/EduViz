@@ -72,6 +72,38 @@ async def get_video(video_id: str):
     )
 
 
+@router.get("/job/{job_id}/section/{section_index}/video")
+async def get_section_video(job_id: str, section_index: int):
+    """Get completed section video"""
+    sections_dir = OUTPUT_DIR / job_id / "sections"
+    section_dir = sections_dir / str(section_index)
+    
+    # Check for video in order of preference
+    for video_name in ["final_section.mp4", "section.mp4"]:
+        video_path = section_dir / video_name
+        if video_path.exists():
+            return FileResponse(str(video_path), media_type="video/mp4")
+    
+    # Also check merged path
+    merged_path = sections_dir / f"merged_{section_index}.mp4"
+    if merged_path.exists():
+        return FileResponse(str(merged_path), media_type="video/mp4")
+    
+    raise HTTPException(status_code=404, detail="Section video not found")
+
+
+@router.get("/job/{job_id}/section/{section_index}/visual_script")
+async def get_section_visual_script(job_id: str, section_index: int):
+    """Get section visual script (markdown)"""
+    section_dir = OUTPUT_DIR / job_id / "sections" / str(section_index)
+    script_path = section_dir / f"visual_script_{section_index}.md"
+    
+    if script_path.exists():
+        return {"visual_script": script_path.read_text()}
+    
+    raise HTTPException(status_code=404, detail="Visual script not found")
+
+
 @router.get("/voices")
 async def get_available_voices(language: str = "en"):
     """Get list of available TTS voices"""

@@ -270,66 +270,18 @@ COST_OPTIMIZED_PIPELINE = PipelineModels(
 )
 
 
-# Overview Mode Optimized - Use cheaper models for simpler overview videos
-# This saves ~85% on LLM costs for overview mode while maintaining acceptable quality
-OVERVIEW_OPTIMIZED_PIPELINE = PipelineModels(
-    analysis=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Fast analysis for overview"
-    ),
-    script_generation=ModelConfig(
-        model_name="gemini-flash-lite-latest",  # Much cheaper for simpler scripts
-        thinking_level=None,
-        description="Cost-effective overview script generation"
-    ),
-    language_detection=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Quick language detection"
-    ),
-    translation=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Budget translation"
-    ),
-    visual_script_generation=ModelConfig(
-        model_name="gemini-2.5-flash",  # Simpler visual scripts for overview
-        thinking_level=None,
-        description="Budget visual script generation"
-    ),
-    manim_generation=ModelConfig(
-        model_name="gemini-2.5-flash",  # Simpler animations for overview
-        thinking_level=None,
-        description="Budget Manim generation",
-        max_correction_attempts=3
-    ),
-    code_correction=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Budget code correction"
-    ),
-    code_correction_strong=ModelConfig(
-        model_name="gemini-2.5-flash",
-        description="Fallback code correction"
-    ),
-    visual_qc=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Budget visual QC"
-    ),
-    manual_code_fix=ModelConfig(
-        model_name="gemini-2.5-flash",
-        description="Budget code fixes"
-    ),
-)
-
-
 # Current active configuration
 # Change this to switch between configurations
-ACTIVE_PIPELINE = DEFAULT_PIPELINE_MODELS
+ACTIVE_PIPELINE = COST_OPTIMIZED_PIPELINE
 
 # Available pipeline configurations
+# - default: Balanced quality and cost
+# - high_quality: Best quality, higher cost
+# - cost_optimized: Budget-friendly, use for overview mode or when cost matters
 AVAILABLE_PIPELINES = {
     "default": DEFAULT_PIPELINE_MODELS,
     "high_quality": HIGH_QUALITY_PIPELINE,
     "cost_optimized": COST_OPTIMIZED_PIPELINE,
-    "overview": OVERVIEW_OPTIMIZED_PIPELINE,  # Use for overview mode videos
 }
 
 

@@ -16,6 +16,7 @@ from .ffmpeg import (
     concatenate_audio_files,
     build_retime_merge_cmd,
 )
+from app.utils.section_status import write_status
 
 if TYPE_CHECKING:
     from . import VideoGenerator
@@ -143,6 +144,9 @@ async def process_single_subsection(
     audio_path = section_dir / "audio.mp3"
     audio_duration = section.get("duration_seconds", 60)
 
+    # Status: generating audio
+    write_status(section_dir, "generating_audio")
+
     try:
         await generator.tts_engine.generate_speech(
             text=narration,
@@ -156,7 +160,11 @@ async def process_single_subsection(
         print(f"Section {section_index} audio duration: {audio_duration:.1f}s")
     except Exception as e:
         print(f"TTS error for section {section_index}: {e}")
+        write_status(section_dir, "fixing_error", str(e))
         audio_path = None
+
+    # Status: generating video
+    write_status(section_dir, "generating_video")
 
     try:
         manim_result = await generator.manim_generator.generate_section_video(
@@ -170,6 +178,7 @@ async def process_single_subsection(
         video_path = manim_result.get("video_path") if isinstance(manim_result, dict) else manim_result
         if video_path and os.path.exists(video_path):
             result["video_path"] = video_path
+            write_status(section_dir, "completed")
         else:
             print(f"⚠️ Manim returned no video for section {section_index}: {video_path}")
         if isinstance(manim_result, dict):
@@ -181,6 +190,7 @@ async def process_single_subsection(
         import traceback
         print(f"❌ Manim error for section {section_index}: {e}")
         traceback.print_exc()
+        write_status(section_dir, "fixing_error", str(e))
 
     return result
 
@@ -214,6 +224,9 @@ async def process_segments_audio_first(
 
     num_segments = len(narration_segments)
     print(f"Section {section_index}: Processing {num_segments} segments (audio-first, unified video)")
+
+    # Status: generating audio
+    write_status(section_dir, "generating_audio")
 
     # Step 1: Generate audio for ALL segments first
     segment_audio_info = []
@@ -321,6 +334,9 @@ async def process_segments_audio_first(
 
     print(f"Section {section_index}: Generating unified video ({total_duration:.1f}s total)")
 
+    # Status: generating video
+    write_status(section_dir, "generating_video")
+
     video_path = None
     manim_code = None
 
@@ -340,10 +356,12 @@ async def process_segments_audio_first(
         print(f"Manim error for unified section {section_index}: {e}")
         import traceback
         traceback.print_exc()
+        write_status(section_dir, "fixing_error", str(e))
         return result
 
     if not video_path:
         print(f"Section {section_index}: Failed to generate unified video")
+        write_status(section_dir, "fixing_error", "No video generated")
         return result
 
     result["manim_code"] = manim_code
@@ -376,10 +394,13 @@ async def process_segments_audio_first(
             result["video_path"] = str(merged_path)
             result["duration"] = total_duration
             print(f"Section {section_index}: Successfully created unified video")
+            write_status(section_dir, "completed")
         else:
             print(f"Section {section_index}: FFmpeg merge failed: {stderr.decode()[:500]}")
+            write_status(section_dir, "fixing_error", "FFmpeg merge failed")
     except Exception as e:
         print(f"Section {section_index}: Error merging video and audio: {e}")
+        write_status(section_dir, "fixing_error", str(e))
 
     return result
 

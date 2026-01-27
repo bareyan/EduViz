@@ -10,6 +10,7 @@ from typing import Optional, Dict, Any, List
 from app.config import OUTPUT_DIR
 from app.models import SectionProgress
 from app.core import load_script
+from app.utils.section_status import read_status as _read_section_status
 
 
 def get_stage_from_status(status: str) -> str:
@@ -45,8 +46,7 @@ def build_section_progress(
     """
     Build a SectionProgress object from script section data.
     
-    Checks filesystem to determine section status (video exists, audio exists, etc.)
-    and returns complete section metadata for progress tracking.
+    Checks status.json and filesystem to determine section status.
     
     Args:
         job_id: Job identifier for path construction
@@ -60,7 +60,7 @@ def build_section_progress(
     """
     section_id = section.get("id", f"section_{index}")
     sections_dir = OUTPUT_DIR / job_id / "sections"
-    section_dir = sections_dir / section_id
+    section_dir = sections_dir / str(index)  # Use index for directory (matches orchestrator)
 
     # Check what files exist
     has_video = False
@@ -75,18 +75,24 @@ def build_section_progress(
     code_files = list(section_dir.glob("*.py")) if section_dir.exists() else []
     has_code = len(code_files) > 0
 
-    # Determine current status
-    if merged_path.exists() or final_section_path.exists():
+    # First, check live status from status.json (most up-to-date)
+    live_status = _read_section_status(section_dir)
+    
+    # Map live status to display status
+    if live_status in ("generating_audio", "generating_video", "fixing_error", "completed"):
+        status = live_status
+    # Fall back to file-based detection
+    elif merged_path.exists() or final_section_path.exists():
         has_video = True
         status = "completed"
     elif has_code:
-        status = "generating_manim"
+        status = "generating_video"
     elif audio_path.exists():
         has_audio = True
-        status = "generating_manim"
+        status = "generating_video"
     else:
         if current_stage == "sections" and index == completed_sections:
-            status = "generating_manim"
+            status = "generating_audio"
         else:
             status = "waiting"
 
