@@ -101,12 +101,27 @@ class CodeValidator:
         Returns:
             CodeValidationResult with aggregated results
         """
+        # Auto-wrap snippets if they don't look like full files
+        # This allows the LLM to generate just the body (saving tokens)
+        code_to_validate = code
+        is_snippet = False
+        
+        if "class " not in code or "def construct" not in code:
+            is_snippet = True
+            # Wrap in standard template
+            indented_body = "\n".join(["        " + line for line in code.split("\n")])
+            code_to_validate = (
+                "from manim import *\n\n"
+                "class GeneratedScene(Scene):\n"
+                "    def construct(self):\n"
+                f"{indented_body}"
+            )
+
         # Validate syntax first (fast-fail)
-        syntax_result = self.syntax_validator.validate(code)
+        syntax_result = self.syntax_validator.validate(code_to_validate)
         
         # If syntax is invalid, skip other validators
         if not syntax_result.valid:
-            # Return with empty structure/imports/spatial results
             return CodeValidationResult(
                 valid=False,
                 syntax=syntax_result,
@@ -116,22 +131,21 @@ class CodeValidator:
             )
         
         # Run structure and imports validation
-        structure_result = self.structure_validator.validate(code)
-        imports_result = self.imports_validator.validate(code)
+        structure_result = self.structure_validator.validate(code_to_validate)
+        imports_result = self.imports_validator.validate(code_to_validate)
         
         # Short-circuit: If structure or imports fail, skip spatial validation
-        # Spatial validation requires running the code, which will fail anyway if structure/imports are bad
         if not structure_result.valid or not imports_result.valid:
             return CodeValidationResult(
                 valid=False,
                 syntax=syntax_result,
                 structure=structure_result,
                 imports=imports_result,
-                spatial=SpatialValidationResult(valid=True) # Skipped, assumed valid to not confuse with "spatial" error
+                spatial=SpatialValidationResult(valid=True) # Skipped
             )
             
         # Run spatial validation (expensive)
-        spatial_result = self.spatial_validator.validate(code)
+        spatial_result = self.spatial_validator.validate(code_to_validate)
         
         # Overall validity requires all validators to pass
         overall_valid = spatial_result.valid

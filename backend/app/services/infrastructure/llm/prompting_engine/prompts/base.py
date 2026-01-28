@@ -22,7 +22,16 @@ class PromptTemplate:
     
     def format(self, **kwargs) -> str:
         """Format the template with provided values"""
-        return self.template.format(**kwargs)
+        try:
+            # Try standard formatting first
+            return self.template.format(**kwargs)
+        except (KeyError, ValueError, IndexError):
+            # Fallback for prompts with JSON (braces) that conflict with format()
+            # If standard format fails, use simple replacement for provided keys
+            result = self.template
+            for k, v in kwargs.items():
+                result = result.replace("{" + k + "}", str(v))
+            return result
     
     def __str__(self) -> str:
         return f"PromptTemplate({self.description})"

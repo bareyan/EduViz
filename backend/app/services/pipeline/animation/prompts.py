@@ -34,11 +34,14 @@ You have two tools: write_manim_code and patch_manim_code
 PROCESS:
 1. Call write_manim_code with your best attempt
 2. You'll receive validation feedback
-3. If there are errors, call patch_manim_code with corrections
-4. Iterate until code validates or max attempts reached
+3. If validation SUCCEEDS: STOP. Do NOT call any more tools. Your job is done.
+4. If there are errors: Call patch_manim_code with corrections
+5. Repeat steps 2-4 until code validates or max attempts reached
 
-CRITICAL: Only use the tools to submit code. Do NOT write code in messages.
-Each tool call returns validation results to guide your fixes.""",
+CRITICAL RULES:
+- Only use the tools to submit code. Do NOT write code in messages.
+- When you receive "Validation Successful", STOP immediately. Do NOT make further changes.
+- Each tool call returns validation results to guide your fixes.""",
     description="System prompt for agentic Manim code generation with tool-based iteration"
 )
 
@@ -58,7 +61,7 @@ VISUAL DESCRIPTION:
 
 TARGET DURATION: {target_duration} seconds
 
-Generate the FULL Python file including imports and the Scene class.
+Generate the construct() method body that creates engaging animations matching the narration.
 Use self.wait() to sync with narration timing.""",
     description="User prompt for agentic code generation"
 )
@@ -89,7 +92,7 @@ CRITICAL TIMING RULES:
 3. Add self.wait(post_narration_pause) AFTER each segment's animations if pause > 0
 4. Total animation time should match: sum(audio_duration + post_narration_pause) for all segments
 
-Generate the FULL Python file including imports and the Scene class that implements the visual script.""",
+Generate the construct() method body that implements the visual script.""",
     description="User prompt for agentic code generation with visual script"
 )
 
