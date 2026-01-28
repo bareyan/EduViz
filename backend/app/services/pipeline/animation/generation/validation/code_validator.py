@@ -115,18 +115,26 @@ class CodeValidator:
                 spatial=SpatialValidationResult(valid=True)   # Skipped
             )
         
-        # Run structure, imports, and spatial validation
+        # Run structure and imports validation
         structure_result = self.structure_validator.validate(code)
         imports_result = self.imports_validator.validate(code)
+        
+        # Short-circuit: If structure or imports fail, skip spatial validation
+        # Spatial validation requires running the code, which will fail anyway if structure/imports are bad
+        if not structure_result.valid or not imports_result.valid:
+            return CodeValidationResult(
+                valid=False,
+                syntax=syntax_result,
+                structure=structure_result,
+                imports=imports_result,
+                spatial=SpatialValidationResult(valid=True) # Skipped, assumed valid to not confuse with "spatial" error
+            )
+            
+        # Run spatial validation (expensive)
         spatial_result = self.spatial_validator.validate(code)
         
         # Overall validity requires all validators to pass
-        overall_valid = (
-            syntax_result.valid and
-            structure_result.valid and
-            imports_result.valid and
-            spatial_result.valid
-        )
+        overall_valid = spatial_result.valid
         
         return CodeValidationResult(
             valid=overall_valid,

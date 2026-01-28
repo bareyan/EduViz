@@ -20,6 +20,10 @@ from app.services.infrastructure.llm.gemini.client import (
     create_client
 )
 
+import inspect
+print(f"[DEBUG] TEST sys.path: {sys.path}")
+print(f"[DEBUG] UnifiedGeminiClient file: {inspect.getfile(UnifiedGeminiClient)}")
+
 class TestGenerationConfig:
     def test_defaults(self):
         config = GenerationConfig()
@@ -41,23 +45,28 @@ class TestBackendDetection:
 
 class TestGeminiAPIImplementation:
     def test_init_gemini_api_success(self):
-        # Create a mock for the genai module
-        mock_genai = MagicMock()
-        # Put it in sys.modules so 'from google import genai' can find it
-        # Actually, if it's 'from google import genai', we need 'google' to have 'genai'
-        
-        with patch("google.genai.Client") as mock_client_class:
-            client = MagicMock(spec=UnifiedGeminiClient)
-            UnifiedGeminiClient._init_gemini_api(client, "test-key")
-            # If it failed to call, it might be due to how it's imported.
-            # Let's try to verify if it even gets past the import.
-            mock_client_class.assert_called()
+        # Use context managers for unambiguous patching
+        with patch.dict(os.environ, {"USE_VERTEX_AI": "false", "GEMINI_API_KEY": "test-key"}):
+            # Patching Client and types on the module
+            with patch("google.genai.Client"), \
+                 patch("google.genai.types"):
+                    with patch("vertexai.init"):
+                        # Verify using the imported location which is what the code uses
+                        from google import genai
+                        # Clean up any calls from background tasks/other tests leaking into this mock
+                        genai.Client.reset_mock()
+                        
+                        client = UnifiedGeminiClient()
+                        
+                        genai.Client.assert_called_once_with(api_key="test-key")
+                    assert client.use_vertex_ai is False
 
     def test_generate_content_calls_backend(self):
         mock_backend = MagicMock()
+        mock_backend.models = MagicMock()
         models = GeminiAPIModels(mock_backend)
         config = GenerationConfig(temperature=0.7)
-        # We need to satisfy the 'from google.genai import types' inside the method
+        
         with patch("google.genai.types.GenerateContentConfig") as mock_cfg:
             models.generate_content("model-1", "Prompt", config=config)
             mock_backend.models.generate_content.assert_called_once()

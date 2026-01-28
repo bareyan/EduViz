@@ -568,6 +568,9 @@ class SpatialValidator:
         self._manim_config.preview = False
         self._manim_config.verbosity = "CRITICAL"
         self._manim_config.renderer = "cairo"
+        self._manim_config.frame_rate = 1  # Optimization: 1 FPS avoids calculating intermediate frames
+        self._manim_config.quality = "low_quality" # Optimization: Use low resolution
+
 
         # Create temporary file for the code
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
