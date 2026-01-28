@@ -3,10 +3,16 @@ Manim Generator - Uses Tool-based Generation
 
 Generates Manim animations using the unified prompting engine with tool calling.
 All generation logic uses: app.services.manim_generator.tools
+
+Flow:
+1. Generate Visual Script from audio segments (structured storyboard)
+2. Generate Manim code from Visual Script (tool-based)
+3. Validate and fix errors iteratively
+4. Render the final animation
 """
 
 import json
-from typing import Dict, Any, Optional, Tuple
+from typing import Dict, Any, Optional, Tuple, List
 from pathlib import Path
 
 # Prompting engine
@@ -14,6 +20,13 @@ from app.services.infrastructure.llm import PromptingEngine, PromptConfig, CostT
 
 # Model configuration
 from app.config.models import get_model_config
+
+# Visual Script generation (Step 1)
+from app.services.pipeline.visual_script import (
+    VisualScriptGenerator,
+    VisualScriptPlan,
+    load_visual_script,
+)
 
 # Tool-based generation (unified approach)
 from .tools import (
@@ -30,12 +43,13 @@ class ManimGenerator:
     """
     Generates Manim animations using tool-based approach.
     
-    Uses GenerationToolHandler for:
-    - Visual script generation (structured output)
-    - Manim code generation (function calling)
-    - Error correction (same tool-based fixes)
+    Pipeline:
+    1. VisualScriptGenerator: Converts audio segments -> visual storyboard
+    2. GenerationToolHandler: Converts visual script -> Manim code
+    3. CodeValidator: Validates generated code
+    4. Renderer: Creates final video
     
-    All logic centralized in: tools/
+    All logic centralized in respective modules.
     """
 
     def __init__(self, pipeline_name: Optional[str] = None):
@@ -43,6 +57,12 @@ class ManimGenerator:
 
         # Initialize cost tracker
         self.cost_tracker = CostTracker()
+        
+        # Initialize Visual Script Generator (Step 1)
+        self.visual_script_generator = VisualScriptGenerator(
+            cost_tracker=self.cost_tracker,
+            pipeline_name=pipeline_name
+        )
         
         # Initialize prompting engines for different stages (pipeline-aware)
         self.script_engine = PromptingEngine("visual_script_generation", self.cost_tracker, pipeline_name=pipeline_name)
@@ -90,7 +110,8 @@ class ManimGenerator:
         audio_duration: Optional[float] = None,
         style: str = "3b1b",
         language: str = "en",
-        clean_retry: int = 0
+        clean_retry: int = 0,
+        audio_segments: List[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         Generate a Manim video for a section.
@@ -99,10 +120,12 @@ class ManimGenerator:
             section: Section data
             output_dir: Output directory
             section_index: Section index
-            audio_duration: Actual audio duration
+            audio_duration: Actual audio duration (total)
             style: Visual style
             language: Language code
             clean_retry: Current retry attempt
+            audio_segments: Optional list of audio segments with actual durations
+                           [{"text": "...", "duration": 5.2}, ...]
             
         Returns:
             Dict with video_path and manim_code
@@ -126,7 +149,8 @@ class ManimGenerator:
             target_duration,
             output_dir=output_dir,
             section_index=section_index,
-            reuse_visual_script=reuse_visual_script
+            reuse_visual_script=reuse_visual_script,
+            audio_segments=audio_segments
         )
 
         # Write code file
@@ -159,7 +183,8 @@ class ManimGenerator:
             
             return await self.generate_section_video(
                 section, output_dir, section_index,
-                audio_duration, style, language, clean_retry + 1
+                audio_duration, style, language, clean_retry + 1,
+                audio_segments=audio_segments  # Pass audio segments for retry
             )
         elif output_video is None:
             self.stats["skipped_sections"] += 1
@@ -171,7 +196,8 @@ class ManimGenerator:
         return {
             "video_path": output_video,
             "manim_code": final_code,
-            "manim_code_path": str(code_file)
+            "manim_code_path": str(code_file),
+            "visual_script": visual_script.to_dict() if visual_script else None
         }
 
     async def _generate_manim_code(
@@ -180,58 +206,80 @@ class ManimGenerator:
         audio_duration: float,
         output_dir: str,
         section_index: int,
-        reuse_visual_script: bool = False
-    ) -> Tuple[str, Optional[str]]:
+        reuse_visual_script: bool = False,
+        audio_segments: List[Dict[str, Any]] = None
+    ) -> Tuple[str, Optional[VisualScriptPlan]]:
         """
-        Generate Manim code using tool-based approach.
+        Generate Manim code using visual script + tool-based approach.
         
-        Uses GenerationToolHandler for structured generation.
+        Flow:
+        1. Generate or load Visual Script (storyboard with timing)
+        2. Use Visual Script to generate Manim code with proper pauses
         
+        Args:
+            section: Section data with narration, title, etc.
+            audio_duration: Target audio duration
+            output_dir: Directory for output files
+            section_index: Index of the section
+            reuse_visual_script: Whether to try reusing existing visual script
+            audio_segments: Optional audio segments with actual durations
+            
         Returns:
-            Tuple of (manim_code, visual_script)
+            Tuple of (manim_code, visual_script_plan)
         """
         style = section.get('style', '3b1b')
         language = section.get('language', 'en')
         
-        # Try to reuse existing visual script
-        visual_script = None
+        visual_script_plan = None
+        
+        # Step 1: Try to load existing visual script
         if reuse_visual_script and output_dir:
-            script_file = Path(output_dir) / f"visual_script_{section_index}.md"
-            if script_file.exists():
-                print("[ManimGenerator] ♻️ Reusing visual script")
-                with open(script_file, "r", encoding="utf-8") as f:
-                    visual_script = f.read().strip()
-
-        # Use tool-based generation
-        print("[ManimGenerator] Generating code with tool handler...")
+            json_file = Path(output_dir) / f"visual_script_{section_index}.json"
+            if json_file.exists():
+                print("[ManimGenerator] ♻️ Reusing existing visual script")
+                visual_script_plan = load_visual_script(str(json_file))
+        
+        # Step 2: Generate Visual Script if not available
+        if visual_script_plan is None:
+            print("[ManimGenerator] 📝 Generating visual script...")
+            
+            vs_result = await self.visual_script_generator.generate_and_save(
+                section=section,
+                output_dir=output_dir,
+                section_index=section_index,
+                source_context=section.get("narration", "")[:500],
+                audio_segments=audio_segments
+            )
+            
+            if vs_result.success and vs_result.visual_script:
+                visual_script_plan = vs_result.visual_script
+                print(f"[ManimGenerator] ✓ Visual script generated: {len(visual_script_plan.segments)} segments, "
+                      f"total duration: {visual_script_plan.total_duration:.1f}s")
+            else:
+                print(f"[ManimGenerator] WARN Visual script generation failed: {vs_result.error}")
+                # Fallback: continue without visual script
+        
+        # Step 3: Generate Manim code using tool handler
+        print("[ManimGenerator] 🎬 Generating Manim code...")
         result = await self.generation_handler.generate(
             section=section,
             style=style,
             target_duration=audio_duration,
             language=language,
-            use_visual_script=(visual_script is None)  # Generate script if we don't have one
+            visual_script=visual_script_plan  # Pass visual script for guided generation
         )
         
         if result.success and result.code:
             code = clean_code(result.code)
-            
-            # Save visual script if generated
-            if result.visual_script and output_dir:
-                script_file = Path(output_dir) / f"visual_script_{section_index}.md"
-                visual_script_text = json.dumps(result.visual_script, indent=2)
-                with open(script_file, "w", encoding="utf-8") as f:
-                    f.write(visual_script_text)
-                visual_script = visual_script_text
-            
-            print(f"[ManimGenerator] OK Code generated: {len(code)} chars")
-            return (code, visual_script)
+            print(f"[ManimGenerator] ✓ Code generated: {len(code)} chars")
+            return (code, visual_script_plan)
         
-        # Fallback: basic generation
+        # Fallback: basic generation without visual script
         print(f"[ManimGenerator] Tool generation failed: {result.error}")
         print("[ManimGenerator] Using fallback...")
         
         code = await self._generate_fallback(section, audio_duration, style, language)
-        return (code, None)
+        return (code, visual_script_plan)
 
     async def _generate_fallback(
         self,

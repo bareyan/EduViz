@@ -130,7 +130,16 @@ class ProgressTracker:
             result.has_script = True
             try:
                 with open(script_path, encoding="utf-8") as f:
-                    result.script = json.load(f)
+                    raw_script = json.load(f)
+                # Unwrap script if it's in wrapped format {"script": {...}, "mode": ...}
+                if "script" in raw_script and isinstance(raw_script.get("script"), dict):
+                    inner = raw_script["script"]
+                    if "sections" in inner or "title" in inner:
+                        result.script = inner
+                    else:
+                        result.script = raw_script
+                else:
+                    result.script = raw_script
                 result.total_sections = len(result.script.get("sections", []))
                 logger.debug(f"Found existing script with {result.total_sections} sections", extra={
                     "total_sections": result.total_sections
@@ -248,8 +257,20 @@ class ProgressTracker:
                 json.dump(script, f, indent=2, ensure_ascii=False)
 
             # Count sections from either wrapped or unwrapped format
-            script_data = script.get('script', script)
-            section_count = len(script_data.get('sections', []))
+            # Handle case where script might be a list or dict
+            if isinstance(script, list):
+                section_count = len(script)
+            elif isinstance(script, dict):
+                script_data = script.get('script', script)
+                if isinstance(script_data, list):
+                    section_count = len(script_data)
+                elif isinstance(script_data, dict):
+                    section_count = len(script_data.get('sections', []))
+                else:
+                    section_count = 0
+            else:
+                section_count = 0
+            
             logger.debug(f"Saved script.json with {section_count} sections", extra={
                 "section_count": section_count,
                 "script_path": str(script_path)
@@ -264,7 +285,7 @@ class ProgressTracker:
         Load script data from disk
         
         Returns:
-            Script dictionary (may be wrapped or unwrapped format)
+            Unwrapped script dictionary with title, sections at top level
         
         Raises:
             FileNotFoundError: If script.json doesn't exist
@@ -278,11 +299,19 @@ class ProgressTracker:
 
         try:
             with open(script_path, encoding="utf-8") as f:
-                script = json.load(f)
+                raw_script = json.load(f)
 
-            # Count sections from either wrapped or unwrapped format
-            script_data = script.get('script', script)
-            section_count = len(script_data.get('sections', []))
+            # Unwrap script if it's in wrapped format {"script": {...}, "mode": ...}
+            if "script" in raw_script and isinstance(raw_script.get("script"), dict):
+                inner = raw_script["script"]
+                if "sections" in inner or "title" in inner:
+                    script = inner
+                else:
+                    script = raw_script
+            else:
+                script = raw_script
+                
+            section_count = len(script.get('sections', []))
             logger.debug(f"Loaded script.json with {section_count} sections")
             return script
 

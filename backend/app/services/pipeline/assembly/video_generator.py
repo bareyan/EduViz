@@ -241,8 +241,7 @@ class VideoGenerator:
 
                 tracker.report_stage_progress("combining", 100, "Video complete!")
 
-                # Step 6: Report summaries and costs
-                self.manim_generator.print_generation_stats()
+                # Step 6: Report cost summary
                 self.manim_generator.print_cost_summary()
 
                 cost_summary = self.manim_generator.get_cost_summary()
@@ -261,10 +260,13 @@ class VideoGenerator:
                     "total_cost": cost_summary.get("total_cost_usd", 0)
                 })
 
+                # Unwrap script for the return value (extract inner script from wrapper)
+                return_script = script_data  # script_data is already the unwrapped version
+
                 return {
                     "job_id": job_id,
                     "video_path": str(final_video_path),
-                    "script": script,
+                    "script": return_script,
                     "chapters": chapters,
                     "total_duration": total_duration,
                     "cost_summary": cost_summary,

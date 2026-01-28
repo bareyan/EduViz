@@ -51,9 +51,11 @@ from .media import (
 # Script I/O (adapter-backed)
 from .scripts import (
     load_script,
+    load_script_raw,
     save_script,
     get_script_metadata,
     load_section_script,
+    unwrap_script,
 )
 
 # Validation
@@ -93,9 +95,11 @@ __all__ = [
     "get_video_info",
     # Scripts
     "load_script",
+    "load_script_raw",
     "save_script",
     "get_script_metadata",
     "load_section_script",
+    "unwrap_script",
     # Validation
     "validate_file_type",
     "validate_upload_path",

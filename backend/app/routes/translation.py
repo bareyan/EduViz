@@ -13,7 +13,7 @@ from ..config import OUTPUT_DIR
 from ..services.features.translation import get_translation_service
 from ..services.pipeline.audio import TTSEngine
 from ..services.pipeline.animation import ManimGenerator
-from ..core import get_media_duration
+from ..core import get_media_duration, load_script, load_script_raw
 
 router = APIRouter(tags=["translation"])
 
@@ -116,10 +116,15 @@ async def create_translation(job_id: str, request: TranslationRequest, backgroun
         try:
             translation_service = get_translation_service()
 
-            with open(script_path, "r") as f:
-                original_script = json.load(f)
-
-            source_language = original_script.get("source_language", original_script.get("language", "en"))
+            # Load script using the centralized loader that handles unwrapping
+            original_script = load_script(job_id)
+            
+            # For source language, try to get from raw script metadata first
+            try:
+                raw_script = load_script_raw(job_id)
+                source_language = raw_script.get("output_language", raw_script.get("detected_language", "en"))
+            except:
+                source_language = original_script.get("source_language", original_script.get("language", "en"))
 
             print(f"[Translation] Starting translation from {source_language} to {target_language}")
 

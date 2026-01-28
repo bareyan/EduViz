@@ -265,7 +265,7 @@ class GenerationToolHandler:
         style: str = "3b1b",
         target_duration: float = 30.0,
         language: str = "en",
-        use_visual_script: bool = True
+        visual_script = None
     ) -> GenerationResult:
         """
         Agentic code generation with tool-based iteration.
@@ -275,7 +275,7 @@ class GenerationToolHandler:
             style: Visual style name
             target_duration: Target duration in seconds
             language: Language code
-            use_visual_script: Whether to use 2-shot with visual script
+            visual_script: Optional VisualScriptPlan for guided generation
             
         Returns:
             GenerationResult with code or error
@@ -297,8 +297,11 @@ class GenerationToolHandler:
         # Build initial system prompt
         _ = self._build_system_prompt(context)
 
-        # Build initial user prompt
-        user_prompt = self._build_generation_prompt(section, context)
+        # Build initial user prompt - use visual script if available
+        if visual_script is not None:
+            user_prompt = self._build_generation_prompt_with_visual_script(section, context, visual_script)
+        else:
+            user_prompt = self._build_generation_prompt(section, context)
         
         # Run agentic loop
         from app.services.infrastructure.llm import PromptConfig
@@ -495,7 +498,7 @@ class GenerationToolHandler:
             return "text"
     
     def _build_generation_prompt(self, section: Dict[str, Any], context: ManimContext) -> str:
-        """Build the user prompt for generation"""
+        """Build the user prompt for generation (without visual script)"""
         from app.services.pipeline.animation.prompts import AGENTIC_GENERATION_USER, format_timing_context
         
         title = section.get("title", "Section")
@@ -508,4 +511,38 @@ class GenerationToolHandler:
             visual_description=visual_desc[:300] if visual_desc else 'Create appropriate visuals for the narration',
             timing_context=format_timing_context(section),
             target_duration=context.target_duration
+        )
+    
+    def _build_generation_prompt_with_visual_script(
+        self,
+        section: Dict[str, Any],
+        context: ManimContext,
+        visual_script
+    ) -> str:
+        """
+        Build the user prompt for generation with visual script.
+        
+        Uses the detailed visual script for precise timing and visual guidance.
+        
+        Args:
+            section: Section data
+            context: Manim context
+            visual_script: VisualScriptPlan with segment details
+            
+        Returns:
+            Formatted prompt string
+        """
+        from app.services.pipeline.animation.prompts import (
+            AGENTIC_GENERATION_WITH_VISUAL_SCRIPT_USER,
+            format_visual_script_for_prompt,
+            format_segment_timing_for_prompt,
+        )
+        
+        title = section.get("title", "Section")
+        
+        return AGENTIC_GENERATION_WITH_VISUAL_SCRIPT_USER.format(
+            title=title,
+            target_duration=context.target_duration,
+            visual_script=format_visual_script_for_prompt(visual_script),
+            segment_timing=format_segment_timing_for_prompt(visual_script)
         )

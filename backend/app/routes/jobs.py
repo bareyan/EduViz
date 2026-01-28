@@ -332,7 +332,8 @@ async def get_section_details(job_id: str, section_index: int):
     sections_dir = OUTPUT_DIR / job_id / "sections"
     if not validate_path_within_directory(sections_dir, OUTPUT_DIR):
         raise HTTPException(status_code=403, detail="Access denied")
-    section_dir = sections_dir / section_id
+    # Section directories use index, not section_id
+    section_dir = sections_dir / str(section_index)
 
     # Get full narration
     narration = section.get("tts_narration") or section.get("narration", "")
@@ -372,7 +373,7 @@ async def get_section_details(job_id: str, section_index: int):
     if merged_path.exists():
         video_path = f"/outputs/{job_id}/sections/merged_{section_index}.mp4"
     elif final_section_path.exists():
-        video_path = f"/outputs/{job_id}/sections/{section_id}/final_section.mp4"
+        video_path = f"/outputs/{job_id}/sections/{section_index}/final_section.mp4"
 
     return {
         "index": section_index,
@@ -432,7 +433,7 @@ async def compile_high_quality(job_id: str, request: HighQualityCompileRequest):
 
             for idx, section in enumerate(sections):
                 section_id = section.get("id", f"section_{idx}")
-                section_dir = sections_dir / section_id
+                section_dir = sections_dir / str(idx)  # Use index, not section_id
 
                 job_manager.update_job(
                     hq_job_id,
@@ -450,7 +451,7 @@ async def compile_high_quality(job_id: str, request: HighQualityCompileRequest):
                 code_file = code_files[0]
 
                 # Copy code to HQ output directory
-                hq_section_dir = hq_sections_dir / section_id
+                hq_section_dir = hq_sections_dir / str(idx)  # Use index, not section_id
                 hq_section_dir.mkdir(exist_ok=True)
                 hq_code_file = hq_section_dir / code_file.name
                 shutil.copy(code_file, hq_code_file)

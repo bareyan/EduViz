@@ -232,6 +232,82 @@ def build_retime_merge_cmd(
         ]
 
 
+def build_merge_no_cut_cmd(
+    video_path: str,
+    audio_path: str,
+    video_duration: float,
+    audio_duration: float,
+    output_path: str
+) -> List[str]:
+    """Build ffmpeg command to merge video with audio WITHOUT cutting either.
+    
+    Strategy:
+    - If video is SHORTER than audio: Pad video with frozen last frame (tpad)
+    - If video is LONGER than audio: Pad audio with silence (apad)
+    - NEVER cut or trim either media
+    """
+    if not video_duration or not audio_duration:
+        return [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", audio_path,
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            output_path
+        ]
+
+    duration_diff = abs(video_duration - audio_duration)
+
+    # If durations are close enough, just merge directly
+    if duration_diff < 0.1:
+        return [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", audio_path,
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            "-shortest",
+            output_path
+        ]
+
+    if video_duration < audio_duration:
+        # Video is SHORTER than audio - PAD with frozen last frame
+        pad_duration = audio_duration - video_duration
+        print(f"[Merge No-Cut] Video shorter by {pad_duration:.1f}s - padding video with last frame")
+        return [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", audio_path,
+            "-filter_complex", f"[0:v]tpad=stop_duration={pad_duration:.3f}:stop_mode=clone[v]",
+            "-map", "[v]",
+            "-map", "1:a:0",
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            "-t", f"{audio_duration:.3f}",
+            output_path
+        ]
+    else:
+        # Video is LONGER than audio - PAD audio with silence (never cut video)
+        pad_duration = video_duration - audio_duration
+        print(f"[Merge No-Cut] Audio shorter by {pad_duration:.1f}s - padding audio with silence")
+        return [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-i", audio_path,
+            "-filter_complex", f"[1:a]apad=whole_dur={video_duration:.3f}[a]",
+            "-map", "0:v:0",
+            "-map", "[a]",
+            "-c:v", "libx264",
+            "-c:a", "aac",
+            "-t", f"{video_duration:.3f}",
+            output_path
+        ]
+
+
 async def combine_sections(
     videos: List[str],
     audios: List[str],  # May contain None for sections without audio

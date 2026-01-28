@@ -141,8 +141,9 @@ def build_sections_progress(
 
     try:
         script = load_script(job_id)
-    except Exception:
+    except Exception as e:
         # Script not found or unreadable - return empty
+        print(f"Could not load script for job {job_id}: {e}")
         return sections, completed_sections
 
     for i, section in enumerate(script.get("sections", [])):

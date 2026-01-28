@@ -6,14 +6,18 @@ infrastructure concerns out of core/.
 
 from app.adapters.scripts_io import (  # type: ignore F401
     load_script,
+    load_script_raw,
     save_script,
     get_script_metadata,
     load_section_script,
+    unwrap_script,
 )
 
 __all__ = [
     "load_script",
+    "load_script_raw",
     "save_script",
     "get_script_metadata",
     "load_section_script",
+    "unwrap_script",
 ]
