@@ -30,10 +30,11 @@ Transform your math materials (PDFs, images) into beautiful, 3Blue1Brown-style a
 
 ## Prerequisites
 
-- Python 3.10+
+- Python 3.11+ (3.11 recommended)
 - Node.js 18+
 - FFmpeg (for video processing)
 - LaTeX (for Manim equation rendering)
+- Gemini API key (get from https://aistudio.google.com/app/apikey)
 
 ### Installing FFmpeg
 
@@ -78,21 +79,22 @@ cd backend
 
 # Create virtual environment
 python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Activate virtual environment
+# On Linux/Mac:
+source venv/bin/activate
+# On Windows:
+venv\Scripts\activate
 
 # Install dependencies
 pip install -r requirements.txt
 
 # Copy environment file
 cp .env.example .env
-# Edit .env and add your OpenAI API key (optional but recommended)
+# Edit .env and add your GEMINI_API_KEY (required)
 
-# Run the server
+# Run the development server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-
-
-
-micromamba run -n manim uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 ### 3. Frontend Setup
@@ -105,16 +107,19 @@ npm install
 
 # Run development server
 npm run dev
-
-
- cd /run/media/sipanb/Data/Scripts/experiments/manimagain/frontend && ./node_modules/.bin/vite --host 2>&1 || node ./node_modules/vite/bin/vite.js --host 2>&1
 ```
 
 ### 4. Access the Application
 
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8000
-- API Docs: http://localhost:8000/docs
+- **Local Development:**
+  - Frontend: http://localhost:5173
+  - Backend API: http://localhost:8000
+  - API Docs: http://localhost:8000/docs
+
+- **Docker Deployment:**
+  - Frontend: http://localhost:3000
+  - Backend API: http://localhost:8000
+  - API Docs: http://localhost:8000/docs
 
 ## Usage
 
@@ -169,11 +174,7 @@ mathviz/
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OPENAI_API_KEY` | OpenAI API key for enhanced analysis | - |
-| `HOST` | Server host | 0.0.0.0 |
-| `PORT` | Server port | 8000 |
-| `DEFAULT_MAX_VIDEO_LENGTH` | Max video length in minutes | 20 |
-| `DEFAULT_VOICE` | Default TTS voice | en-US-GuyNeural |
+| `GEMINI_API_KEY` | Google Gemini API key (required) | - |
 
 ### Available Voices
 
@@ -188,9 +189,41 @@ mathviz/
 
 ## Docker Deployment
 
+### Quick Start with Docker
+
 ```bash
-# Build and run with Docker Compose
+# 1. Set up environment variables
+cp backend/.env.example backend/.env
+# Edit backend/.env and add your GEMINI_API_KEY
+
+# 2. Build and run with Docker Compose
 docker-compose up --build
+
+# 3. Access the application
+# Frontend: http://localhost:3000
+# Backend API: http://localhost:8000
+# API Docs: http://localhost:8000/docs
+```
+
+### Docker Services
+
+- **Backend**: FastAPI application running on port 8000
+- **Frontend**: React application served by Nginx on port 3000
+
+### Docker Volumes
+
+- `./backend/uploads` - Uploaded PDF/image files
+- `./backend/outputs` - Generated videos and outputs
+- `./backend/job_data` - Job state persistence
+
+### Stopping Services
+
+```bash
+# Stop services
+docker-compose down
+
+# Stop and remove volumes (clean slate)
+docker-compose down -v
 ```
 
 ## Roadmap

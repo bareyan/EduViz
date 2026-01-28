@@ -1,15 +1,34 @@
 """
 Application configuration and settings
+
+Modules:
+- paths: Directory paths
+- constants: API settings and constants
+- models: Model and pipeline configuration
 """
 
 import os
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Load environment variables from .env file
-from dotenv import load_dotenv
-load_dotenv()
+env_path = Path(__file__).parent.parent.parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
 
-# Model configuration
+# Re-export paths
+from .paths import APP_DIR, BACKEND_DIR, UPLOAD_DIR, OUTPUT_DIR, JOB_DATA_DIR
+
+# Re-export constants
+from .constants import (
+    API_TITLE,
+    API_DESCRIPTION,
+    API_VERSION,
+    CORS_ORIGINS,
+    ALLOWED_MIME_TYPES,
+    ALLOWED_EXTENSIONS,
+)
+
+# Re-export model configuration
 from .models import (
     ModelConfig,
     ThinkingLevel,
@@ -18,7 +37,6 @@ from .models import (
     DEFAULT_PIPELINE_MODELS,
     HIGH_QUALITY_PIPELINE,
     COST_OPTIMIZED_PIPELINE,
-    OVERVIEW_OPTIMIZED_PIPELINE,
     AVAILABLE_PIPELINES,
     AVAILABLE_MODELS,
     THINKING_CAPABLE_MODELS,
@@ -29,44 +47,35 @@ from .models import (
     list_pipeline_steps,
 )
 
-# Base directories
-APP_DIR = Path(__file__).parent.parent
-BACKEND_DIR = APP_DIR.parent
-UPLOAD_DIR = BACKEND_DIR / "uploads"
-OUTPUT_DIR = BACKEND_DIR / "outputs"
-JOB_DATA_DIR = BACKEND_DIR / "job_data"
-
-# Ensure directories exist
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-JOB_DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-# API settings
-API_TITLE = "MathViz API"
-API_DESCRIPTION = "Generate 3Blue1Brown-style educational videos from any material"
-API_VERSION = "1.0.0"
-
-# CORS origins
-CORS_ORIGINS = [
-    "http://localhost:3000",
-    "http://localhost:3001", 
-    "http://localhost:5173",
-]
-
 # Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# File upload settings
-ALLOWED_MIME_TYPES = [
-    "application/pdf",
-    "image/png",
-    "image/jpeg",
-    "image/jpg",
-    "image/webp",
-    "text/plain",
-    "text/x-tex",
-    "application/x-tex",
-    "application/x-latex",
+__all__ = [
+    "APP_DIR",
+    "BACKEND_DIR",
+    "UPLOAD_DIR",
+    "OUTPUT_DIR",
+    "JOB_DATA_DIR",
+    "API_TITLE",
+    "API_DESCRIPTION",
+    "API_VERSION",
+    "CORS_ORIGINS",
+    "ALLOWED_MIME_TYPES",
+    "ALLOWED_EXTENSIONS",
+    "GEMINI_API_KEY",
+    "ModelConfig",
+    "ThinkingLevel",
+    "PipelineModels",
+    "ACTIVE_PIPELINE",
+    "DEFAULT_PIPELINE_MODELS",
+    "HIGH_QUALITY_PIPELINE",
+    "COST_OPTIMIZED_PIPELINE",
+    "AVAILABLE_PIPELINES",
+    "AVAILABLE_MODELS",
+    "THINKING_CAPABLE_MODELS",
+    "get_model_config",
+    "get_thinking_config",
+    "set_active_pipeline",
+    "get_active_pipeline_name",
+    "list_pipeline_steps",
 ]
-
-ALLOWED_EXTENSIONS = [".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tex", ".txt"]

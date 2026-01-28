@@ -25,8 +25,45 @@ interface SectionProgressViewProps {
 export function SectionProgressView({ details, onSectionClick }: SectionProgressViewProps) {
   const [isExpanded, setIsExpanded] = useState(true)
 
-  if (!details.script_ready) {
+  // Debug log
+  useEffect(() => {
+    console.log('SectionProgressView received details:', {
+      script_ready: details.script_ready,
+      script_title: details.script_title,
+      total_sections: details.total_sections,
+      completed_sections: details.completed_sections,
+      sections_count: details.sections?.length || 0,
+      has_sections_array: Array.isArray(details.sections),
+      current_stage: details.current_stage,
+      raw_sections: details.sections
+    })
+  }, [details])
+
+  // Only hide if we're in very early stages (analyzing stage AND no sections info yet)
+  const shouldShow = details.script_ready || details.total_sections > 0 || details.current_stage === 'sections'
+  
+  if (!shouldShow) {
     return null
+  }
+
+  // Calculate stage description for current stage
+  const getStageDescription = () => {
+    switch (details.current_stage) {
+      case 'analyzing':
+        return 'Analyzing document...'
+      case 'script':
+        return 'Generating script...'
+      case 'sections':
+        return 'Processing sections...'
+      case 'combining':
+        return 'Combining final video...'
+      case 'completed':
+        return 'Generation complete!'
+      case 'failed':
+        return 'Generation failed'
+      default:
+        return details.message || 'Processing...'
+    }
   }
 
   return (
@@ -54,45 +91,63 @@ export function SectionProgressView({ details, onSectionClick }: SectionProgress
             <div className="flex items-center gap-2 mb-2">
               <FileText className="w-4 h-4 text-math-purple" />
               <h3 className="font-medium text-sm truncate">
-                {details.script_title || 'Script'}
+                {details.script_title || (details.total_sections > 0 ? 'Educational Video' : 'Processing...')}
               </h3>
             </div>
             
             {/* Progress bar */}
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-math-blue transition-all duration-300"
-                  style={{ 
-                    width: `${details.total_sections > 0 
-                      ? (details.completed_sections / details.total_sections) * 100 
-                      : 0}%` 
-                  }}
-                />
-              </div>
-              <span className="text-xs text-gray-500">
-                {details.completed_sections}/{details.total_sections}
-              </span>
-            </div>
-
-            {/* Current stage */}
-            {details.current_stage && (
-              <div className="mt-2 text-xs text-gray-400">
-                {details.current_stage}
+            {details.total_sections > 0 && (
+              <div className="flex items-center gap-2 mb-2">
+                <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-math-blue transition-all duration-300"
+                    style={{ 
+                      width: `${details.total_sections > 0 
+                        ? (details.completed_sections / details.total_sections) * 100 
+                        : 0}%` 
+                    }}
+                  />
+                </div>
+                <span className="text-xs text-gray-500 tabular-nums">
+                  {details.completed_sections}/{details.total_sections}
+                </span>
               </div>
             )}
+
+            {/* Current stage */}
+            <div className="text-xs text-gray-400">
+              {getStageDescription()}
+            </div>
           </div>
 
           {/* Section List */}
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {details.sections.map((section) => (
-              <SectionItem 
-                key={section.id} 
-                section={section}
-                isCurrent={details.current_section_index === section.index}
-                onClick={() => onSectionClick?.(section)}
-              />
-            ))}
+            {Array.isArray(details.sections) && details.sections.length > 0 ? (
+              details.sections.map((section) => (
+                <SectionItem 
+                  key={section.id} 
+                  section={section}
+                  isCurrent={details.current_section_index === section.index}
+                  onClick={() => onSectionClick?.(section)}
+                />
+              ))
+            ) : (
+              <div className="text-center text-gray-500 text-xs py-8">
+                {details.current_stage === 'script' ? (
+                  <div>
+                    <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-math-blue" />
+                    <p>Generating script...</p>
+                  </div>
+                ) : details.total_sections > 0 ? (
+                  <div>
+                    <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-math-blue" />
+                    <p>Loading {details.total_sections} sections...</p>
+                  </div>
+                ) : (
+                  <p>No sections yet</p>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -112,7 +167,9 @@ function SectionItem({ section, isCurrent, onClick }: SectionItemProps) {
   return (
     <button
       onClick={onClick}
-      className={`w-full flex items-center gap-2 p-2 rounded-lg text-left transition-all hover:bg-gray-800/80 ${isCurrent ? 'bg-gray-800 ring-1 ring-math-blue/50' : 'bg-transparent'}`}
+      className={`w-full flex items-center gap-2 p-2 rounded-lg text-left transition-all hover:bg-gray-800/80 ${
+        isCurrent ? 'bg-gray-800 ring-1 ring-math-blue/50' : 'bg-transparent'
+      }`}
     >
       {/* Status Icon */}
       <div className={`flex-shrink-0 ${statusConfig.color}`}>
@@ -122,7 +179,7 @@ function SectionItem({ section, isCurrent, onClick }: SectionItemProps) {
       {/* Section Info */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] text-gray-500">#{section.index + 1}</span>
+          <span className="text-[10px] text-gray-500 font-mono">#{section.index + 1}</span>
           <span className="text-xs font-medium truncate">{section.title}</span>
         </div>
         
@@ -135,12 +192,12 @@ function SectionItem({ section, isCurrent, onClick }: SectionItemProps) {
           <div className="flex items-center gap-1 ml-auto">
             {section.has_code && (
               <span title="Code generated">
-                <Code className="w-2.5 h-2.5 text-gray-500" />
+                <Code className="w-2.5 h-2.5 text-green-500" />
               </span>
             )}
             {section.has_audio && (
               <span title="Audio generated">
-                <Volume2 className="w-2.5 h-2.5 text-gray-500" />
+                <Volume2 className="w-2.5 h-2.5 text-blue-500" />
               </span>
             )}
             {section.has_video && (
@@ -148,13 +205,18 @@ function SectionItem({ section, isCurrent, onClick }: SectionItemProps) {
                 <Video className="w-2.5 h-2.5 text-math-green" />
               </span>
             )}
+            {section.fix_attempts > 0 && (
+              <span title={`${section.fix_attempts} fix attempts`} className="text-[9px] text-math-orange">
+                ⚠{section.fix_attempts}
+              </span>
+            )}
           </div>
         </div>
       </div>
 
       {/* Duration */}
-      {section.duration_seconds && (
-        <div className="text-[10px] text-gray-500 flex-shrink-0">
+      {section.duration_seconds && section.duration_seconds > 0 && (
+        <div className="text-[10px] text-gray-500 flex-shrink-0 font-mono">
           {formatDuration(section.duration_seconds)}
         </div>
       )}
@@ -169,27 +231,41 @@ function getStatusConfig(status: SectionProgress['status']) {
         icon: <CheckCircle className="w-3.5 h-3.5" />,
         color: 'text-math-green',
         textColor: 'text-math-green',
-        label: 'Completed'
+        label: 'Complete'
       }
-    case 'generating_manim':
+    case 'generating_video':
       return {
         icon: <Loader2 className="w-3.5 h-3.5 animate-spin" />,
         color: 'text-math-blue',
         textColor: 'text-math-blue',
-        label: 'Creating animation...'
+        label: 'Rendering video...'
+      }
+    case 'generating_manim':
+      return {
+        icon: <Loader2 className="w-3.5 h-3.5 animate-spin" />,
+        color: 'text-math-purple',
+        textColor: 'text-math-purple',
+        label: 'Generating animation...'
+      }
+    case 'fixing_error':
+      return {
+        icon: <Wrench className="w-3.5 h-3.5 animate-pulse" />,
+        color: 'text-math-orange',
+        textColor: 'text-math-orange',
+        label: 'Fixing error...'
       }
     case 'fixing_manim':
       return {
         icon: <Wrench className="w-3.5 h-3.5 animate-pulse" />,
         color: 'text-math-orange',
         textColor: 'text-math-orange',
-        label: 'Fixing issues...'
+        label: 'Fixing animation...'
       }
     case 'generating_audio':
       return {
         icon: <Loader2 className="w-3.5 h-3.5 animate-spin" />,
-        color: 'text-math-purple',
-        textColor: 'text-math-purple',
+        color: 'text-teal-400',
+        textColor: 'text-teal-400',
         label: 'Generating audio...'
       }
     case 'generating_script':

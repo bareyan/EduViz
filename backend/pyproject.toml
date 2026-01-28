@@ -1,0 +1,42 @@
+[tool.pytest.ini_options]
+minversion = "6.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--tb=short",
+]
+markers = [
+    "asyncio: mark test as an async test",
+    "integration: mark test as an integration test",
+]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+include = '\.pyi?$'
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = [
+    "E402",  # Module level import not at top of file (needed for load_dotenv)
+    "E501",  # Line too long (relaxed for docstrings and descriptions)
+    "E741",  # Ambiguous variable name (l in list comprehensions is fine)
+    "E722",  # Bare except (used for cleanup where we don't care about error type)
+    "W191",  # Indentation contains tabs (cosmetic)
+    "W291",  # Trailing whitespace (cosmetic)
+    "W293",  # Blank line contains whitespace (cosmetic)
+]

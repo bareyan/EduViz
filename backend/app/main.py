@@ -5,15 +5,18 @@ FastAPI application for generating 3Blue1Brown-style educational videos
 This is the main entry point that wires together all routes and services.
 """
 
-from fastapi import FastAPI
+import os
+import uuid
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pathlib import Path
 
 from .config import (
-    API_TITLE, 
-    API_DESCRIPTION, 
-    API_VERSION, 
-    CORS_ORIGINS, 
+    API_TITLE,
+    API_DESCRIPTION,
+    API_VERSION,
+    CORS_ORIGINS,
     OUTPUT_DIR
 )
 from .routes import (
@@ -24,6 +27,24 @@ from .routes import (
     sections_router,
     translation_router,
 )
+from .core import setup_logging, get_logger, set_request_id, clear_context
+
+# Initialize logging
+log_level = os.getenv("LOG_LEVEL", "INFO")
+log_file = os.getenv("LOG_FILE")
+use_json_logs = os.getenv("JSON_LOGS", "false").lower() == "true"
+
+setup_logging(
+    level=log_level,
+    log_file=Path(log_file) if log_file else None,
+    use_json=use_json_logs
+)
+
+logger = get_logger(__name__, service="api")
+logger.info("Starting MathViz Backend API", extra={
+    "log_level": log_level,
+    "json_logs": use_json_logs
+})
 
 # Create FastAPI app
 app = FastAPI(
@@ -31,6 +52,31 @@ app = FastAPI(
     description=API_DESCRIPTION,
     version=API_VERSION
 )
+
+
+@app.middleware("http")
+async def add_request_correlation(request: Request, call_next):
+    """Add correlation ID to all requests for tracing"""
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    set_request_id(request_id)
+
+    logger.info(f"{request.method} {request.url.path}", extra={
+        "method": request.method,
+        "path": request.url.path,
+        "client": request.client.host if request.client else None
+    })
+
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+
+    logger.info(f"Response: {response.status_code}", extra={
+        "status_code": response.status_code,
+        "method": request.method,
+        "path": request.url.path
+    })
+
+    clear_context()
+    return response
 
 # CORS middleware for frontend
 app.add_middleware(
@@ -65,31 +111,32 @@ async def root():
 @app.on_event("startup")
 async def startup_event():
     """Handle startup tasks like resuming interrupted jobs"""
-    from .services.job_manager import JobStatus, get_job_manager
-    from .services.video_generator import VideoGenerator
-    
+    from .services.infrastructure.orchestration import get_job_manager
+    from .services.pipeline.assembly import VideoGenerator
+    from app.models.status import JobStatus
+
     job_manager = get_job_manager()
     video_generator = VideoGenerator(str(OUTPUT_DIR))
-    
+
     # Track jobs being resumed to avoid duplicate processing
     resuming_jobs = set()
-    
+
     # Find and resume interrupted jobs
     interrupted_jobs = job_manager.get_interrupted_jobs()
-    
+
     for job in interrupted_jobs:
         job_id = job.id
-        
+
         if job_id in resuming_jobs:
             continue
         resuming_jobs.add(job_id)
-        
+
         # Check what progress exists
         progress = video_generator.check_existing_progress(job_id)
-        
+
         if progress["has_script"] and progress["completed_sections"]:
             print(f"[Startup] Found interrupted job {job_id} with {len(progress['completed_sections'])}/{progress['total_sections']} sections")
-            
+
             # Check if all sections are complete
             if len(progress["completed_sections"]) == progress["total_sections"] and progress["total_sections"] > 0:
                 # All sections done, just need to combine
@@ -107,19 +154,18 @@ async def startup_event():
 async def _try_combine_job(job_id: str, job_manager, video_generator, progress):
     """Try to combine completed sections into final video"""
     import os
-    import json
     import asyncio
-    from .services.job_manager import JobStatus
-    
+    from app.models.status import JobStatus
+
     job_output_dir = OUTPUT_DIR / job_id
     sections_dir = job_output_dir / "sections"
-    
+
     try:
         # Create concat list
         concat_list_path = job_output_dir / "concat_list.txt"
         script = progress["script"]
         sections = script.get("sections", [])
-        
+
         with open(concat_list_path, "w") as f:
             for i, section in enumerate(sections):
                 section_id = section.get("id", f"section_{i}")
@@ -130,19 +176,19 @@ async def _try_combine_job(job_id: str, job_manager, video_generator, progress):
                             video_path = section_path / file
                             f.write(f"file '{video_path}'\n")
                             break
-        
+
         # Run ffmpeg
         final_video_path = job_output_dir / "final_video.mp4"
         cmd = [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0",
             "-i", str(concat_list_path), "-c", "copy", str(final_video_path)
         ]
-        
+
         process = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         await process.wait()
-        
+
         if final_video_path.exists():
             # Calculate total duration and chapters
             total_duration = sum(s.get("duration_seconds", 0) for s in sections)
@@ -155,7 +201,7 @@ async def _try_combine_job(job_id: str, job_manager, video_generator, progress):
                     "duration": section.get("duration_seconds", 0)
                 })
                 current_time += section.get("duration_seconds", 0)
-            
+
             job_manager.update_job(
                 job_id,
                 JobStatus.COMPLETED,
@@ -173,7 +219,7 @@ async def _try_combine_job(job_id: str, job_manager, video_generator, progress):
             print(f"[Startup] Job {job_id} combined and completed")
         else:
             job_manager.update_job(job_id, JobStatus.FAILED, message="Failed to combine section videos")
-            
+
     except Exception as e:
         print(f"[Startup] Error combining job {job_id}: {e}")
         job_manager.update_job(job_id, JobStatus.FAILED, message=f"Failed to combine: {str(e)}")
@@ -182,8 +228,8 @@ async def _try_combine_job(job_id: str, job_manager, video_generator, progress):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        app, 
-        host="0.0.0.0", 
+        app,
+        host="0.0.0.0",
         port=8000,
         reload=True,
         reload_excludes=["outputs/*", "job_data/*", "uploads/*", "*.pyc", "__pycache__/*"]

@@ -10,10 +10,10 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
 from ..config import OUTPUT_DIR
-from ..services.translation_service import get_translation_service
-from ..services.tts_engine import TTSEngine
-from ..services.manim_generator import ManimGenerator
-from ..utils import get_media_duration
+from ..services.features.translation import get_translation_service
+from ..services.pipeline.audio import TTSEngine
+from ..services.pipeline.animation import ManimGenerator
+from ..core import get_media_duration, load_script, load_script_raw
 
 router = APIRouter(tags=["translation"])
 
@@ -63,9 +63,9 @@ async def get_job_translations(job_id: str):
     job_dir = OUTPUT_DIR / job_id
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     translations = []
-    
+
     translations_dir = job_dir / "translations"
     if translations_dir.exists():
         for lang_dir in os.listdir(translations_dir):
@@ -73,21 +73,21 @@ async def get_job_translations(job_id: str):
             if lang_path.is_dir():
                 script_path = lang_path / "script.json"
                 video_path = lang_path / "final_video.mp4"
-                
+
                 translations.append({
                     "language": lang_dir,
                     "has_script": script_path.exists(),
                     "has_video": video_path.exists(),
                     "video_url": f"/outputs/{job_id}/translations/{lang_dir}/final_video.mp4" if video_path.exists() else None
                 })
-    
+
     original_language = "en"
     script_path = job_dir / "script.json"
     if script_path.exists():
         with open(script_path, "r") as f:
             script = json.load(f)
         original_language = script.get("source_language", script.get("language", "en"))
-    
+
     return {
         "job_id": job_id,
         "original_language": original_language,
@@ -101,42 +101,47 @@ async def create_translation(job_id: str, request: TranslationRequest, backgroun
     job_dir = OUTPUT_DIR / job_id
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     script_path = job_dir / "script.json"
     if not script_path.exists():
         raise HTTPException(status_code=400, detail="Original video not yet generated")
-    
+
     target_language = request.target_language
     translation_id = f"{job_id}_{target_language}"
-    
+
     translation_dir = job_dir / "translations" / target_language
     translation_dir.mkdir(parents=True, exist_ok=True)
-    
+
     async def run_translation():
         try:
             translation_service = get_translation_service()
+
+            # Load script using the centralized loader that handles unwrapping
+            original_script = load_script(job_id)
             
-            with open(script_path, "r") as f:
-                original_script = json.load(f)
-            
-            source_language = original_script.get("source_language", original_script.get("language", "en"))
-            
+            # For source language, try to get from raw script metadata first
+            try:
+                raw_script = load_script_raw(job_id)
+                source_language = raw_script.get("output_language", raw_script.get("detected_language", "en"))
+            except:
+                source_language = original_script.get("source_language", original_script.get("language", "en"))
+
             print(f"[Translation] Starting translation from {source_language} to {target_language}")
-            
+
             translated_script = await translation_service.translate_script(
                 original_script,
                 target_language,
                 source_language
             )
-            
+
             translated_script_path = translation_dir / "script.json"
-            with open(translated_script_path, "w") as f:
+            with open(translated_script_path, "w", encoding="utf-8") as f:
                 json.dump(translated_script, f, indent=2, ensure_ascii=False)
-            
-            print(f"[Translation] Script translated, now generating video...")
-            
+
+            print("[Translation] Script translated, now generating video...")
+
             voice = request.voice if request.voice else get_voice_for_language(target_language)
-            
+
             await generate_translated_video(
                 job_id,
                 translated_script,
@@ -144,16 +149,16 @@ async def create_translation(job_id: str, request: TranslationRequest, backgroun
                 target_language,
                 voice
             )
-            
+
             print(f"[Translation] Translation complete for {target_language}")
-            
+
         except Exception as e:
             print(f"[Translation] Error: {e}")
             import traceback
             traceback.print_exc()
-    
+
     background_tasks.add_task(run_translation)
-    
+
     return TranslationResponse(
         job_id=job_id,
         translation_id=translation_id,
@@ -172,29 +177,28 @@ async def generate_translated_video(
 ):
     """Generate video from translated script with translated Manim animations"""
     from ..services.translation_service import TranslationService
-    import subprocess
-    
+
     tts_engine = TTSEngine()
     manim_gen = ManimGenerator()
     translation_service = TranslationService()
-    
+
     source_language = translated_script.get("translated_from", "en")
-    
+
     sections = translated_script.get("sections", [])
     section_videos = []
-    
+
     for i, section in enumerate(sections):
         print(f"[Translation] Processing section {i+1}/{len(sections)}")
-        
+
         section_dir = os.path.join(output_dir, f"section_{i}")
         os.makedirs(section_dir, exist_ok=True)
-        
+
         narration = section.get("tts_narration", section.get("narration", ""))
         if not narration:
             continue
-        
+
         audio_path = os.path.join(section_dir, "audio.mp3")
-        
+
         try:
             await tts_engine.generate_speech(
                 text=narration,
@@ -204,31 +208,31 @@ async def generate_translated_video(
         except Exception as e:
             print(f"[Translation] TTS error for section {i}: {e}")
             continue
-        
+
         audio_duration = await get_media_duration(audio_path)
-        
+
         # Find original section directory
         original_section_dir = None
         section_video_path = section.get("video", "")
         section_audio_path = section.get("audio", "")
-        
+
         if section_video_path and os.path.exists(section_video_path):
             original_section_dir = os.path.dirname(section_video_path)
         elif section_audio_path and os.path.exists(section_audio_path):
             original_section_dir = os.path.dirname(section_audio_path)
-        
+
         if not original_section_dir or not os.path.isdir(original_section_dir):
             section_id_dir = section.get("id")
             possible_dirs = []
             if section_id_dir:
                 possible_dirs.append(os.path.join(str(OUTPUT_DIR), job_id, "sections", section_id_dir))
             possible_dirs.append(os.path.join(str(OUTPUT_DIR), job_id, "sections", f"section_{i}"))
-            
+
             for sd in possible_dirs:
                 if os.path.isdir(sd):
                     original_section_dir = sd
                     break
-        
+
         if not original_section_dir:
             original_section_dir = os.path.join(str(OUTPUT_DIR), job_id, "sections", section.get("id", f"section_{i}"))
 
@@ -238,15 +242,15 @@ async def generate_translated_video(
                 if f.startswith("scene") and f.endswith(".py"):
                     original_manim_path = os.path.join(original_section_dir, f)
                     break
-        
+
         original_manim = section.get("manim_code", "")
-        
+
         if not original_manim and original_manim_path and os.path.exists(original_manim_path):
             with open(original_manim_path, "r") as f:
                 original_manim = f.read()
-        
+
         video_path = None
-        
+
         if original_manim:
             try:
                 translated_manim = await translation_service.translate_manim_code(
@@ -254,34 +258,34 @@ async def generate_translated_video(
                     target_language,
                     source_language
                 )
-                
+
                 translated_manim_path = os.path.join(section_dir, "scene.py")
-                with open(translated_manim_path, "w") as f:
+                with open(translated_manim_path, "w", encoding="utf-8") as f:
                     f.write(translated_manim)
-                
+
                 video_path = await manim_gen.render_from_code(
                     translated_manim,
                     section_dir,
                     section_index=i
                 )
-                
+
             except Exception as e:
                 print(f"[Translation] Manim translation/render error: {e}")
                 video_path = None
-        
+
         if not video_path or not os.path.exists(video_path):
             original_section_video = os.path.join(original_section_dir, "final_section.mp4") if original_section_dir else ""
             if not os.path.exists(original_section_video):
                 original_section_video = section.get("video", "")
-            
+
             if os.path.exists(original_section_video):
                 video_path = original_section_video
             else:
                 continue
-        
+
         video_duration = await get_media_duration(video_path)
         output_video = os.path.join(section_dir, "translated_section.mp4")
-        
+
         if audio_duration > video_duration * 0.9 and audio_duration < video_duration * 1.5:
             speed_factor = video_duration / audio_duration
             cmd = [
@@ -323,7 +327,7 @@ async def generate_translated_video(
                 "-t", str(video_duration),
                 output_video
             ]
-        
+
         try:
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -331,22 +335,22 @@ async def generate_translated_video(
                 stderr=asyncio.subprocess.PIPE
             )
             _, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
-            
+
             if process.returncode == 0 and os.path.exists(output_video):
                 section_videos.append(output_video)
             else:
                 print(f"[Translation] FFmpeg error: {stderr.decode()[:500]}")
         except Exception as e:
             print(f"[Translation] Error processing section {i}: {e}")
-    
+
     if section_videos:
         final_video = os.path.join(output_dir, "final_video.mp4")
-        
+
         concat_file = os.path.join(output_dir, "concat.txt")
-        with open(concat_file, "w") as f:
+        with open(concat_file, "w", encoding="utf-8") as f:
             for video in section_videos:
                 f.write(f"file '{video}'\n")
-        
+
         cmd = [
             "ffmpeg", "-y",
             "-f", "concat",
@@ -355,12 +359,12 @@ async def generate_translated_video(
             "-c", "copy",
             final_video
         ]
-        
+
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
         await process.communicate()
-        
+
         print(f"[Translation] Final video created: {final_video}")

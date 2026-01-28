@@ -70,7 +70,10 @@ export default function ResultsPage() {
       try {
         const [status, details] = await Promise.all([
           getJobStatus(jobId),
-          getJobDetails(jobId).catch(() => null) // Don't fail if details endpoint isn't ready
+          getJobDetails(jobId).catch((err) => {
+            console.warn('Failed to fetch detailed progress:', err)
+            return null
+          })
         ])
         
         if (!isMounted) return
@@ -78,9 +81,18 @@ export default function ResultsPage() {
         // Force update by creating a new object reference
         setJob({ ...status })
         
-        // Update detailed progress
+        // Update detailed progress if available
         if (details) {
-          setDetailedProgress(details)
+          console.log('Detailed progress update:', {
+            stage: details.current_stage,
+            currentSection: details.current_section_index,
+            completed: details.completed_sections,
+            total: details.total_sections,
+            sectionsArray: details.sections,
+            sectionsIsArray: Array.isArray(details.sections),
+            sectionsLength: details.sections?.length
+          })
+          setDetailedProgress({ ...details })
         }
 
         if (status.status === 'completed' && status.result && status.result.length > 0) {
@@ -96,7 +108,7 @@ export default function ResultsPage() {
 
         // Continue polling if not completed or failed
         if (status.status !== 'completed' && status.status !== 'failed') {
-          timeoutId = setTimeout(pollStatus, 1500)  // Slightly faster polling
+          timeoutId = setTimeout(pollStatus, 1500)  // Poll every 1.5 seconds
         }
       } catch (err) {
         console.error('Failed to get job status:', err)
