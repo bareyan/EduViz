@@ -10,15 +10,6 @@ Centralizes prompts for:
 
 from typing import Dict, Any, Optional
 from app.services.infrastructure.llm.prompting_engine.prompts.base import PromptTemplate
-from .generation.tools.context import get_manim_reference
-
-
-# =============================================================================
-# CONSTANTS
-# =============================================================================
-
-MANIM_VERSION = "0.18.1"
-MANIM_CONTEXT = get_manim_reference()
 
 
 # =============================================================================
@@ -74,15 +65,11 @@ TITLE: {title}
 
 TARGET DURATION: {target_duration} seconds
 
-═══════════════════════════════════════════════════════════════════════════════
 VISUAL SCRIPT (follow this precisely)
-═══════════════════════════════════════════════════════════════════════════════
 
 {visual_script}
 
-═══════════════════════════════════════════════════════════════════════════════
 TIMING REQUIREMENTS
-═══════════════════════════════════════════════════════════════════════════════
 
 {segment_timing}
 
@@ -227,20 +214,9 @@ SECTION CONTEXT:
 """
 
 
-TOOL_CORRECTION_PROMPT = PromptTemplate(
-    template="""Previous code attempt failed validation. Fix the issues:
-
-ERROR:
-{error_message}
-
-FAILED CODE:
-```python
-{code}
-```
-
-Use patch_manim_code tool to provide corrected code.""",
-    description="Prompt for tool-based correction iteration"
-)
+# The inline tool-correction prompt was removed because the generation
+# and correction flows use `TOOL_CORRECTION_SYSTEM` and format the
+# system prompt at runtime.
 
 
 # =============================================================================
@@ -370,7 +346,6 @@ __all__ = [
     
     # Tool-based Correction
     "TOOL_CORRECTION_SYSTEM",
-    "TOOL_CORRECTION_PROMPT",
     
     # Code fixing
     "FIX_CODE_USER",
@@ -383,7 +358,5 @@ __all__ = [
     "format_visual_script_for_prompt",
     "format_segment_timing_for_prompt",
     
-    # Constants
-    "MANIM_CONTEXT",
-    "MANIM_VERSION",
+    # Constants are provided by generation.tools.context
 ]
