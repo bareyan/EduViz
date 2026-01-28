@@ -31,9 +31,9 @@ WRITE_CODE_SCHEMA = {
 }
 
 
-FIX_CODE_SCHEMA = {
+PATCH_CODE_SCHEMA = {
     "type": "object",
-    "description": "Fix code using targeted search/replace operations (preserves working code)",
+    "description": "Patch code using targeted search/replace operations (preserves working code)",
     "properties": {
         "fixes": {
             "type": "array",
@@ -43,7 +43,7 @@ FIX_CODE_SCHEMA = {
                 "properties": {
                     "search": {
                         "type": "string",
-                        "description": "Exact text to find (must match exactly including whitespace). Include enough context to make it unique."
+                        "description": "The exact line or block of text to find. This is whitespace-insensitive, but include enough context to make it unique within the file."
                     },
                     "replace": {
                         "type": "string",
@@ -64,10 +64,6 @@ FIX_CODE_SCHEMA = {
     },
     "required": ["fixes"]
 }
-
-
-# Backward compatibility alias
-GENERATE_CODE_SCHEMA = WRITE_CODE_SCHEMA
 
 
 # =============================================================================

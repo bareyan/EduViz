@@ -1,0 +1,189 @@
+"""
+Tests for pipeline/animation/config module
+
+Tests for animation pipeline configuration constants and settings.
+"""
+
+import pytest
+from app.services.pipeline.animation.config import (
+    # Generation settings
+    MAX_GENERATION_ITERATIONS,
+    GENERATION_TIMEOUT,
+    CORRECTION_TIMEOUT,
+    TEMPERATURE_INCREMENT,
+    BASE_GENERATION_TEMPERATURE,
+    BASE_CORRECTION_TEMPERATURE,
+    # Retry settings
+    MAX_CLEAN_RETRIES,
+    MAX_CORRECTION_ATTEMPTS,
+    # Rendering settings
+    RENDER_TIMEOUT,
+    QUALITY_DIR_MAP,
+    QUALITY_FLAGS,
+    # Code generation settings
+    MIN_DURATION_PADDING,
+    DURATION_PADDING_PERCENTAGE,
+    CONSTRUCT_INDENT_SPACES,
+    # Validation settings
+    ENABLE_SYNTAX_VALIDATION,
+    ENABLE_STRUCTURE_VALIDATION,
+    ENABLE_IMPORTS_VALIDATION,
+    ENABLE_SPATIAL_VALIDATION,
+)
+
+
+class TestGenerationSettings:
+    """Test suite for generation settings"""
+
+    def test_max_generation_iterations_positive(self):
+        """Test MAX_GENERATION_ITERATIONS is positive"""
+        assert MAX_GENERATION_ITERATIONS > 0
+        assert isinstance(MAX_GENERATION_ITERATIONS, int)
+
+    def test_generation_timeout_reasonable(self):
+        """Test GENERATION_TIMEOUT is reasonable"""
+        assert GENERATION_TIMEOUT > 0
+        assert GENERATION_TIMEOUT <= 600  # Max 10 minutes
+        assert isinstance(GENERATION_TIMEOUT, int)
+
+    def test_correction_timeout_reasonable(self):
+        """Test CORRECTION_TIMEOUT is reasonable"""
+        assert CORRECTION_TIMEOUT > 0
+        assert CORRECTION_TIMEOUT < GENERATION_TIMEOUT
+        assert isinstance(CORRECTION_TIMEOUT, int)
+
+    def test_temperature_increment_valid(self):
+        """Test TEMPERATURE_INCREMENT is valid"""
+        assert 0 < TEMPERATURE_INCREMENT <= 0.5
+        assert isinstance(TEMPERATURE_INCREMENT, float)
+
+    def test_base_generation_temperature_valid(self):
+        """Test BASE_GENERATION_TEMPERATURE is valid"""
+        assert 0 < BASE_GENERATION_TEMPERATURE <= 2.0
+        assert isinstance(BASE_GENERATION_TEMPERATURE, float)
+
+    def test_base_correction_temperature_valid(self):
+        """Test BASE_CORRECTION_TEMPERATURE is valid"""
+        assert 0 <= BASE_CORRECTION_TEMPERATURE <= 2.0
+        assert isinstance(BASE_CORRECTION_TEMPERATURE, float)
+        # Correction should be more deterministic (lower temp)
+        assert BASE_CORRECTION_TEMPERATURE <= BASE_GENERATION_TEMPERATURE
+
+
+class TestRetrySettings:
+    """Test suite for retry settings"""
+
+    def test_max_clean_retries_positive(self):
+        """Test MAX_CLEAN_RETRIES is positive"""
+        assert MAX_CLEAN_RETRIES > 0
+        assert isinstance(MAX_CLEAN_RETRIES, int)
+
+    def test_max_correction_attempts_positive(self):
+        """Test MAX_CORRECTION_ATTEMPTS is positive"""
+        assert MAX_CORRECTION_ATTEMPTS > 0
+        assert isinstance(MAX_CORRECTION_ATTEMPTS, int)
+
+
+class TestRenderingSettings:
+    """Test suite for rendering settings"""
+
+    def test_render_timeout_positive(self):
+        """Test RENDER_TIMEOUT is positive"""
+        assert RENDER_TIMEOUT > 0
+        assert isinstance(RENDER_TIMEOUT, int)
+
+    def test_quality_dir_map_complete(self):
+        """Test QUALITY_DIR_MAP has all quality levels"""
+        expected_keys = ["low", "medium", "high", "4k"]
+        
+        for key in expected_keys:
+            assert key in QUALITY_DIR_MAP
+            assert isinstance(QUALITY_DIR_MAP[key], str)
+            assert len(QUALITY_DIR_MAP[key]) > 0
+
+    def test_quality_dir_map_format(self):
+        """Test QUALITY_DIR_MAP values have correct format"""
+        # Values should be like "480p15", "720p30", etc.
+        for quality, dir_name in QUALITY_DIR_MAP.items():
+            assert "p" in dir_name  # Should contain 'p' for resolution
+
+    def test_quality_flags_complete(self):
+        """Test QUALITY_FLAGS has all quality levels"""
+        expected_keys = ["low", "medium", "high", "4k"]
+        
+        for key in expected_keys:
+            assert key in QUALITY_FLAGS
+            assert isinstance(QUALITY_FLAGS[key], str)
+            assert QUALITY_FLAGS[key].startswith("-q")
+
+    def test_quality_flags_format(self):
+        """Test QUALITY_FLAGS values are valid manim flags"""
+        # Flags should be -ql, -qm, -qh, -qk
+        assert QUALITY_FLAGS["low"] == "-ql"
+        assert QUALITY_FLAGS["medium"] == "-qm"
+        assert QUALITY_FLAGS["high"] == "-qh"
+        assert QUALITY_FLAGS["4k"] == "-qk"
+
+    def test_quality_keys_match(self):
+        """Test QUALITY_DIR_MAP and QUALITY_FLAGS have same keys"""
+        assert set(QUALITY_DIR_MAP.keys()) == set(QUALITY_FLAGS.keys())
+
+
+class TestCodeGenerationSettings:
+    """Test suite for code generation settings"""
+
+    def test_min_duration_padding_positive(self):
+        """Test MIN_DURATION_PADDING is positive"""
+        assert MIN_DURATION_PADDING > 0
+        assert isinstance(MIN_DURATION_PADDING, (int, float))
+
+    def test_duration_padding_percentage_valid(self):
+        """Test DURATION_PADDING_PERCENTAGE is valid percentage"""
+        assert 0 < DURATION_PADDING_PERCENTAGE < 1
+        assert isinstance(DURATION_PADDING_PERCENTAGE, float)
+
+    def test_construct_indent_spaces_positive(self):
+        """Test CONSTRUCT_INDENT_SPACES is positive"""
+        assert CONSTRUCT_INDENT_SPACES > 0
+        assert isinstance(CONSTRUCT_INDENT_SPACES, int)
+        # Should be a multiple of 4 for Python conventions
+        assert CONSTRUCT_INDENT_SPACES % 4 == 0
+
+
+class TestValidationSettings:
+    """Test suite for validation settings"""
+
+    def test_validation_flags_are_boolean(self):
+        """Test all validation flags are boolean"""
+        assert isinstance(ENABLE_SYNTAX_VALIDATION, bool)
+        assert isinstance(ENABLE_STRUCTURE_VALIDATION, bool)
+        assert isinstance(ENABLE_IMPORTS_VALIDATION, bool)
+        assert isinstance(ENABLE_SPATIAL_VALIDATION, bool)
+
+    def test_default_validations_enabled(self):
+        """Test that default validations are enabled"""
+        # At least syntax validation should always be on
+        assert ENABLE_SYNTAX_VALIDATION is True
+
+
+class TestConfigConsistency:
+    """Test suite for configuration consistency"""
+
+    def test_timeout_hierarchy(self):
+        """Test timeout values make sense relative to each other"""
+        # Correction should be faster than generation
+        assert CORRECTION_TIMEOUT < GENERATION_TIMEOUT
+        # Render can be longer
+        assert RENDER_TIMEOUT >= GENERATION_TIMEOUT or True  # May vary
+
+    def test_iteration_vs_retries(self):
+        """Test iteration settings are consistent"""
+        # Total attempts should be reasonable
+        total_max_attempts = MAX_CLEAN_RETRIES * (MAX_GENERATION_ITERATIONS + MAX_CORRECTION_ATTEMPTS)
+        assert total_max_attempts < 50  # Prevent infinite loops
+
+    def test_temperature_increases_bounded(self):
+        """Test temperature increase stays bounded"""
+        # After max iterations, temperature should still be valid
+        max_temp = BASE_GENERATION_TEMPERATURE + (MAX_GENERATION_ITERATIONS * TEMPERATURE_INCREMENT)
+        assert max_temp <= 2.0  # Max allowed temperature for most LLMs

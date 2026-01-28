@@ -29,12 +29,12 @@ AGENTIC_GENERATION_SYSTEM = PromptTemplate(
     template="""{manim_context}
 
 TOOL-BASED ITERATION:
-You have two tools: generate_manim_code and fix_manim_code
+You have two tools: write_manim_code and patch_manim_code
 
 PROCESS:
-1. Call generate_manim_code with your best attempt
+1. Call write_manim_code with your best attempt
 2. You'll receive validation feedback
-3. If there are errors, call fix_manim_code with corrections
+3. If there are errors, call patch_manim_code with corrections
 4. Iterate until code validates or max attempts reached
 
 CRITICAL: Only use the tools to submit code. Do NOT write code in messages.
@@ -44,7 +44,7 @@ Each tool call returns validation results to guide your fixes.""",
 
 
 AGENTIC_GENERATION_USER = PromptTemplate(
-    template="""Use the generate_manim_code tool to create animation code for this section:
+    template="""Use the write_manim_code tool to create animation code for this section:
 
 TITLE: {title}
 
@@ -65,7 +65,7 @@ Use self.wait() to sync with narration timing.""",
 
 
 AGENTIC_GENERATION_WITH_VISUAL_SCRIPT_USER = PromptTemplate(
-    template="""Use the write_code tool to create animation code based on the Visual Script below.
+    template="""Use the write_manim_code tool to create animation code based on the Visual Script below.
 
 TITLE: {title}
 
@@ -139,21 +139,21 @@ TOOL_CORRECTION_SYSTEM = PromptTemplate(
     template="""{manim_context}
 
 TOOL-BASED CORRECTION:
-You have two tools: analyze_error and fix_code
+You have two tools: write_manim_code and patch_manim_code
 
 PROCESS:
-1. Call analyze_error to understand the issue
-2. Call fix_code with your corrected code
+1. Call patch_manim_code with your corrections (preferred for small fixes)
+2. Call write_manim_code for complete rewrites if needed
 3. You'll receive validation feedback
 4. Iterate if needed
 
-Return corrected code via the fix_code tool.""",
+Return corrected code via the appropriate tool.""",
     description="System prompt for tool-based error correction"
 )
 
 
 # =============================================================================
-# CODE FIXING PROMPTS (write_code / fix_code tools)
+# CODE FIXING PROMPTS (write_manim_code / patch_manim_code tools)
 # =============================================================================
 
 FIX_CODE_USER = PromptTemplate(
@@ -170,11 +170,11 @@ CURRENT CODE (construct method body only):
 ```
 
 You have two tools to fix the code:
-1. write_code - Full code replacement (use for major changes or complex issues)
-2. fix_code - Targeted search/replace fixes (use for small, surgical fixes)
+1. write_manim_code - Full code replacement (use for major changes or complex issues)
+2. patch_manim_code - Targeted search/replace fixes (use for small, surgical fixes)
 
 Choose the appropriate tool based on the error. Both tools will validate the result.""",
-    description="User prompt for fixing code with write_code or fix_code tools"
+    description="User prompt for fixing code with write_manim_code or patch_manim_code tools"
 )
 
 
@@ -188,7 +188,7 @@ CURRENT CODE:
 {code}
 ```
 
-Use write_code or fix_code tool again with corrections.""",
+Use write_manim_code or patch_manim_code tool again with corrections.""",
     description="User prompt for retry after failed fix"
 )
 
@@ -203,7 +203,7 @@ CURRENT CODE:
 {code}
 ```
 
-Use write_code (full rewrite) or fix_code (targeted fixes) to correct the code.""",
+Use write_manim_code (full rewrite) or patch_manim_code (targeted fixes) to correct the code.""",
     description="User prompt for retry during generation"
 )
 
@@ -235,7 +235,7 @@ FAILED CODE:
 {code}
 ```
 
-Use fix_code tool to provide corrected code.""",
+Use patch_manim_code tool to provide corrected code.""",
     description="Prompt for tool-based correction iteration"
 )
 

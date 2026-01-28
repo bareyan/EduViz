@@ -45,53 +45,81 @@ def extract_code_from_response(response: str) -> Optional[str]:
     return None
 
 
-def apply_fixes(code: str, fixes: List[Dict]) -> Tuple[str, int, List[str]]:
+def apply_patches(code: str, patches: List[Dict]) -> Tuple[str, int, List[str]]:
     """
-    Apply search/replace fixes to code.
+    Apply search/replace patches to code with whitespace-insensitive matching.
     
-    Each fix is a dict with:
-    - search: Exact text to find (must be unique)
+    Each patch is a dict with:
+    - search: Text to find
     - replace: Replacement text
-    - reason: Why this fix is needed
+    - reason: Why this patch is needed
     
     Args:
         code: Original code
-        fixes: List of fix dictionaries
+        patches: List of patch dictionaries
         
     Returns:
-        Tuple of (new_code, fixes_applied_count, details_list)
+        Tuple of (new_code, patches_applied_count, details_list)
     """
     new_code = code
     applied = 0
     details = []
     
-    for i, fix in enumerate(fixes):
-        search = fix.get("search", "")
-        replace = fix.get("replace", "")
-        reason = fix.get("reason", "")
+    for i, patch in enumerate(patches):
+        search = patch.get("search", "")
+        replace = patch.get("replace", "")
+        reason = patch.get("reason", "")
         
         if not search:
-            details.append(f"Fix {i+1}: SKIP - empty search text")
+            details.append(f"Patch {i+1}: SKIP - empty search text")
             continue
         
+        # 1. Try exact match first (preserves exact indentation)
         if search in new_code:
-            # Check uniqueness
             count = new_code.count(search)
             if count == 1:
                 new_code = new_code.replace(search, replace)
                 applied += 1
-                details.append(f"Fix {i+1}: OK - {reason}" if reason else f"Fix {i+1}: OK")
+                details.append(f"Patch {i+1}: OK - exact match ({reason})" if reason else f"Patch {i+1}: OK")
+                continue
             else:
-                details.append(f"Fix {i+1}: SKIP - search text appears {count} times (must be unique)")
+                details.append(f"Patch {i+1}: FAIL - search text not unique ({count} occurrences)")
+                continue
+
+        # 2. Try whitespace-normalized match
+        search_norm = ' '.join(search.split())
+        
+        # We need to find where this normalized search matches in the normalized code
+        # and then apply the change to the actual code.
+        # This is complex because we want to preserve surrounding indentation if possible.
+        
+        lines = new_code.split('\n')
+        matches = []
+        for idx, line in enumerate(lines):
+            line_norm = ' '.join(line.split())
+            if search_norm in line_norm:
+                matches.append(idx)
+        
+        if len(matches) == 1:
+            idx = matches[0]
+            # Replace the entire line if it's a sub-string match and we're sure
+            # Or better: replace the normalized part.
+            # For simplicity in this agentic flow, we'll replace the line that matched.
+            lines[idx] = replace
+            new_code = '\n'.join(lines)
+            applied += 1
+            details.append(f"Patch {i+1}: OK - fuzzy match ({reason})" if reason else f"Patch {i+1}: OK")
+        elif len(matches) > 1:
+            details.append(f"Patch {i+1}: FAIL - fuzzy match not unique ({len(matches)} occurrences)")
         else:
-            # Try to find similar matches for better error messages
             similar = find_similar_text(search, new_code)
             if similar:
-                details.append(f"Fix {i+1}: FAIL - search text not found. Similar: '{similar[:50]}...'")
+                details.append(f"Patch {i+1}: FAIL - not found. Did you mean: '{similar[:50]}...'?")
             else:
-                details.append(f"Fix {i+1}: FAIL - search text not found in code")
+                details.append(f"Patch {i+1}: FAIL - search text not found")
     
     return new_code, applied, details
+
 
 
 def find_similar_text(search: str, code: str) -> Optional[str]:

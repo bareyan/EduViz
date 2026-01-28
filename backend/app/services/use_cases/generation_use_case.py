@@ -44,6 +44,33 @@ class GenerationUseCase:
         self.job_manager.create_job(job_id)
         return job_id, resume_mode
 
+    def _get_progress_callback(self, job_id: str) -> Callable[[Dict[str, Any]], None]:
+        """Create a progress callback for the video generator."""
+        def _update(p: Dict[str, Any]):
+            stage = p.get("stage", "")
+            message = p.get("message", "Processing...")
+            stage_progress = p.get("progress", 0)
+
+            if stage == "script":
+                status = JobStatus.GENERATING_SCRIPT
+                # Script generation: 0-10%
+                overall = stage_progress * 0.1
+            elif stage == "sections":
+                status = JobStatus.CREATING_ANIMATIONS
+                # Section processing: 10-90%
+                overall = 10 + (stage_progress * 0.8)
+            elif stage == "combining":
+                status = JobStatus.COMPOSING_VIDEO
+                # Final combination: 90-100%
+                overall = 90 + (stage_progress * 0.1)
+            else:
+                status = JobStatus.CREATING_ANIMATIONS
+                overall = stage_progress
+
+            self.job_manager.update_job(job_id, status, overall, message)
+
+        return _update
+
     def start_generation(self, request: GenerationRequest, background_tasks: BackgroundTasks) -> JobResponse:
         """Validate input, enqueue generation work, and return initial response."""
         pipeline_name = self._validate_pipeline(request.pipeline)
@@ -56,32 +83,6 @@ class GenerationUseCase:
 
         job_id, resume_mode = self._select_job(request.resume_job_id)
 
-        def update_progress_callback(job_id: str) -> Callable[[Dict[str, Any]], None]:
-            """Create a progress callback for the video generator."""
-            def _update(p: Dict[str, Any]):
-                stage = p.get("stage", "")
-                message = p.get("message", "Processing...")
-                stage_progress = p.get("progress", 0)
-
-                if stage == "script":
-                    status = JobStatus.GENERATING_SCRIPT
-                    # Script generation: 0-10%
-                    overall = stage_progress * 0.1
-                elif stage == "sections":
-                    status = JobStatus.CREATING_ANIMATIONS
-                    # Section processing: 10-90%
-                    overall = 10 + (stage_progress * 0.8)
-                elif stage == "combining":
-                    status = JobStatus.COMPOSING_VIDEO
-                    # Final combination: 90-100%
-                    overall = 90 + (stage_progress * 0.1)
-                else:
-                    status = JobStatus.CREATING_ANIMATIONS
-                    overall = stage_progress
-
-                self.job_manager.update_job(job_id, status, overall, message)
-
-            return _update
 
         async def run_generation():
             try:
@@ -111,7 +112,7 @@ class GenerationUseCase:
                     language=request.language,
                     video_mode=request.video_mode,
                     resume=resume_mode,
-                    progress_callback=update_progress_callback(job_id),
+                    progress_callback=self._get_progress_callback(job_id),
                 )
 
                 if result.get("status") == "completed":

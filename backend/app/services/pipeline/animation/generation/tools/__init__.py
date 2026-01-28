@@ -15,8 +15,7 @@ Structure:
 
 from .schemas import (
     WRITE_CODE_SCHEMA,
-    FIX_CODE_SCHEMA,
-    GENERATE_CODE_SCHEMA,  # Backward compatibility
+    PATCH_CODE_SCHEMA,
     VISUAL_SCRIPT_SCHEMA,
 )
 
@@ -38,15 +37,14 @@ from .generation import (
 
 from .code_manipulation import (
     extract_code_from_response,
-    apply_fixes,
+    apply_patches,
     find_similar_text,
 )
 
 __all__ = [
     # Schemas
     "WRITE_CODE_SCHEMA",
-    "FIX_CODE_SCHEMA",
-    "GENERATE_CODE_SCHEMA",  # Backward compatibility
+    "PATCH_CODE_SCHEMA",
     "VISUAL_SCRIPT_SCHEMA",
     # Context
     "ManimContext",
@@ -62,6 +60,6 @@ __all__ = [
     "GenerationResult",
     # Code manipulation utilities
     "extract_code_from_response",
-    "apply_fixes",
+    "apply_patches",
     "find_similar_text",
 ]
