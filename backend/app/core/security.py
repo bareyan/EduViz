@@ -106,7 +106,7 @@ def validate_job_id(job_id: str) -> bool:
         True if valid, False otherwise
     
     Example:
-        >>> validate_job_id("abc123-def456-ghi789")
+        >>> validate_job_id("123e4567-e89b-12d3-a456-426614174000")
         True
         >>> validate_job_id("../../etc/passwd")
         False
