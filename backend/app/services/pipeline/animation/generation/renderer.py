@@ -24,19 +24,20 @@ def get_quality_subdir(quality: str) -> str:
 
 
 def cleanup_partial_movie_files(output_dir: str, code_file: Path, quality: str = "low") -> None:
-    """Clean up partial movie files directory before re-rendering.
+    """Clean up partial movie files directory before rendering.
     
     This prevents Manim from having stale partial files that won't be 
     included in the final concatenation. When a scene is re-rendered,
     Manim only tracks the new partial files in partial_movie_file_list.txt,
-    but old files remain in the directory, causing confusion.
+    but old files remain in the directory, causing confusion and potentially
+    including incomplete/corrupted video fragments in the final output.
     """
     quality_subdir = get_quality_subdir(quality)
     video_base = Path(output_dir) / "videos" / code_file.stem / quality_subdir
     partial_dir = video_base / "partial_movie_files"
 
     if partial_dir.exists():
-        print(f"[ManimGenerator] Cleaning up partial movie files before re-render: {partial_dir}")
+        print(f"[ManimGenerator] Cleaning up partial movie files before render: {partial_dir}")
         try:
             shutil.rmtree(partial_dir)
             print("[ManimGenerator] OK Partial movie files cleaned up")
@@ -50,6 +51,112 @@ def cleanup_partial_movie_files(output_dir: str, code_file: Path, quality: str =
             print(f"[ManimGenerator] Removed existing video: {existing_video}")
         except Exception as e:
             print(f"[ManimGenerator] WARN Failed to remove video {existing_video}: {e}")
+
+
+async def validate_video_file(video_path: str, min_duration: float = 0.5) -> bool:
+    """Validate that a video file is complete and not corrupted.
+    
+    Checks:
+    1. File exists and has reasonable size
+    2. FFprobe can read the file without errors
+    3. Duration is above minimum threshold
+    4. Video stream is present and valid
+    
+    Returns True if video is valid, False otherwise.
+    """
+    import subprocess
+    import asyncio
+    
+    video_file = Path(video_path)
+    if not video_file.exists():
+        print(f"[ManimGenerator] Video validation failed: file not found {video_path}")
+        return False
+    
+    # Check file size (very small files are likely corrupted)
+    file_size = video_file.stat().st_size
+    if file_size < 1000:  # Less than 1KB is definitely corrupt
+        print(f"[ManimGenerator] Video validation failed: file too small ({file_size} bytes)")
+        return False
+    
+    try:
+        # Use ffprobe to validate video integrity
+        cmd = [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=duration,nb_frames,codec_name",
+            "-show_entries", "format=duration",
+            "-of", "json",
+            video_path
+        ]
+        result = await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        if result.returncode != 0:
+            print(f"[ManimGenerator] Video validation failed: ffprobe error - {result.stderr[:200]}")
+            return False
+        
+        # Parse the output to check for valid duration
+        import json
+        probe_data = json.loads(result.stdout)
+        
+        # Get duration from format or stream
+        duration = 0.0
+        if "format" in probe_data and "duration" in probe_data["format"]:
+            duration = float(probe_data["format"]["duration"])
+        elif "streams" in probe_data and probe_data["streams"]:
+            for stream in probe_data["streams"]:
+                if "duration" in stream:
+                    duration = float(stream["duration"])
+                    break
+        
+        if duration < min_duration:
+            print(f"[ManimGenerator] Video validation warning: very short duration ({duration:.2f}s)")
+            # Don't fail for short videos, but log it
+        
+        # Check that video stream exists
+        if "streams" not in probe_data or not probe_data["streams"]:
+            print(f"[ManimGenerator] Video validation failed: no video stream found")
+            return False
+        
+        # Additional check: verify the video can be decoded (catches truncated files)
+        verify_cmd = [
+            "ffmpeg",
+            "-v", "error",
+            "-i", video_path,
+            "-f", "null",
+            "-t", "1",  # Only check first second for speed
+            "-"
+        ]
+        verify_result = await asyncio.to_thread(
+            subprocess.run,
+            verify_cmd,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        # FFmpeg returns errors in stderr even with returncode 0 for some warnings
+        if verify_result.returncode != 0:
+            print(f"[ManimGenerator] Video validation failed: decode error - {verify_result.stderr[:200]}")
+            return False
+        
+        # Check for common corruption indicators in stderr
+        stderr_lower = verify_result.stderr.lower()
+        if any(err in stderr_lower for err in ["invalid", "corrupt", "truncated", "missing", "error while decoding"]):
+            print(f"[ManimGenerator] Video validation failed: corruption detected - {verify_result.stderr[:200]}")
+            return False
+        
+        return True
+        
+    except Exception as e:
+        print(f"[ManimGenerator] Video validation exception: {e}")
+        return False
 
 
 async def render_scene(
@@ -78,6 +185,11 @@ async def render_scene(
     match = re.search(r"class (\w+)\(Scene\)", content)
     if match:
         scene_name = match.group(1)
+
+    # CRITICAL: Clean up partial movie files BEFORE rendering to prevent stale fragments
+    # This must happen on EVERY render attempt, not just re-renders after errors
+    if attempt == 0:
+        cleanup_partial_movie_files(output_dir, code_file, quality)
 
     # Get quality flag from config
     quality_flag = QUALITY_FLAGS.get(quality, "-ql")
@@ -174,6 +286,37 @@ async def render_scene(
             print(f"Could not find rendered video for section {section_index}")
             return None
 
+        # Validate the rendered video to catch truncated/corrupted files
+        is_valid = await validate_video_file(rendered_video)
+        if not is_valid:
+            print(f"[ManimGenerator] Video validation failed for section {section_index}, will retry")
+            # Clean up the corrupted file
+            try:
+                Path(rendered_video).unlink()
+            except Exception:
+                pass
+            
+            # Trigger retry if we have attempts left
+            if attempt < generator.MAX_CORRECTION_ATTEMPTS and section:
+                # Clean up partial files and try again
+                cleanup_partial_movie_files(output_dir, code_file, quality)
+                return await render_scene(
+                    generator,
+                    code_file,
+                    scene_name,
+                    output_dir,
+                    section_index,
+                    section,
+                    attempt + 1,
+                    qc_iteration,
+                    clean_retry,
+                    quality
+                )
+            elif clean_retry < generator.MAX_CLEAN_RETRIES:
+                return None
+            else:
+                return await render_fallback_scene(section_index, output_dir, code_file.parent)
+
         # Successfully rendered and validated
         return rendered_video
 
@@ -187,6 +330,60 @@ async def render_scene(
         if clean_retry < generator.MAX_CLEAN_RETRIES:
             return None
         return await render_fallback_scene(section_index, output_dir, code_file.parent)
+
+
+# Common imports that Manim code might use
+COMMON_IMPORTS = [
+    ("random", "import random"),
+    ("math", "import math"),
+    ("numpy", "import numpy as np"),
+    ("itertools", "import itertools"),
+    ("functools", "from functools import partial"),
+    ("colorsys", "import colorsys"),
+]
+
+
+def inject_common_imports(code: str) -> str:
+    """Inject common imports that might be used in the code, avoiding duplicates."""
+    imports_to_add = []
+    
+    for module_name, import_statement in COMMON_IMPORTS:
+        # Check if the module is used in the code (excluding import lines)
+        code_without_imports = "\n".join(
+            line for line in code.split("\n") 
+            if not line.strip().startswith(("import ", "from "))
+        )
+        
+        # Check if module is actually used in the code
+        if module_name in code_without_imports:
+            # Check if already imported (handle various import styles)
+            already_imported = (
+                f"import {module_name}" in code or
+                f"from {module_name}" in code or
+                (module_name == "numpy" and "import numpy" in code)
+            )
+            if not already_imported:
+                imports_to_add.append(import_statement)
+    
+    if imports_to_add:
+        import_block = "\n".join(imports_to_add)
+        # Find where to insert (after existing imports or at the top)
+        lines = code.split("\n")
+        insert_idx = 0
+        for i, line in enumerate(lines):
+            if line.strip().startswith(("import ", "from ")):
+                insert_idx = i + 1
+            elif line.strip() and not line.strip().startswith("#") and insert_idx > 0:
+                break
+        
+        if insert_idx > 0:
+            lines.insert(insert_idx, import_block)
+        else:
+            lines.insert(0, import_block + "\n")
+        
+        code = "\n".join(lines)
+    
+    return code
 
 
 async def render_from_code(
@@ -207,9 +404,12 @@ async def render_from_code(
     # Fix common translation issues
     manim_code = fix_translated_code(manim_code)
 
-    # Ensure imports are present
+    # Ensure manim imports are present
     if "from manim import" not in manim_code and "import manim" not in manim_code:
         manim_code = "from manim import *\n\n" + manim_code
+
+    # Inject common imports that might be used
+    manim_code = inject_common_imports(manim_code)
 
     # Extract scene name from code
     scene_name = extract_scene_name(manim_code)
@@ -229,6 +429,9 @@ async def render_from_code(
     except SyntaxError as e:
         print(f"[ManimGenerator] Syntax error in translated code: {e}")
         return None
+
+    # Clean up partial movie files BEFORE rendering to prevent stale fragments
+    cleanup_partial_movie_files(output_dir, code_file, quality)
 
     # Render
     output_path = Path(output_dir) / f"section_{section_index}.mp4"
@@ -272,18 +475,32 @@ async def render_from_code(
         # Find the rendered video
         quality_subdir = get_quality_subdir(quality)
         video_subdir = Path(output_dir) / "videos" / "scene" / quality_subdir
+        rendered_video = None
+        
         if video_subdir.exists():
             for video_file in video_subdir.glob("*.mp4"):
-                return str(video_file)
+                rendered_video = str(video_file)
+                break
 
-        if output_path.exists():
-            return str(output_path)
+        if not rendered_video and output_path.exists():
+            rendered_video = str(output_path)
 
-        for subdir in Path(output_dir).rglob("*.mp4"):
-            return str(subdir)
+        if not rendered_video:
+            for subdir in Path(output_dir).rglob("*.mp4"):
+                rendered_video = str(subdir)
+                break
 
-        print("[ManimGenerator] Video file not found in expected locations")
-        return None
+        if not rendered_video:
+            print("[ManimGenerator] Video file not found in expected locations")
+            return None
+
+        # Validate the rendered video to catch truncated/corrupted files
+        is_valid = await validate_video_file(rendered_video)
+        if not is_valid:
+            print(f"[ManimGenerator] Video validation failed for rendered code, file may be corrupted")
+            return None
+
+        return rendered_video
 
     except subprocess.TimeoutExpired:
         print("[ManimGenerator] Render timed out after 300 seconds")

@@ -16,8 +16,8 @@ from .base import BaseScriptGenerator
 class OverviewGenerator:
     """Generates concise overview video scripts in a single prompt."""
 
-    TARGET_DURATION_MINUTES = 5  # Target ~5 minute videos
-    MAX_SECTIONS = 5  # Keep it short and focused
+    TARGET_DURATION_MINUTES = 10  # Target ~5 minute videos
+    MAX_SECTIONS = 7  # Keep it short and focused
 
     def __init__(self, base: BaseScriptGenerator):
         self.base = base

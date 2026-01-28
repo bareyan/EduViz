@@ -136,8 +136,8 @@ class SectionGenerator:
                         # Try with thinking config first
                         config = PromptConfig(
                             temperature=0.7,
-                            max_output_tokens=8192,
-                            timeout=120,
+                            max_output_tokens=16536,
+                            timeout=150,
                             response_format="json",
                             enable_thinking=True
                         )
@@ -307,7 +307,7 @@ OUTPUT: Valid JSON only.
         total_sections: int,
     ) -> str:
 
-        MAX_CONTENT_PER_SECTION = 12000
+        MAX_CONTENT_PER_SECTION = 15000
         if len(content) <= MAX_CONTENT_PER_SECTION:
             return content
 
