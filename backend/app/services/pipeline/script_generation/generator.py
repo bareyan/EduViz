@@ -109,21 +109,40 @@ class ScriptGenerator:
         outline = await self.outline_builder.build_outline(
             content=content,
             topic=topic,
-            max_duration_minutes=max_duration_minutes,
+            # max_duration_minutes=max_duration_minutes,
             language_name=language_name,
             language_instruction=language_instruction,
             content_focus=content_focus,
             document_context=document_context,
         )
 
-        # Phase 2: Generate sections
-        script = await self.section_generator.generate_sections(
+        # Phase 2: Generate sections (returns a list of section dicts)
+        sections = await self.section_generator.generate_sections(
             outline=outline,
             content=content,
             topic=topic,
             language_name=language_name,
             language_instruction=language_instruction,
         )
+
+        # Add duration estimation for each section
+        for section in sections:
+            if "duration_seconds" not in section:
+                narration_len = len(section.get("narration", ""))
+                section["duration_seconds"] = max(30, int(narration_len / self.base.chars_per_second))
+
+        # Build proper script structure (matching overview mode format)
+        script = {
+            "title": outline.get("title", topic.get("title", "Educational Content")),
+            "subject_area": outline.get("subject_area", topic.get("subject_area", "general")),
+            "overview": outline.get("overview", ""),
+            "learning_objectives": outline.get("learning_objectives", []),
+            "sections": sections,
+            "total_duration_seconds": sum(s.get("duration_seconds", 0) for s in sections),
+        }
+        
+        # Segment narrations for proper subtitle/audio chunking
+        script = self.section_generator.segment_narrations(script)
 
         return {
             "script": script,

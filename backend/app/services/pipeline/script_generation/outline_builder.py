@@ -32,11 +32,11 @@ class OutlineBuilder:
         self,
         content: str,
         topic: Dict[str, Any],
-        video_mode: str,
         language_instruction: str,
         language_name: str,
         content_focus: str,
-        context_instructions: str,
+        document_context: str = "auto",
+        video_mode: str = "comprehensive",
     ) -> Dict[str, Any]:
         """Generate a detailed outline (Phase 1)."""
 
@@ -49,6 +49,7 @@ class OutlineBuilder:
             suggested_duration = max(45, content_length // 80)
 
         focus_instructions = self._build_focus_instructions(content_focus)
+        context_instructions = self._build_context_instructions(document_context)
 
         phase1_prompt = self._build_prompt(
             topic=topic,
@@ -162,6 +163,35 @@ CONTENT FOCUS: FOLLOW DOCUMENT STRUCTURE
 - Mirror the document's natural balance of theory and practice
 - If the document is example-heavy, be example-heavy
 - If the document is proof-focused, be proof-focused
+"""
+        )
+
+    def _build_context_instructions(self, document_context: str) -> str:
+        """Build context instructions based on document_context setting."""
+        if document_context == "standalone":
+            return (
+                """
+DOCUMENT CONTEXT: STANDALONE
+- This document is self-contained
+- Provide all necessary background within this video
+- Don't assume viewers have seen related content
+"""
+            )
+        if document_context == "part-of-series":
+            return (
+                """
+DOCUMENT CONTEXT: PART OF A SERIES
+- This document is part of a larger series
+- You may reference concepts from previous parts
+- Focus on the new material being introduced
+"""
+            )
+        # Default: "auto" - let the AI determine from content
+        return (
+            """
+DOCUMENT CONTEXT: AUTO-DETECT
+- Analyze the document to determine if it's standalone or part of a series
+- Adjust explanations accordingly
 """
         )
 

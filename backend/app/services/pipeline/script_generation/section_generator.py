@@ -24,9 +24,9 @@ class SectionGenerator:
         self,
         outline: Dict[str, Any],
         content: str,
-        video_mode: str,
         language_name: str,
         language_instruction: str,
+        topic: Dict[str, Any] = None,
     ) -> List[Dict[str, Any]]:
         """Generate sections from an outline (comprehensive mode only).
         
