@@ -52,9 +52,57 @@ class StructuredFormatter(logging.Formatter):
                 "traceback": self.formatException(record.exc_info)
             }
 
-        # Add extra fields
+        # Add extra fields:
+        # - Preserve any explicitly provided `record.extra_data`
+        # - Also include any non-standard LogRecord attributes (e.g. from logger.info(..., extra={...}))
+        standard_attrs = {
+            "name",
+            "msg",
+            "args",
+            "levelname",
+            "levelno",
+            "pathname",
+            "filename",
+            "module",
+            "exc_info",
+            "exc_text",
+            "stack_info",
+            "lineno",
+            "funcName",
+            "created",
+            "msecs",
+            "relativeCreated",
+            "thread",
+            "threadName",
+            "processName",
+            "process",
+            "getMessage",
+            "message",
+            "taskName",  # Added in Python 3.12
+        }
+
+        extra: Dict[str, Any] = {}
+
         if hasattr(record, "extra_data"):
-            log_data["extra"] = record.extra_data
+            extra_data = getattr(record, "extra_data")
+            if isinstance(extra_data, dict):
+                # Copy to avoid mutating any shared dict
+                extra.update(extra_data)
+
+        for key, value in vars(record).items():
+            if key in standard_attrs:
+                continue
+            if key.startswith("_"):
+                continue
+            if key == "extra_data":
+                continue
+            if callable(value):
+                continue
+            if key not in extra:
+                extra[key] = value
+
+        if extra:
+            log_data["extra"] = extra
 
         return json.dumps(log_data)
 

@@ -28,6 +28,7 @@ from app.config import (
     ALLOWED_EXTENSIONS,
     ALLOWED_MIME_TYPES,
 )
+from app.core.security import validate_path_within_directory
 
 
 def validate_file_type(filename: str, content_type: str) -> str:
@@ -80,10 +81,10 @@ def validate_upload_path(file_id: str) -> Path:
         >>> path = validate_upload_path("safe-id-123")
         >>> assert path.parent == UPLOAD_DIR
     """
-    safe_path = (UPLOAD_DIR / file_id).resolve()
-    if not str(safe_path).startswith(str(UPLOAD_DIR.resolve())):
+    safe_path = UPLOAD_DIR / file_id
+    if not validate_path_within_directory(safe_path, UPLOAD_DIR):
         raise HTTPException(status_code=400, detail="Invalid file path")
-    return safe_path
+    return safe_path.resolve()
 
 
 def validate_job_path(job_id: str) -> Path:
@@ -106,10 +107,10 @@ def validate_job_path(job_id: str) -> Path:
         >>> path = validate_job_path("job-456")
         >>> assert path.parent == OUTPUT_DIR
     """
-    safe_path = (OUTPUT_DIR / job_id).resolve()
-    if not str(safe_path).startswith(str(OUTPUT_DIR.resolve())):
+    safe_path = OUTPUT_DIR / job_id
+    if not validate_path_within_directory(safe_path, OUTPUT_DIR):
         raise HTTPException(status_code=400, detail="Invalid job path")
-    return safe_path
+    return safe_path.resolve()
 
 
 def find_uploaded_file(file_id: str) -> str:

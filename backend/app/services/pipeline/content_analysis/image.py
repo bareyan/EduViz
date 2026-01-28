@@ -50,10 +50,10 @@ class ImageAnalyzer(BaseAnalyzer):
         # Create image part for Gemini
         # Vertex AI uses from_data(), Gemini API uses from_bytes()
         try:
-            image_part = self.types.Part.from_data(data=image_data, mime_type=mime_type)
+            image_part = self.engine.types.Part.from_data(data=image_data, mime_type=mime_type)
         except AttributeError:
             # Fallback for Gemini API
-            image_part = self.types.Part.from_bytes(data=image_data, mime_type=mime_type)
+            image_part = self.engine.types.Part.from_bytes(data=image_data, mime_type=mime_type)
 
         # Define response schema for structured JSON output
         response_schema = {

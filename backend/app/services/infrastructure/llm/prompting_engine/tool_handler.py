@@ -119,8 +119,32 @@ class ToolHandler:
             }
 
     def execute_tool_sync(self, name: str, args: Dict[str, Any]) -> Dict[str, Any]:
-        """Synchronous wrapper for execute_tool"""
+        """
+        Synchronous wrapper for execute_tool.
+        
+        WARNING: This will raise RuntimeError if called from a context where an
+        event loop is already running (e.g., async web servers, notebooks).
+        In those contexts, use the async execute_tool() method directly.
+        """
         import asyncio
+        
+        # Check if we're in an async context
+        try:
+            asyncio.get_running_loop()
+            # If we reach here, there IS a running loop - can't use asyncio.run()
+            raise RuntimeError(
+                "execute_tool_sync() cannot be called from an async context. "
+                "Use await execute_tool() instead."
+            )
+        except RuntimeError as e:
+            # Check if this is OUR error or asyncio's "no running loop" error
+            if "cannot be called from an async context" in str(e):
+                # This is our error - re-raise it
+                raise
+            # Otherwise it's asyncio's error meaning no loop exists - we can proceed
+            pass
+        
+        # No running loop, safe to use asyncio.run()
         return asyncio.run(self.execute_tool(name, args))
 
 
