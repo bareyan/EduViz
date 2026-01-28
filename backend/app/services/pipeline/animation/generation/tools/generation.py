@@ -188,6 +188,7 @@ class GenerationToolHandler:
                 if not function_calls:
                     code = extract_code_from_response(response.get("response", ""))
                     if code:
+                        code = self._normalize_for_validation(code)
                         validation = self.validator.validate_code(code)
                         if validation["valid"]:
                             return GenerationResult(success=True, code=code, validation=validation, iterations=iteration)
@@ -206,7 +207,7 @@ class GenerationToolHandler:
                 args = func_call.get("args", {})
                 
                 if name == "write_manim_code":
-                    new_code = args.get("code", "")
+                    new_code = self._normalize_for_validation(args.get("code", ""))
                 elif name == "patch_manim_code":
                     if not current_code:
                         # LLM tried to patch nothing
@@ -214,13 +215,14 @@ class GenerationToolHandler:
                         self._feedback_history.append(feedback)
                         user_prompt = f"{feedback}\n\nOriginal prompt: {prompt}"
                         continue
-                        
+
                     new_code, applied, details = apply_patches(current_code, args.get("fixes", []))
                     if applied == 0:
                         feedback = f"Error: No patches could be applied.\n" + "\n".join(details)
                         self._feedback_history.append(feedback)
                         user_prompt = FIX_CODE_RETRY_USER.format(feedback=feedback, code=current_code)
                         continue
+                    new_code = self._normalize_for_validation(new_code)
                 else:
                     feedback = f"Error: Unknown tool '{name}'. Use 'write_manim_code' or 'patch_manim_code'."
                     user_prompt = f"{feedback}\n\n{user_prompt}"
@@ -276,6 +278,12 @@ class GenerationToolHandler:
         """Build system prompt for agentic generation"""
         from app.services.pipeline.animation.prompts import AGENTIC_GENERATION_SYSTEM
         return AGENTIC_GENERATION_SYSTEM.format(manim_context=context.to_system_prompt())
+
+    def _normalize_for_validation(self, code: str) -> str:
+        """Convert tabs to spaces to avoid indentation errors during validation."""
+        if code is None:
+            return ""
+        return "\n".join(line.replace("\t", "    ") for line in code.split("\n"))
     
     def _detect_animation_type(self, section: Dict[str, Any]) -> str:
         """Detect animation type from section content"""
