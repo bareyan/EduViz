@@ -69,12 +69,90 @@ class TestGenerationUseCase:
             mock_vg_class.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_run_generation_success(self, use_case):
-        """Test the inner run_generation logic."""
-        # This is tricky because run_generation is an inner async function.
-        # We can test it by extracting it or by triggering start_generation and capturing the task.
-        # For now, let's test specific logic like the progress callback.
+    async def test_run_generation_execution_success(self, use_case):
+        """Test the actual execution of the background task (success case)."""
+        request = GenerationRequest(
+            file_id="file-1", 
+            pipeline="default", 
+            analysis_id="anal-1", 
+            selected_topics=[]
+        )
+        background_tasks = BackgroundTasks()
         
+        # Setup mocks
+        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["default"]), \
+             patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+             patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
+            
+            mock_vg = mock_vg_class.return_value
+            mock_vg.generate_video = AsyncMock(return_value={
+                "status": "completed",
+                "script": {"title": "Test Video"},
+                "total_duration": 120,
+                "chapters": [],
+                "output_path": "/out/vid.mp4"
+            })
+            
+            # Start generation to queue the task
+            response = use_case.start_generation(request, background_tasks)
+            job_id = response.job_id
+            
+            # Extract and run the background task
+            task_func = background_tasks.tasks[0].func
+            await task_func()
+            
+            # Verify success update
+            self.job_manager.update_job.assert_called_with(
+                job_id,
+                JobStatus.COMPLETED,
+                100,
+                "Video generated successfully!",
+                result=[{
+                    "video_id": job_id,
+                    "title": "Test Video",
+                    "duration": 120,
+                    "chapters": [],
+                    "download_url": f"/outputs/{job_id}/final_video.mp4",
+                    "thumbnail_url": None,
+                }]
+            )
+
+    @pytest.mark.asyncio
+    async def test_run_generation_execution_failure(self, use_case):
+        """Test the actual execution of the background task (failure case)."""
+        request = GenerationRequest(
+            file_id="file-1", 
+            pipeline="default",
+            analysis_id="dummy-analysis",
+            selected_topics=[]
+        )
+        background_tasks = BackgroundTasks()
+        
+        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["default"]), \
+             patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+             patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
+            
+            mock_vg = mock_vg_class.return_value
+            # simulate error
+            mock_vg.generate_video = AsyncMock(return_value={
+                "status": "failed",
+                "error": "Pipeline exploded"
+            })
+            
+            use_case.start_generation(request, background_tasks)
+            task_func = background_tasks.tasks[0].func
+            await task_func()
+            
+            # Verify failure update
+            # Note: assert_called_with might fail if other updates happened before, 
+            # so we check the last call or specific call args
+            call_args = self.job_manager.update_job.call_args
+            assert call_args[0][1] == JobStatus.FAILED
+            assert call_args[0][3] == "Pipeline exploded"
+
+    @pytest.mark.asyncio
+    async def test_progress_callback_logic(self, use_case):
+        """Test the progress calculation logic."""
         callback_factory = use_case._get_progress_callback("job-abc")
         callback = callback_factory
         

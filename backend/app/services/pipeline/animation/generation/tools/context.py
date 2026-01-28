@@ -280,7 +280,10 @@ class ManimContext:
 TARGET DURATION: {self.target_duration} seconds
 LANGUAGE: {self.language}
 
-OUTPUT: Generate ONLY the construct() method body. No class definition, no imports.
+OUTPUT: Generate the FULL standalone Python file valid for Manim CE.
+1. Include all necessary imports (from manim import *).
+2. Define a class inheriting from Scene (e.g., class MainScene(Scene)).
+3. Implement the construct(self) method.
 Ensure animations are timed to match the target duration.
 """
 

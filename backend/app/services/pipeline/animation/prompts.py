@@ -58,7 +58,7 @@ VISUAL DESCRIPTION:
 
 TARGET DURATION: {target_duration} seconds
 
-Generate the construct() method body that creates engaging animations matching the narration.
+Generate the FULL Python file including imports and the Scene class.
 Use self.wait() to sync with narration timing.""",
     description="User prompt for agentic code generation"
 )
@@ -89,7 +89,7 @@ CRITICAL TIMING RULES:
 3. Add self.wait(post_narration_pause) AFTER each segment's animations if pause > 0
 4. Total animation time should match: sum(audio_duration + post_narration_pause) for all segments
 
-Generate the construct() method body that implements the visual script.""",
+Generate the FULL Python file including imports and the Scene class that implements the visual script.""",
     description="User prompt for agentic code generation with visual script"
 )
 
