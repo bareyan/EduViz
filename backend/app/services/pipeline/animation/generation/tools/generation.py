@@ -47,9 +47,12 @@ class GenerationResult:
     feedback_history: Optional[List[str]] = None
     
     def __post_init__(self):
-        """Initialize feedback_history if None"""
+        """Initialize feedback_history and error if None"""
         if self.feedback_history is None:
             self.feedback_history = []
+        # Ensure error is never None to prevent len() errors in logging
+        if self.error is None:
+            self.error = ""
 
 
 class GenerationToolHandler:

@@ -122,20 +122,54 @@ def apply_patches(code: str, patches: List[Dict]) -> Tuple[str, int, List[str]]:
 
 
 
-def find_similar_text(search: str, code: str) -> Optional[str]:
+def find_similar_text(search: str, code: str, min_word_overlap: float = 0.5) -> Optional[str]:
     """
     Find similar text in code when exact match fails.
     
+    Uses word-based overlap to find lines that are similar but not identical.
     Helps diagnose fix failures by showing what might have been intended.
+    
+    Args:
+        search: Text to search for
+        code: Code to search in
+        min_word_overlap: Minimum ratio of overlapping words (0.0 to 1.0)
+        
+    Returns:
+        The most similar line found, or None if no similar text found
     """
-    # Normalize whitespace for comparison
-    search_normalized = ' '.join(search.split())
+    if not search or not code:
+        return None
+        
+    # Normalize whitespace and get words from search
+    search_normalized = ' '.join(search.split()).lower()
+    search_words = set(search_normalized.split())
+    
+    if not search_words:
+        return None
+    
+    best_match = None
+    best_overlap = 0.0
     
     lines = code.split('\n')
     for line in lines:
-        line_normalized = ' '.join(line.split())
-        if search_normalized[:30].lower() in line_normalized.lower():
-            return line.strip()
+        line_normalized = ' '.join(line.split()).lower()
+        line_words = set(line_normalized.split())
+        
+        if not line_words:
+            continue
+        
+        # Calculate word overlap ratio
+        common_words = search_words & line_words
+        # Use the smaller set as denominator for more lenient matching
+        overlap_ratio = len(common_words) / min(len(search_words), len(line_words))
+        
+        if overlap_ratio > best_overlap:
+            best_overlap = overlap_ratio
+            best_match = line.strip()
+    
+    # Return the best match if it meets the minimum overlap threshold
+    if best_overlap >= min_word_overlap:
+        return best_match
     
     return None
 

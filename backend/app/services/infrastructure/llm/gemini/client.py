@@ -13,6 +13,8 @@ import os
 from typing import Optional, Dict, Any, List, Union
 from dataclasses import dataclass
 
+from app.core.llm_logger import get_llm_logger
+
 
 @dataclass
 class GenerationConfig:
@@ -60,6 +62,7 @@ class UnifiedGeminiClient:
         self.backend = None
         self.models = None
         self._types_module = None  # Cache for types module
+        self.llm_logger = get_llm_logger()  # Initialize LLM logger
 
         if self.use_vertex_ai:
             self._init_vertex_ai()
@@ -157,6 +160,7 @@ class GeminiAPIModels:
 
     def __init__(self, client):
         self.client = client
+        self.llm_logger = get_llm_logger()
 
     def generate_content(
         self,
@@ -225,15 +229,43 @@ class GeminiAPIModels:
         if tools and not getattr(gen_config, "tools", None):
             kwargs["tools"] = tools
 
+        # Log the request before making the API call
+        request_id = self.llm_logger.log_request(
+            model=model,
+            contents=contents,
+            config=gen_config_dict,
+            tools=tools,
+            system_instruction=config.system_instruction if config else None
+        )
+
         try:
             response = self.client.models.generate_content(**kwargs)
+            
+            # Log successful response
+            self.llm_logger.log_response(
+                request_id=request_id,
+                response=response,
+                success=True
+            )
         except Exception as e:
             error_msg = str(e)
 
             # Retry without tools if the client version doesn't support them
             if "unexpected keyword argument 'tools'" in error_msg or "got an unexpected keyword argument 'tools'" in error_msg:
                 kwargs.pop("tools", None)
-                response = self.client.models.generate_content(**kwargs)
+                try:
+                    response = self.client.models.generate_content(**kwargs)
+                    # Log successful retry
+                    self.llm_logger.log_response(
+                        request_id=request_id,
+                        response=response,
+                        success=True,
+                        metadata={"retry": "removed_tools"}
+                    )
+                except Exception as retry_error:
+                    # Log failed retry
+                    self.llm_logger.log_error(request_id, retry_error)
+                    raise
             # If the error is about thinking_config not being supported, retry without it
             elif config.thinking_config and ("thinking_level is not supported" in error_msg or "thinking" in error_msg.lower()):
                 print("[UnifiedGeminiClient] Model doesn't support thinking_config, retrying without it...")
@@ -242,13 +274,36 @@ class GeminiAPIModels:
                 kwargs["config"] = gen_config
                 try:
                     response = self.client.models.generate_content(**kwargs)
+                    # Log successful retry
+                    self.llm_logger.log_response(
+                        request_id=request_id,
+                        response=response,
+                        success=True,
+                        metadata={"retry": "removed_thinking_config"}
+                    )
                 except Exception as e2:
                     if "unexpected keyword argument 'tools'" in str(e2) or "got an unexpected keyword argument 'tools'" in str(e2):
                         kwargs.pop("tools", None)
-                        response = self.client.models.generate_content(**kwargs)
+                        try:
+                            response = self.client.models.generate_content(**kwargs)
+                            # Log successful retry
+                            self.llm_logger.log_response(
+                                request_id=request_id,
+                                response=response,
+                                success=True,
+                                metadata={"retry": "removed_thinking_config_and_tools"}
+                            )
+                        except Exception as final_error:
+                            # Log final failure
+                            self.llm_logger.log_error(request_id, final_error)
+                            raise
                     else:
+                        # Log error
+                        self.llm_logger.log_error(request_id, e2)
                         raise
             else:
+                # Log error for unhandled exception
+                self.llm_logger.log_error(request_id, e)
                 raise
 
         return response
@@ -260,6 +315,7 @@ class VertexAIModels:
     def __init__(self, vertexai_module, location: str):
         self.vertexai = vertexai_module
         self.location = location
+        self.llm_logger = get_llm_logger()
 
     def generate_content(
         self,
@@ -333,6 +389,15 @@ class VertexAIModels:
         if isinstance(contents, str):
             contents = [contents]
 
+        # Log the request
+        request_id = self.llm_logger.log_request(
+            model=model,
+            contents=contents,
+            config=gen_config_dict,
+            tools=tools,
+            system_instruction=system_instruction
+        )
+
         # Make the API call
         try:
             response = model_instance.generate_content(
@@ -340,11 +405,33 @@ class VertexAIModels:
                 generation_config=vertex_config,
                 tools=tools
             )
-        except TypeError:
-            response = model_instance.generate_content(
-                contents,
-                generation_config=vertex_config,
+            # Log successful response
+            self.llm_logger.log_response(
+                request_id=request_id,
+                response=response,
+                success=True
             )
+        except TypeError:
+            try:
+                response = model_instance.generate_content(
+                    contents,
+                    generation_config=vertex_config,
+                )
+                # Log successful retry
+                self.llm_logger.log_response(
+                    request_id=request_id,
+                    response=response,
+                    success=True,
+                    metadata={"retry": "removed_tools"}
+                )
+            except Exception as error:
+                # Log error
+                self.llm_logger.log_error(request_id, error)
+                raise
+        except Exception as error:
+            # Log error
+            self.llm_logger.log_error(request_id, error)
+            raise
 
         return response
 
