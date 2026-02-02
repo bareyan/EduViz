@@ -23,6 +23,7 @@ class GenerationConfig:
     top_p: float = 0.95
     top_k: int = 40
     max_output_tokens: int = 8192
+    thinking_level: Optional[str] = None
     thinking_config: Optional[Dict[str, str]] = None
     response_mime_type: Optional[str] = None
     response_schema: Optional[Any] = None
@@ -192,11 +193,13 @@ class GeminiAPIModels:
             "max_output_tokens": config.max_output_tokens,
         }
 
-        # Add thinking config if present
-        # Note: Not all models support thinking_config (e.g., gemini-2.0-flash-exp)
-        # The API will return an error if the model doesn't support it
+        # Add thinking config for Gemini 2.0 reasoning models
         if config.thinking_config:
             gen_config_dict["thinking_config"] = config.thinking_config
+
+        # Add thinking level for Gemini 3 models (direct parameter in google-genai 1.60.0+)
+        if config.thinking_level:
+            gen_config_dict["thinking_level"] = config.thinking_level
 
         # Add response format if specified
         if config.response_mime_type:
@@ -267,9 +270,9 @@ class GeminiAPIModels:
                     self.llm_logger.log_error(request_id, retry_error)
                     raise
             # If the error is about thinking_config not being supported, retry without it
-            elif config.thinking_config and ("thinking_level is not supported" in error_msg or "thinking" in error_msg.lower()):
-                print("[UnifiedGeminiClient] Model doesn't support thinking_config, retrying without it...")
-                gen_config_dict_no_thinking = {k: v for k, v in gen_config_dict.items() if k != "thinking_config"}
+            elif (config.thinking_config or config.thinking_level) and ("thinking_level is not supported" in error_msg or "thinking" in error_msg.lower()):
+                print(f"[UnifiedGeminiClient] Model {model} doesn't support thinking, retrying without it...")
+                gen_config_dict_no_thinking = {k: v for k, v in gen_config_dict.items() if k not in ["thinking_config", "thinking_level"]}
                 gen_config = types.GenerateContentConfig(**gen_config_dict_no_thinking)
                 kwargs["config"] = gen_config
                 try:

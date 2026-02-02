@@ -1,23 +1,23 @@
 """
-Animation Processors - specialized handlers for the animation pipeline.
+Animation Processors - Hybrid Agentic Architecture.
 
-Following Google-quality standards:
-- Single-Shot Generation: Entire scene code generated in one call for consistency.
-- Surgical Edits: Isolated, fresh-context fixes for validation errors.
-- No Technical Debt: Zero legacy multi-turn code or segmented logic.
-- Clean Architecture: Decoupled validation and rendering.
+Pipeline:
+1. Phase 1 (Planning): Deep choreography with gemini-3-pro-preview
+2. Phase 2 (Generation): Single-shot code with gemini-3-flash-preview
+3. Phase 3 (Fixes): Agentic loop with tools and memory
 """
 
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
 
 from app.core import get_logger
-from app.services.infrastructure.llm import PromptingEngine, PromptConfig
+from app.services.infrastructure.llm import PromptingEngine, PromptConfig, CostTracker
 from app.services.infrastructure.llm.tools import create_tool_declaration
 
 from ..prompts import (
-    ANIMATOR_SYSTEM, 
-    ANIMATOR_USER, 
+    ANIMATOR_SYSTEM,
+    CHOREOGRAPHER_SYSTEM,
+    CHOREOGRAPHY_USER,
     FULL_IMPLEMENTATION_USER,
     SURGICAL_FIX_USER
 )
@@ -32,24 +32,48 @@ from .validation import CodeValidator
 
 logger = get_logger(__name__, component="animation_processors")
 
+
 class Animator:
-    """Unified Animation Agent - Single-Shot Architecture.
+    """Hybrid Agentic Animation Generator.
     
-    This agent manages the complete lifecycle of creating an animation:
-    1. Visual Planning (Choreography)
-    2. Full Code Implementation (Single-shot)
-    3. Isolated Surgical Refinement (based on validator feedback)
+    Uses different models for each phase:
+    - Planning: gemini-3-pro-preview (deep thinking)
+    - Generation: gemini-3-flash-preview (fast, accurate)
+    - Fixes: gemini-3-flash-preview (tool-based surgical edits)
     """
     
-    def __init__(self, engine: PromptingEngine, validator: CodeValidator, max_fix_attempts: int = 3):
-        """Initializes the Animator with required infrastructure."""
+    def __init__(
+        self, 
+        engine: PromptingEngine, 
+        validator: CodeValidator, 
+        max_fix_attempts: int = 5,
+        cost_tracker: Optional[CostTracker] = None
+    ):
+        """Initializes the Animator with required infrastructure.
+        
+        Args:
+            engine: Primary engine (used for generation and fixes)
+            validator: Code validator instance
+            max_fix_attempts: Maximum surgical fix attempts
+            cost_tracker: Optional cost tracker for monitoring
+        """
         self.engine = engine
         self.validator = validator
         self.max_fix_attempts = max_fix_attempts
         self.editor = ManimEditor()
+        self.cost_tracker = cost_tracker or engine.cost_tracker
+        
+        # Create separate engine for choreography (uses different model)
+        self.choreography_engine = PromptingEngine(
+            config_key="animation_choreography",
+            cost_tracker=self.cost_tracker
+        )
+        
+        # Fix memory for agentic loop
+        self.fix_history: List[Dict[str, str]] = []
 
     async def animate(self, section: Dict[str, Any], duration: float) -> str:
-        """Runs the single-shot animation generation pipeline.
+        """Runs the hybrid animation generation pipeline.
         
         Args:
             section: Section metadata from narration stage.
@@ -64,18 +88,34 @@ class Animator:
             RefinementError: If surgical fixes fail to stabilize the code.
         """
         section_title = section.get("title", f"Section {section.get('index', '')}")
-        logger.info(f"Starting single-shot animation for '{section_title}'")
+        logger.info(f"Starting hybrid animation for '{section_title}'")
         
-        # 1. Phase 1: Holistic Planning
+        # Clear fix history for new section
+        self.fix_history = []
+        
+        # 1. Phase 1: Deep Choreography Planning (gemini-3-pro-preview)
         plan = await self._generate_plan(section, duration)
         logger.info(f"Choreography plan finalized for '{section_title}'")
         
-        # 2. Phase 2: Full Implementation (Single-Shot)
+        # 2. Phase 2: Full Implementation (gemini-3-flash-preview, single-shot)
         code = await self._generate_full_code(section, plan, duration)
         logger.info(f"Initial code generated for '{section_title}'")
-        logger.debug(f"Initial cleaned code:\n{code}")
         
-        # 3. Phase 3: Surgical Refinement Loop
+        # 3. Phase 3: Agentic Fix Loop (with memory)
+        code = await self._agentic_fix_loop(code, section_title)
+        
+        return code
+
+
+    async def _agentic_fix_loop(self, code: str, section_title: str) -> str:
+        """Agentic fix loop with memory and tool use.
+        
+        This loop:
+        1. Validates the code
+        2. If invalid, applies surgical fix with context
+        3. Tracks fix history for smarter iterations
+        4. Stops when valid or max attempts reached
+        """
         for attempt in range(1, self.max_fix_attempts + 1):
             validation = self.validator.validate(code)
             
@@ -86,11 +126,14 @@ class Animator:
             error_summary = validation.get_error_summary()
             logger.warning(f"Validation failed (Attempt {attempt}): {error_summary[:100]}...")
             
-            if attempt > self.max_fix_attempts:
-                break
-                
+            # Record in fix history
+            self.fix_history.append({
+                "attempt": attempt,
+                "error": error_summary[:200]
+            })
+            
+            # Apply surgical fix with context
             code = await self._apply_surgical_fix(code, error_summary)
-            logger.debug(f"Code after surgical fix (attempt {attempt}):\n{code}")
             
         # Final validation check
         final_validation = self.validator.validate(code)
@@ -98,44 +141,39 @@ class Animator:
             return code
             
         raise RefinementError(
-            f"Could not stabilize animation code after {self.max_fix_attempts} surgical fix attempts. "
+            f"Could not stabilize animation code after {self.max_fix_attempts} attempts. "
             f"Final errors: {final_validation.get_error_summary()}"
         )
 
+
     async def _generate_plan(self, section: Dict[str, Any], duration: float) -> str:
-        """Generates a visual choreography plan."""
-        prompt = ANIMATOR_USER.format(
+        """Generates a visual choreography plan using deep thinking model."""
+        prompt = CHOREOGRAPHY_USER.format(
             title=section.get("title", "Untitled"),
             narration=section.get("narration", ""),
-            timing_info=json.dumps(section.get("narration_segments", []), indent=2),
+            timing_info=self._format_timing_info(section),
             target_duration=duration
         )
         
         config = PromptConfig(enable_thinking=True, timeout=300.0)
-        result = await self.engine.generate(
+        result = await self.choreography_engine.generate(
             prompt=prompt,
-            system_prompt=ANIMATOR_SYSTEM.template,
+            system_prompt=CHOREOGRAPHER_SYSTEM.template,
             config=config
         )
         
         if not result.get("success") or not result.get("response"):
-            raise ChoreographyError(f"Failed to generate animation plan: {result.get('error', 'Empty response')}")
+            raise ChoreographyError(
+                f"Failed to generate animation plan: {result.get('error', 'Empty response')}"
+            )
             
         return result["response"]
 
+
     async def _generate_full_code(self, section: Dict[str, Any], plan: str, duration: float) -> str:
-        """Generates the full Manim code in one call."""
-        segments = section.get("narration_segments", [])
-        segment_timings = "\n".join([
-            f"- Segment {i+1} ({s.get('start_time', 0):.1f}s - {s.get('start_time', 0) + s.get('duration', 5):.1f}s): "
-            f"{s.get('text', '')[:60]}..."
-            for i, s in enumerate(segments)
-        ])
-        
-        # Generate class name for the prompt
-        section_index = section.get('index', 0)
-        section_id = section.get("id", f"section_{section_index}").replace("-", "_").replace(" ", "_")
-        section_id_title = "".join(word.title() for word in section_id.split("_"))
+        """Generates the full Manim code in one shot."""
+        segment_timings = self._format_segment_timings(section)
+        section_id_title = self._get_section_class_name(section)
         
         prompt = FULL_IMPLEMENTATION_USER.format(
             plan=plan,
@@ -152,13 +190,25 @@ class Animator:
         )
         
         if not result.get("success") or not result.get("response"):
-            raise ImplementationError(f"Failed to generate initial code: {result.get('error', 'Empty response')}")
+            raise ImplementationError(
+                f"Failed to generate initial code: {result.get('error', 'Empty response')}"
+            )
             
         return clean_code(result["response"])
 
+
     async def _apply_surgical_fix(self, code: str, errors: str) -> str:
-        """Applies a surgical fix to existing code using tool calls."""
-        prompt = SURGICAL_FIX_USER.format(code=code, errors=errors)
+        """Applies a surgical fix using tool calls with optional history context."""
+        # Build prompt with optional history context
+        history_context = ""
+        if len(self.fix_history) > 1:
+            recent = self.fix_history[-2:]  # Last 2 attempts
+            history_context = "\n\nPREVIOUS FIX ATTEMPTS:\n" + "\n".join([
+                f"- Attempt {h['attempt']}: {h['error'][:100]}..."
+                for h in recent
+            ])
+        
+        prompt = SURGICAL_FIX_USER.format(code=code, errors=errors) + history_context
         
         tool_declarations = [create_tool_declaration(self.editor, self.engine.types)]
         config = PromptConfig(timeout=120.0)
@@ -174,13 +224,20 @@ class Animator:
             logger.error(f"Surgical fix call failed: {result.get('error')}")
             return code
             
-        # Handle tool calls for surgical edits
+        # Apply tool calls
+        code = self._process_tool_calls(code, result)
+        
+        return code
+
+
+    def _process_tool_calls(self, code: str, result: Dict[str, Any]) -> str:
+        """Process tool calls from the LLM result."""
         tool_applied = False
+        
         if result.get("function_calls"):
             for fc in result["function_calls"]:
                 if fc["name"] == "apply_surgical_edit":
                     try:
-                        # Ensure we use the current code context for the edit
                         fc["args"]["code"] = code
                         code = self.editor.execute(**fc["args"])
                         tool_applied = True
@@ -188,14 +245,37 @@ class Animator:
                     except Exception as e:
                         logger.warning(f"Surgical tool execution failed: {str(e)}")
         
-        # Check if LLM also returned a code block as fallback
-        # ONLY if tool wasn't applied or we want to allow hybrid (careful here)
+        # Fallback: if no tool applied, check for code block in response
         if not tool_applied:
             raw_response = result.get("response")
             fallback_code = clean_code(raw_response) if raw_response else ""
             if fallback_code and len(fallback_code) > len(code) * 0.7:
-                # If the response contains a large valid-looking code block, assume it's a full fix
-                logger.info("Using fallback response code as no tool was successfully applied")
+                logger.info("Using fallback response code")
                 return fallback_code
             
         return code
+
+
+    def _format_timing_info(self, section: Dict[str, Any]) -> str:
+        """Format segment timing info for the prompt."""
+        segments = section.get("narration_segments", [])
+        return json.dumps(segments, indent=2)
+
+
+    def _format_segment_timings(self, section: Dict[str, Any]) -> str:
+        """Format segment timings as readable text."""
+        segments = section.get("narration_segments", [])
+        return "\n".join([
+            f"- Segment {i+1} ({s.get('start_time', 0):.1f}s - "
+            f"{s.get('start_time', 0) + s.get('duration', 5):.1f}s): "
+            f"{s.get('text', '')[:60]}..."
+            for i, s in enumerate(segments)
+        ])
+
+
+    def _get_section_class_name(self, section: Dict[str, Any]) -> str:
+        """Generate a valid Python class name from section ID."""
+        section_index = section.get('index', 0)
+        section_id = section.get("id", f"section_{section_index}")
+        section_id = section_id.replace("-", "_").replace(" ", "_")
+        return "".join(word.title() for word in section_id.split("_"))

@@ -58,22 +58,66 @@ class CodeValidationResult:
         }
     
     def get_error_summary(self) -> str:
-        """Get human-readable error summary"""
-        errors = []
+        """Get LLM-friendly error summary with line numbers and code context.
         
+        This summary is designed to be sent to the LLM for surgical fixes,
+        so it must include:
+        1. Line numbers where issues occur
+        2. The actual code snippet causing the issue
+        3. Clear description of what's wrong
+        4. Actionable fix suggestions where possible
+        """
+        sections = []
+        
+        # Syntax errors (highest priority - blocks other validation)
         if not self.syntax.valid:
-            errors.append(f"Syntax Error: {self.syntax.error_message}")
+            sections.append(
+                f"## SYNTAX ERROR (Line {self.syntax.line_number or 'unknown'})\n"
+                f"Type: {self.syntax.error_type}\n"
+                f"Message: {self.syntax.error_message}"
+            )
         
+        # Structure errors
         if self.structure.errors:
-            errors.extend([f"Structure: {err}" for err in self.structure.errors])
+            struct_lines = ["## STRUCTURE ERRORS"]
+            for err in self.structure.errors:
+                struct_lines.append(f"- {err}")
+            sections.append("\n".join(struct_lines))
         
+        # Missing imports
         if self.imports.missing_imports:
-            errors.append(f"Missing imports: {', '.join(self.imports.missing_imports)}")
+            sections.append(
+                f"## MISSING IMPORTS\n"
+                f"Add these imports: {', '.join(self.imports.missing_imports)}"
+            )
         
+        # Spatial errors (with full context)
         if self.spatial.errors:
-            errors.extend([f"Spatial: {err.message}" for err in self.spatial.errors])
+            spatial_lines = ["## SPATIAL ERRORS (Objects out of frame)"]
+            for err in self.spatial.errors:
+                line_info = f"Line {err.line_number}" if err.line_number else "Unknown line"
+                code_info = f"\n  Code: `{err.code_snippet}`" if err.code_snippet else ""
+                spatial_lines.append(
+                    f"\n### {line_info}\n"
+                    f"Issue: {err.message}{code_info}\n"
+                    f"Fix: Scale down or reposition the object to stay within bounds (x: -5.5 to 5.5, y: -3.0 to 3.0)"
+                )
+            sections.append("\n".join(spatial_lines))
         
-        return "\n".join(errors) if errors else "No errors"
+        # Spatial warnings (included for context but marked as warnings)
+        if self.spatial.warnings:
+            warn_lines = ["## WARNINGS (Optional fixes)"]
+            for warn in self.spatial.warnings[:5]:  # Limit to 5 to avoid overwhelming
+                line_info = f"Line {warn.line_number}" if warn.line_number else "Unknown line"
+                warn_lines.append(f"- {line_info}: {warn.message}")
+            if len(self.spatial.warnings) > 5:
+                warn_lines.append(f"- ... and {len(self.spatial.warnings) - 5} more warnings")
+            sections.append("\n".join(warn_lines))
+        
+        if not sections:
+            return "No errors found"
+        
+        return "\n\n".join(sections)
 
 
 class CodeValidator:
