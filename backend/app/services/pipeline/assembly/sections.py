@@ -22,9 +22,6 @@ from .ffmpeg import (
 from app.utils.section_status import write_status
 from app.core import get_logger
 
-# Visual script generation
-from app.services.pipeline.visual_script import VisualScriptGenerator, VisualScriptPlan
-
 if TYPE_CHECKING:
     from app.services.pipeline.animation import ManimGenerator
     from app.services.pipeline.audio import TTSEngine
@@ -183,13 +180,13 @@ async def process_single_subsection(
     write_status(section_dir, "generating_video")
 
     try:
-        manim_result = await manim_generator.generate_section_video(
+        # Using the NEW Animation Pipeline (Choreograph -> Implement -> Refine)
+        manim_result = await manim_generator.generate_animation(
             section=section,
             output_dir=str(section_dir),
             section_index=section_index,
             audio_duration=audio_duration,
             style=style,
-            language=language
         )
         video_path = manim_result.get("video_path") if isinstance(manim_result, dict) else manim_result
         if video_path and os.path.exists(video_path):
@@ -349,7 +346,7 @@ async def process_segments_audio_first(
         ]
     }
 
-    logger.info(f"Section {section_index}: Generating unified video ({total_duration:.1f}s total)")
+    logger.info(f"Section {section_index}: Generating unified video using NEW Pipeline ({total_duration:.1f}s total)")
 
     # Status: generating video
     write_status(section_dir, "generating_video")
@@ -357,30 +354,17 @@ async def process_segments_audio_first(
     video_path = None
     manim_code = None
 
-    # Build audio segments for visual script generation with actual durations
-    audio_segments_for_visual_script = [
-        {
-            "text": s["text"],
-            "duration": s["duration"]
-        }
-        for s in segment_audio_info
-    ]
-
     try:
-        manim_result = await manim_generator.generate_section_video(
+        manim_result = await manim_generator.generate_animation(
             section=unified_section,
             output_dir=str(section_dir),
             section_index=section_index,
             audio_duration=total_duration,
             style=style,
-            language=language,
-            audio_segments=audio_segments_for_visual_script  # Pass actual audio durations
         )
-        video_path = manim_result.get("video_path") if isinstance(manim_result, dict) else manim_result
+        video_path = manim_result.get("video_path")
         if isinstance(manim_result, dict) and manim_result.get("manim_code"):
             manim_code = manim_result["manim_code"]
-        # Get visual script if returned
-        visual_script_data = manim_result.get("visual_script") if isinstance(manim_result, dict) else None
     except Exception as e:
         logger.error(f"Manim error for unified section {section_index}: {e}")
         import traceback
@@ -389,63 +373,14 @@ async def process_segments_audio_first(
         return result
 
     if not video_path:
-        logger.error(f"Section {section_index}: Failed to generate unified video")
+        logger.error(f"Section {section_index}: Failed to process unified video")
         write_status(section_dir, "fixing_error", "No video generated")
         return result
 
     result["manim_code"] = manim_code
 
-    # Step 4: Build audio with silences from visual script
-    # If visual script has post_narration_pause values, insert silence after each segment
-    final_audio_path = section_audio_path  # Default to original audio
-    
-    if visual_script_data and visual_script_data.get("segments"):
-        vs_segments = visual_script_data["segments"]
-        
-        # Check if there are any pauses to add
-        total_pause = sum(seg.get("post_narration_pause", 0) for seg in vs_segments)
-        
-        if total_pause > 0.1:  # Only process if there are meaningful pauses
-            logger.info(f"Section {section_index}: Adding {total_pause:.1f}s of pauses from visual script")
-            
-            # Build list of audio files with silence insertions
-            audio_files_with_pauses = []
-            
-            for i, seg_info in enumerate(segment_audio_info):
-                # Add the segment audio
-                if seg_info["audio_path"] and Path(seg_info["audio_path"]).exists():
-                    audio_files_with_pauses.append(seg_info["audio_path"])
-                
-                # Add silence if visual script specifies a pause
-                if i < len(vs_segments):
-                    pause_duration = vs_segments[i].get("post_narration_pause", 0)
-                    if pause_duration > 0.05:  # Minimum 50ms to bother with
-                        silence_path = section_dir / f"silence_{i}.mp3"
-                        try:
-                            await generate_silence(str(silence_path), pause_duration)
-                            audio_files_with_pauses.append(str(silence_path))
-                            logger.debug(f"Segment {i}: Added {pause_duration:.1f}s silence after audio")
-                        except Exception as e:
-                            logger.warning(f"Failed to generate silence for segment {i}: {e}")
-            
-            # Concatenate all audio with pauses
-            if len(audio_files_with_pauses) > 1:
-                final_audio_with_pauses = section_dir / "section_audio_with_pauses.mp3"
-                success = await concatenate_audio_files(audio_files_with_pauses, str(final_audio_with_pauses))
-                if success and final_audio_with_pauses.exists():
-                    final_audio_path = final_audio_with_pauses
-                    logger.info(f"Section {section_index}: Created audio with pauses")
-                else:
-                    logger.warning(f"Section {section_index}: Failed to concatenate audio with pauses, using original")
-            
-            # Cleanup silence files
-            for i in range(len(segment_audio_info)):
-                silence_file = section_dir / f"silence_{i}.mp3"
-                if silence_file.exists():
-                    try:
-                        silence_file.unlink()
-                    except:
-                        pass
+    # Step 4: Finalize audio
+    final_audio_path = section_audio_path
 
     # Step 5: Merge video with audio (extend shorter to match longer, never cut)
     merged_path = section_dir / "final_section.mp4"

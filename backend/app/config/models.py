@@ -110,45 +110,26 @@ class PipelineModels:
         description="Efficient content translation"
     ))
 
-    # Step 4.5: Visual Script Generation
-    # Generate detailed visual script (storyboard)
-    visual_script_generation: ModelConfig = field(default_factory=lambda: ModelConfig(
+    # Step 5: Animation Pipeline (New)
+    # Stage 5.1: Choreography Planning
+    animation_choreography: ModelConfig = field(default_factory=lambda: ModelConfig(
         model_name="gemini-3-flash-preview",
         thinking_level=ThinkingLevel.HIGH,
-        description="Generate visual descriptions and layout"
+        description="Plan visual movements and timing"
     ))
 
-    # Step 5: Manim Code Generation
-    # Generate Manim animation code from script
-    manim_generation: ModelConfig = field(default_factory=lambda: ModelConfig(
+    # Stage 5.2: Manim Code Implementation
+    animation_implementation: ModelConfig = field(default_factory=lambda: ModelConfig(
         model_name="gemini-3-flash-preview",
         thinking_level=ThinkingLevel.MEDIUM,
-        description="Generate Manim animation code",
-        max_correction_attempts=5  # Increased: diff-based corrections are cheap
+        description="Convert plan to Manim code"
     ))
 
-    # Step 6a: Code Correction (Primary - Diff-based)
-    # Fix errors using SEARCH/REPLACE blocks - needs good format compliance
-    code_correction: ModelConfig = field(default_factory=lambda: ModelConfig(
-        model_name="gemini-2.5-flash",  # Better format compliance than flash-lite
-        thinking_level=None,
-        description="Diff-based code error correction"
-    ))
-
-    # Step 6b: Code Correction (Strong Fallback)
-    # Fix errors when primary correction fails - final attempts
-    code_correction_strong: ModelConfig = field(default_factory=lambda: ModelConfig(
-        model_name="gemini-2.5-flash",  # Same model, used on retries
-        thinking_level=ThinkingLevel.MEDIUM,  # Enable thinking for complex fixes
-        description="Stronger model for complex code fixes"
-    ))
-
-    # Step 7: Manual Code Fix
-    # User-requested code improvements via API
-    manual_code_fix: ModelConfig = field(default_factory=lambda: ModelConfig(
-        model_name="gemini-3-flash-preview",
+    # Stage 5.3: Animation Refinement (Checks & Fixes)
+    animation_refinement: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-2.5-flash",
         thinking_level=ThinkingLevel.LOW,
-        description="Interactive code fixing"
+        description="Refine code and fix errors"
     ))
 
 
@@ -180,32 +161,21 @@ HIGH_QUALITY_PIPELINE = PipelineModels(
         thinking_level=None,
         description="Higher quality translation"
     ),
-    visual_script_generation=ModelConfig(
-        model_name="gemini-3-pro-preview",
-        thinking_level=ThinkingLevel.MEDIUM,
-        description="Detailed visual script generation"
-    ),
-    manim_generation=ModelConfig(
-        model_name="gemini-3-pro-preview",
-        thinking_level=ThinkingLevel.MEDIUM,
-        description="High quality Manim generation",
-        max_correction_attempts=3
-    ),
-    code_correction=ModelConfig(
-        model_name="gemini-2.5-flash",
-        thinking_level=None,
-        description="Fast code correction"
-    ),
-    code_correction_strong=ModelConfig(
+    animation_choreography=ModelConfig(
         model_name="gemini-3-pro-preview",
         thinking_level=ThinkingLevel.HIGH,
-        description="Deep reasoning for complex fixes"
+        description="Detailed animation choreography"
     ),
-    manual_code_fix=ModelConfig(
+    animation_implementation=ModelConfig(
+        model_name="gemini-3-pro-preview",
+        thinking_level=ThinkingLevel.HIGH,
+        description="Perfect Manim code implementation"
+    ),
+    animation_refinement=ModelConfig(
         model_name="gemini-3-pro-preview",
         thinking_level=ThinkingLevel.MEDIUM,
-        description="High quality code fixes"
-    ),
+        description="Deep refinement and fixing"
+    )
 )
 
 
@@ -228,28 +198,18 @@ COST_OPTIMIZED_PIPELINE = PipelineModels(
         model_name="gemini-flash-lite-latest",
         description="Budget translation"
     ),
-    visual_script_generation=ModelConfig(
+    animation_choreography=ModelConfig(
         model_name="gemini-2.0-flash",
-        description="Budget visual script generation",
+        description="Budget choreography"
     ),
-    manim_generation=ModelConfig(
+    animation_implementation=ModelConfig(
         model_name="gemini-2.0-flash",
-        description="Budget Manim generation",
-        max_correction_attempts=3
+        description="Budget implementation"
     ),
-    code_correction=ModelConfig(
+    animation_refinement=ModelConfig(
         model_name="gemini-2.0-flash",
-        max_correction_attempts=3,
-        description="Budget code correction"
-    ),
-    code_correction_strong=ModelConfig(
-        model_name="gemini-2.0-flash",
-        description="Fallback code correction"
-    ),
-    manual_code_fix=ModelConfig(
-        model_name="gemini-2.5-flash",
-        description="Budget code fixes"
-    ),
+        description="Budget refinement"
+    )
 )
 
 
@@ -328,10 +288,8 @@ def list_pipeline_steps() -> list[str]:
         "script_generation",
         "language_detection",
         "translation",
-        "visual_script_generation",
-        "manim_generation",
-        "code_correction",
-        "code_correction_strong",
+        "animation_choreography",
+        "animation_implementation",
+        "animation_refinement",
         "visual_qc",
-        "manual_code_fix",
     ]

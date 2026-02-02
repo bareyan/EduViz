@@ -5,8 +5,21 @@ Code utilities - cleaning, normalization, scene file creation
 import re
 from typing import Optional
 
-from .tools import get_theme_setup_code
 from ..config import CONSTRUCT_INDENT_SPACES, MIN_DURATION_PADDING, DURATION_PADDING_PERCENTAGE
+
+def get_theme_setup_code(style: str = "3b1b") -> str:
+    """Returns the Manim setup code for a specific visual style.
+    
+    Args:
+        style: The name of the style (e.g., '3b1b', 'light').
+        
+    Returns:
+        A formatted string of Python code to be injected into construct().
+    """
+    if style == "light":
+        return "        self.camera.background_color = \"#FFFFFF\"\n"
+    # Default to 3b1b / dark theme
+    return "        self.camera.background_color = \"#171717\"  # Slate dark\n"
 
 
 def clean_code(code: str) -> str:

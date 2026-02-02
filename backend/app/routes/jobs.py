@@ -107,23 +107,6 @@ async def get_section_video(job_id: str, section_index: int):
     raise HTTPException(status_code=404, detail="Section video not found")
 
 
-@router.get("/job/{job_id}/section/{section_index}/visual_script")
-async def get_section_visual_script(job_id: str, section_index: int):
-    """Get section visual script (markdown)"""
-    if not validate_job_id(job_id):
-        raise HTTPException(status_code=400, detail="Invalid job ID format")
-
-    section_dir = OUTPUT_DIR / job_id / "sections" / str(section_index)
-    if not validate_path_within_directory(section_dir, OUTPUT_DIR):
-        raise HTTPException(status_code=403, detail="Access denied")
-    script_path = section_dir / f"visual_script_{section_index}.md"
-    
-    if script_path.exists():
-        return {"visual_script": script_path.read_text()}
-    
-    raise HTTPException(status_code=404, detail="Visual script not found")
-
-
 @router.get("/voices")
 async def get_available_voices(language: str = "en"):
     """Get list of available TTS voices"""
@@ -338,17 +321,8 @@ async def get_section_details(job_id: str, section_index: int):
     # Get full narration
     narration = section.get("tts_narration") or section.get("narration", "")
 
-    # Get visual description from script OR from visual script file
+    # Get visual description from script
     visual_description = section.get("visual_description", "")
-
-    # Try to read the visual script file (markdown format)
-    visual_script_file = section_dir / f"visual_script_{section_index}.md"
-    if visual_script_file.exists():
-        try:
-            with open(visual_script_file, "r") as f:
-                visual_description = f.read()
-        except Exception as e:
-            print(f"Error reading visual script: {e}")
 
     # Get narration segments if available
     narration_segments = section.get("narration_segments", [])
