@@ -23,28 +23,49 @@ Return ONLY the structured plan.""",
     description="User prompt for the planning phase of the session"
 )
 
-SEGMENT_CODER_USER = PromptTemplate(
-    template="""Phase 2: Segment Implementation.
+FULL_IMPLEMENTATION_USER = PromptTemplate(
+    template="""Phase 2: Full Implementation.
 
-Implement the Manim code for Segment {segment_index}:
-"{segment_text}"
+Based on your choreography plan, implement the COMPLETE, RUNNABLE Manim animation file for this section.
 
-DURATION: {duration}s
-START TIME: {start_time}s
+CHOREOGRAPHY PLAN:
+{plan}
 
-Follow the plan you created. If previous segments exist in history, ensure variables and positions are consistent.
-Return ONLY the Manim code (construct method body) in a python code block.""",
-    description="User prompt for implementing a single segment in the session"
+SEGMENT TIMINGS:
+{segment_timings}
+
+TOTAL DURATION: {total_duration}s
+
+CLASS NAME: Scene{section_id_title}
+
+RULES:
+- Provide the FULL Manim code, including imports (`from manim import *`), the Scene class, and the `construct` method.
+- Use the provided CLASS NAME: Scene{section_id_title}
+- Reference existing objects by their variable names.
+- Create new objects with descriptive variable names (e.g., 'title_text', 'main_circle').
+- Ensure total duration of all animations and waits matches the total duration exactly.
+- Use self.wait() to sync with segment start times.
+- DO NOT use `self.wait(0)` or other zero-duration waits; skip the wait instead.
+- All code must be syntactically correct and follow standard Python indentation.
+- The code must be a COMPLETE file starting from column 0 with all necessary imports.
+
+Return the complete code in a python code block.""",
+    description="Single-shot full file implementation prompt"
 )
 
-REANIMATOR_USER = PromptTemplate(
-    template="""Phase 3: Error Correction.
+SURGICAL_FIX_USER = PromptTemplate(
+    template="""The following Manim code has validation errors.
 
-The code you just generated for this segment has errors:
+CURRENT CODE:
+```python
+{code}
+```
+
+VALIDATION ERRORS:
 {errors}
 
-Please provide the corrected Manim code for THIS SEGMENT ONLY.
-Ensure consistency with previous segments in history.
-Return your fixed code in a python code block.""",
-    description="Refinement user prompt for correcting a segment in context"
+Use the `apply_surgical_edit` tool to fix ONLY the problematic lines. 
+Provide a surgical fix that uniquely identifies the lines to be changed.
+Return your fix using the tool call.""",
+    description="Isolated surgical fix prompt"
 )

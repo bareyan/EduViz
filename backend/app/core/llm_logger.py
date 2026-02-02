@@ -118,8 +118,10 @@ class LLMLogger:
         # Track active requests for timing
         self._active_requests: Dict[str, float] = {}
     
-    def _truncate_text(self, text: str, max_length: Optional[int]) -> str:
+    def _truncate_text(self, text: Optional[str], max_length: Optional[int]) -> str:
         """Truncate text to specified length"""
+        if text is None:
+            return ""
         if max_length is None or len(text) <= max_length:
             return text
         return text[:max_length] + f"... [truncated, total: {len(text)} chars]"
@@ -287,11 +289,15 @@ class LLMLogger:
         
         # Extract response text
         response_text = ""
-        if success and response:
+        if success and response is not None:
             if isinstance(response, str):
                 response_text = response
             elif hasattr(response, "text"):
-                response_text = response.text
+                # Handle potential None or exception from .text
+                try:
+                    response_text = response.text or ""
+                except Exception:
+                    response_text = str(response)
             else:
                 response_text = str(response)
         

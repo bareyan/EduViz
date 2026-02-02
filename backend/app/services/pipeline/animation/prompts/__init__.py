@@ -3,13 +3,13 @@ from .system import (
 )
 from .user import (
     ANIMATOR_USER,
-    SEGMENT_CODER_USER,
-    REANIMATOR_USER
+    FULL_IMPLEMENTATION_USER,
+    SURGICAL_FIX_USER
 )
 
 __all__ = [
     "ANIMATOR_SYSTEM",
     "ANIMATOR_USER",
-    "SEGMENT_CODER_USER",
-    "REANIMATOR_USER",
+    "FULL_IMPLEMENTATION_USER",
+    "SURGICAL_FIX_USER",
 ]

@@ -22,7 +22,7 @@ from .core import (
     render_scene
 )
 from .validation import CodeValidator
-from ..config import MAX_CLEAN_RETRIES, MAX_CORRECTION_ATTEMPTS
+from ..config import MAX_CLEAN_RETRIES, MAX_SURGICAL_FIX_ATTEMPTS
 
 logger = get_logger(__name__, component="manim_generator")
 
@@ -43,11 +43,11 @@ class ManimGenerator:
         self.cost_tracker = CostTracker()
         self.validator = CodeValidator()
         
-        # Initialize the Unified Animator (Iterative Agent)
+        # Initialize the Unified Animator (Single-Shot Agent)
         self.animator = Animator(
             PromptingEngine("animation_implementation", self.cost_tracker, pipeline_name=pipeline_name),
             self.validator,
-            max_iterations=MAX_CORRECTION_ATTEMPTS
+            max_fix_attempts=MAX_SURGICAL_FIX_ATTEMPTS
         )
 
         # Execution stats
@@ -61,7 +61,7 @@ class ManimGenerator:
 
     def _refresh_config(self):
         """Refresh model configuration"""
-        self._manim_config = get_model_config("manim_generation", self.pipeline_name)
+        self._manim_config = get_model_config("manim_generation")
 
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost summary"""

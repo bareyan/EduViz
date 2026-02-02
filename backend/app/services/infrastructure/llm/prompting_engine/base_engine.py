@@ -67,7 +67,7 @@ class PromptingEngine:
 
     def _get_config(self):
         """Resolve the model config with optional pipeline override."""
-        return get_model_config(self.config_key, self.pipeline_name)
+        return get_model_config(self.config_key)
 
     def _get_generation_config(
         self,

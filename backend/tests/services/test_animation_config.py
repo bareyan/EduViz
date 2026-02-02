@@ -7,7 +7,7 @@ Tests for animation pipeline configuration constants and settings.
 import pytest
 from app.services.pipeline.animation.config import (
     # Generation settings
-    MAX_GENERATION_ITERATIONS,
+    MAX_SURGICAL_FIX_ATTEMPTS,
     GENERATION_TIMEOUT,
     CORRECTION_TIMEOUT,
     TEMPERATURE_INCREMENT,
@@ -15,7 +15,6 @@ from app.services.pipeline.animation.config import (
     BASE_CORRECTION_TEMPERATURE,
     # Retry settings
     MAX_CLEAN_RETRIES,
-    MAX_CORRECTION_ATTEMPTS,
     # Rendering settings
     RENDER_TIMEOUT,
     QUALITY_DIR_MAP,
@@ -35,10 +34,10 @@ from app.services.pipeline.animation.config import (
 class TestGenerationSettings:
     """Test suite for generation settings"""
 
-    def test_max_generation_iterations_positive(self):
-        """Test MAX_GENERATION_ITERATIONS is positive"""
-        assert MAX_GENERATION_ITERATIONS > 0
-        assert isinstance(MAX_GENERATION_ITERATIONS, int)
+    def test_max_surgical_fix_attempts_positive(self):
+        """Test MAX_SURGICAL_FIX_ATTEMPTS is positive"""
+        assert MAX_SURGICAL_FIX_ATTEMPTS > 0
+        assert isinstance(MAX_SURGICAL_FIX_ATTEMPTS, int)
 
     def test_generation_timeout_reasonable(self):
         """Test GENERATION_TIMEOUT is reasonable"""
@@ -77,11 +76,6 @@ class TestRetrySettings:
         """Test MAX_CLEAN_RETRIES is positive"""
         assert MAX_CLEAN_RETRIES > 0
         assert isinstance(MAX_CLEAN_RETRIES, int)
-
-    def test_max_correction_attempts_positive(self):
-        """Test MAX_CORRECTION_ATTEMPTS is positive"""
-        assert MAX_CORRECTION_ATTEMPTS > 0
-        assert isinstance(MAX_CORRECTION_ATTEMPTS, int)
 
 
 class TestRenderingSettings:
@@ -179,11 +173,11 @@ class TestConfigConsistency:
     def test_iteration_vs_retries(self):
         """Test iteration settings are consistent"""
         # Total attempts should be reasonable
-        total_max_attempts = MAX_CLEAN_RETRIES * (MAX_GENERATION_ITERATIONS + MAX_CORRECTION_ATTEMPTS)
-        assert total_max_attempts < 50  # Prevent infinite loops
+        total_max_attempts = MAX_CLEAN_RETRIES * MAX_SURGICAL_FIX_ATTEMPTS
+        assert total_max_attempts < 20  # Prevent infinite loops
 
     def test_temperature_increases_bounded(self):
         """Test temperature increase stays bounded"""
-        # After max iterations, temperature should still be valid
-        max_temp = BASE_GENERATION_TEMPERATURE + (MAX_GENERATION_ITERATIONS * TEMPERATURE_INCREMENT)
+        # After max attempts, temperature should still be valid
+        max_temp = BASE_GENERATION_TEMPERATURE + (MAX_SURGICAL_FIX_ATTEMPTS * TEMPERATURE_INCREMENT)
         assert max_temp <= 2.0  # Max allowed temperature for most LLMs

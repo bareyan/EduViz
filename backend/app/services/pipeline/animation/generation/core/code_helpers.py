@@ -27,43 +27,27 @@ def get_theme_setup_code(style: str = "3b1b") -> str:
     return "        self.camera.background_color = \"#171717\"  # Slate dark\n"
 
 
-def clean_code(code: str) -> str:
-    """Extracts and cleans Manim code from LLM response.
+def clean_code(code_text: Optional[str]) -> str:
+    """Extracts Python code from LLM response.
     
-    It handles responses that contain both conversational text (plans)
-    and code blocks, extracting only the Python content.
+    This function extracts Python code blocks from markdown and performs
+    minimal cleaning. It no longer filters structural lines or re-indents
+    as we expect the LLM to provide a complete, correctly formatted file.
     """
-    # 1. Extract Python code block if present using shared infra
-    blocks = extract_markdown_code_blocks(code, "python")
+    if code_text is None:
+        return ""
+        
+    # 1. Extract Python code block if present
+    blocks = extract_markdown_code_blocks(code_text, "python")
     if blocks:
-        # Take the longest block if multiple, or just the first
-        code = max(blocks, key=len)
+        # Take the longest block if multiple
+        extracted_code = max(blocks, key=len)
     else:
         # Fallback: remove wrappers if it's just a raw code block
-        code = remove_markdown_wrappers(code)
+        extracted_code = remove_markdown_wrappers(code_text)
 
-    # Remove any leading/trailing whitespace
-    code = code.strip()
-
-    # 2. Filter out structural lines (imports/classes) to get only construct() body
-    lines = code.split("\n")
-    cleaned_lines = []
-    skip_until_construct = False
-
-    for line in lines:
-        stripped = line.strip()
-        # Skip import lines - we handle these in the Scaffolder/Template level
-        if stripped.startswith("import ") or stripped.startswith("from "):
-            continue
-        # Skip class definition and construct signature
-        if stripped.startswith("class ") or "def construct(self" in line:
-            continue
-        cleaned_lines.append(line)
-
-    code = "\n".join(cleaned_lines)
-
-    # 3. Normalize indentation using shared infra
-    return normalize_indentation(code, base_spaces=CONSTRUCT_INDENT_SPACES)
+    # 2. Basic cleaning (strip whitespace)
+    return extracted_code.strip()
 
 
 def strip_theme_code_from_content(code: str) -> str:
@@ -88,61 +72,53 @@ def strip_theme_code_from_content(code: str) -> str:
 
 
 def create_scene_file(code: str, section_id: str, duration: float, style: str = "3b1b") -> str:
-    """Create a complete Manim scene file with minimum duration padding and enforced theme
+    """Ensures the generated code is a complete Manim scene file.
     
-    The theme is enforced at the scene level to ensure consistency across all sections.
-    Any theme-related code in the AI-generated content is stripped to prevent conflicts.
+    Since the LLM now provides the full file structure, this function primarily
+    ensures basic requirements are met:
+    1. Theme setup is consistent
+    2. Final duration padding is added if missing
     """
+    # Fix any translated common issues
+    code = fix_translated_code(code)
+    
+    # Ensure background color is set according to style if not present
+    theme_setup = get_theme_setup_code(style).strip()
+    if theme_setup and theme_setup not in code:
+        # Find construct(self): and insert theme setup
+        match = re.search(r"def construct\(self\):", code)
+        if match:
+            insertion_point = match.end()
+            # Find the indentation of the next line to match it
+            lines = code[insertion_point:].split("\n", 2)
+            if len(lines) > 1:
+                next_line = lines[1]
+                indent = re.match(r"^\s*", next_line).group(0)
+                # If next line is just a comment or empty, default to 8 spaces
+                if not indent or not next_line.strip():
+                    indent = " " * CONSTRUCT_INDENT_SPACES
+            else:
+                indent = " " * CONSTRUCT_INDENT_SPACES
+                
+            code = code[:insertion_point] + "\n" + indent + theme_setup.strip() + "\n" + code[insertion_point:]
 
-    # Strip any theme code from the AI-generated content
-    code = strip_theme_code_from_content(code)
+    # Add final padding wait if it seems missing
+    # We look for self.wait( at the end of the file
+    if "self.wait(" not in code[-200:]:
+        padding_wait = max(MIN_DURATION_PADDING, duration * DURATION_PADDING_PERCENTAGE)
+        # Find indentation of the last line to match it
+        lines = code.strip().split("\n")
+        last_indent = ""
+        for line in reversed(lines):
+            if line.strip():
+                last_indent = re.match(r"^\s*", line).group(0)
+                break
+        if not last_indent:
+            last_indent = " " * CONSTRUCT_INDENT_SPACES
+            
+        code = code.strip() + f"\n\n{last_indent}# Final padding to ensure video >= audio duration\n{last_indent}self.wait({padding_wait:.1f})\n"
 
-    # Normalize indentation to fix any tab/space issues from AI generation
-    normalized_code = normalize_indentation(code, base_spaces=0)
-
-    # Ensure the code has proper base indentation for inside construct()
-    lines = normalized_code.split('\n')
-    indented_lines = []
-    for line in lines:
-        if line.strip():
-            # Ensure minimum CONSTRUCT_INDENT_SPACES indentation (inside construct method)
-            current_indent = len(line) - len(line.lstrip())
-            if current_indent < CONSTRUCT_INDENT_SPACES:
-                # Add base indentation to reach CONSTRUCT_INDENT_SPACES for construct body
-                line = ' ' * CONSTRUCT_INDENT_SPACES + line.lstrip()
-        indented_lines.append(line)
-    normalized_code = '\n'.join(indented_lines)
-
-    # Sanitize section_id for class name
-    class_name = "".join(word.title() for word in section_id.split("_"))
-
-    # Calculate padding using config constants
-    padding_wait = max(MIN_DURATION_PADDING, duration * DURATION_PADDING_PERCENTAGE)
-
-    # Get theme setup code
-    theme_setup = get_theme_setup_code(style)
-
-    scene_code = f'''"""Auto-generated Manim scene for section: {section_id}"""
-from manim import *
-
-class Scene{class_name}(Scene):
-    def construct(self):
-        # ══════════════════════════════════════════════════════════════════
-        # TARGET DURATION: {duration:.1f} seconds (must sync with audio)
-        # Your animations + waits should total approximately this duration
-        # A padding wait is added at the end to ensure minimum duration
-        # ══════════════════════════════════════════════════════════════════
-        
-{theme_setup}
-{normalized_code}
-        
-        # ══════════════════════════════════════════════════════════════════
-        # DURATION PADDING: Extra wait to ensure video >= audio duration
-        # This shows the final state while remaining narration plays
-        # ══════════════════════════════════════════════════════════════════
-        self.wait({padding_wait:.1f})
-'''
-    return scene_code
+    return code
 
 
 def fix_translated_code(code: str) -> str:

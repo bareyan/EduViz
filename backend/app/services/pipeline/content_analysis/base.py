@@ -15,7 +15,7 @@ class BaseAnalyzer:
 
     def __init__(self, pipeline_name: Optional[str] = None):
         # Resolve model config per-instance to respect pipeline selection
-        self._config = get_model_config("analysis", pipeline_name)
+        self._config = get_model_config("analysis")
         self.model = self._config.model_name
 
         # Use PromptingEngine for all LLM interactions

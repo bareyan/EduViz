@@ -29,8 +29,8 @@ class BaseScriptGenerator:
 
     def __init__(self, cost_tracker: Optional[CostTracker] = None, pipeline_name: Optional[str] = None):
         # Model configuration (pipeline-aware)
-        self._script_config = get_model_config("script_generation", pipeline_name)
-        self._lang_detect_config = get_model_config("language_detection", pipeline_name)
+        self._script_config = get_model_config("script_generation")
+        self._lang_detect_config = get_model_config("language_detection")
 
         self.MODEL = self._script_config.model_name
         self.LANGUAGE_DETECTION_MODEL = self._lang_detect_config.model_name

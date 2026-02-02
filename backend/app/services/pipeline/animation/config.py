@@ -8,8 +8,8 @@ Centralized configuration for animation generation constants and settings.
 # GENERATION SETTINGS
 # =============================================================================
 
-# Maximum iterations for tool-based code generation/fixing
-MAX_GENERATION_ITERATIONS = 5
+# Maximum iterations for surgical fixes
+MAX_SURGICAL_FIX_ATTEMPTS = 3
 
 # Timeout for generation requests (seconds)
 GENERATION_TIMEOUT = 300  # 5 minutes
@@ -33,9 +33,6 @@ BASE_CORRECTION_TEMPERATURE = 0.1
 
 # Maximum times to retry section generation with clean start
 MAX_CLEAN_RETRIES = 2
-
-# Maximum correction attempts before clean retry
-MAX_CORRECTION_ATTEMPTS = 3
 
 
 # =============================================================================

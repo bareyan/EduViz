@@ -133,136 +133,22 @@ class PipelineModels:
     ))
 
 
-# Default pipeline configuration
+# Default and only pipeline configuration
 DEFAULT_PIPELINE_MODELS = PipelineModels()
 
 
-# Alternative configurations for different use cases
-
-# High Quality - Use stronger models with more thinking
-HIGH_QUALITY_PIPELINE = PipelineModels(
-    analysis=ModelConfig(
-        model_name="gemini-2.5-flash",
-        thinking_level=None,
-        description="Higher quality analysis"
-    ),
-    script_generation=ModelConfig(
-        model_name="gemini-3-pro-preview",
-        thinking_level=ThinkingLevel.HIGH,
-        description="Deep reasoning for script generation"
-    ),
-    language_detection=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        thinking_level=None,
-        description="Quick language detection"
-    ),
-    translation=ModelConfig(
-        model_name="gemini-2.5-flash",
-        thinking_level=None,
-        description="Higher quality translation"
-    ),
-    animation_choreography=ModelConfig(
-        model_name="gemini-3-pro-preview",
-        thinking_level=ThinkingLevel.HIGH,
-        description="Detailed animation choreography"
-    ),
-    animation_implementation=ModelConfig(
-        model_name="gemini-3-pro-preview",
-        thinking_level=ThinkingLevel.HIGH,
-        description="Perfect Manim code implementation"
-    ),
-    animation_refinement=ModelConfig(
-        model_name="gemini-3-pro-preview",
-        thinking_level=ThinkingLevel.MEDIUM,
-        description="Deep refinement and fixing"
-    )
-)
-
-
-# Cost Optimized - Use cheapest models everywhere
-COST_OPTIMIZED_PIPELINE = PipelineModels(
-    analysis=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Budget analysis"
-    ),
-    script_generation=ModelConfig(
-        model_name="gemini-3-flash-preview",
-        thinking_level=ThinkingLevel.LOW,
-        description="Cost-effective script generation"
-    ),
-    language_detection=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Quick language detection"
-    ),
-    translation=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Budget translation"
-    ),
-    animation_choreography=ModelConfig(
-        model_name="gemini-2.0-flash",
-        description="Budget choreography"
-    ),
-    animation_implementation=ModelConfig(
-        model_name="gemini-2.0-flash",
-        description="Budget implementation"
-    ),
-    animation_refinement=ModelConfig(
-        model_name="gemini-2.0-flash",
-        description="Budget refinement"
-    )
-)
-
-
-# Current active configuration
-# Change this to switch between configurations
-ACTIVE_PIPELINE = COST_OPTIMIZED_PIPELINE
-
-# Available pipeline configurations
-# - default: Balanced quality and cost
-# - high_quality: Best quality, higher cost
-# - cost_optimized: Budget-friendly, use for overview mode or when cost matters
-AVAILABLE_PIPELINES = {
-    "default": DEFAULT_PIPELINE_MODELS,
-    "high_quality": HIGH_QUALITY_PIPELINE,
-    "cost_optimized": COST_OPTIMIZED_PIPELINE,
-}
-
-
-def set_active_pipeline(pipeline_name: str) -> None:
-    """
-    Set the active pipeline configuration.
-    
-    Args:
-        pipeline_name: Name of pipeline configuration ('default', 'high_quality', 'cost_optimized')
-    """
-    global ACTIVE_PIPELINE
-    if pipeline_name not in AVAILABLE_PIPELINES:
-        raise ValueError(f"Unknown pipeline: {pipeline_name}. Available: {list(AVAILABLE_PIPELINES.keys())}")
-    ACTIVE_PIPELINE = AVAILABLE_PIPELINES[pipeline_name]
-
-
-def get_active_pipeline_name() -> str:
-    """Get the name of the currently active pipeline"""
-    for name, pipeline in AVAILABLE_PIPELINES.items():
-        if ACTIVE_PIPELINE is pipeline:
-            return name
-    return "custom"
-
-
-def get_model_config(step: str, pipeline: Optional[str] = None) -> ModelConfig:
+def get_model_config(step: str) -> ModelConfig:
     """
     Get the model configuration for a specific pipeline step.
     
     Args:
         step: Pipeline step name (e.g., 'analysis', 'script_generation')
-        pipeline: Optional pipeline name to use instead of active pipeline
         
     Returns:
         ModelConfig for the specified step
     """
-    target_pipeline = AVAILABLE_PIPELINES.get(pipeline, ACTIVE_PIPELINE) if pipeline else ACTIVE_PIPELINE
-    if hasattr(target_pipeline, step):
-        return getattr(target_pipeline, step)
+    if hasattr(DEFAULT_PIPELINE_MODELS, step):
+        return getattr(DEFAULT_PIPELINE_MODELS, step)
     raise ValueError(f"Unknown pipeline step: {step}")
 
 

@@ -10,6 +10,7 @@ Following Google-quality standards:
 import asyncio
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
@@ -106,10 +107,10 @@ async def render_scene(
     # 1. Clean environment
     cleanup_output_artifacts(output_dir, code_file, quality)
     
-    # 2. Build Command
+    # 2. Build Command (use sys.executable -m manim for cross-platform compatibility)
     quality_flag = QUALITY_FLAGS.get(quality, "-ql")
     cmd = [
-        "manim", quality_flag, "--format=mp4",
+        sys.executable, "-m", "manim", quality_flag, "--format=mp4",
         f"--output_file=section_{section_index}",
         f"--media_dir={output_dir}",
         str(code_file), scene_name

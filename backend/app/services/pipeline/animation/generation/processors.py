@@ -2,13 +2,14 @@
 Animation Processors - specialized handlers for the animation pipeline.
 
 Following Google-quality standards:
-- Unified Agent: Using a single iterative Gemini session for consistency.
-- No Silent Failures: Specific exceptions for different failure states.
+- Single-Shot Generation: Entire scene code generated in one call for consistency.
+- Surgical Edits: Isolated, fresh-context fixes for validation errors.
+- No Technical Debt: Zero legacy multi-turn code or segmented logic.
 - Clean Architecture: Decoupled validation and rendering.
 """
 
 import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig
@@ -17,201 +18,184 @@ from app.services.infrastructure.llm.tools import create_tool_declaration
 from ..prompts import (
     ANIMATOR_SYSTEM, 
     ANIMATOR_USER, 
-    REANIMATOR_USER, 
-    SEGMENT_CODER_USER
+    FULL_IMPLEMENTATION_USER,
+    SURGICAL_FIX_USER
 )
 from .core import (
     clean_code,
     ChoreographyError,
     ImplementationError,
     RefinementError,
-    ManimEditor,
-    ManimScaffolder
+    ManimEditor
 )
 from .validation import CodeValidator
 
 logger = get_logger(__name__, component="animation_processors")
 
 class Animator:
-    """Unified Animation Agent.
+    """Unified Animation Agent - Single-Shot Architecture.
     
     This agent manages the complete lifecycle of creating an animation:
     1. Visual Planning (Choreography)
-    2. Code Implementation (Manim)
-    3. Iterative Refinement (based on validation/rendering feedback)
-    
-    It maintains a single conversation context with the LLM to ensure
-    that refinements are informed by the original planning intent.
+    2. Full Code Implementation (Single-shot)
+    3. Isolated Surgical Refinement (based on validator feedback)
     """
     
-    def __init__(self, engine: PromptingEngine, validator: CodeValidator, max_iterations: int = 3):
-        """Initializes the Animator with required infra."""
+    def __init__(self, engine: PromptingEngine, validator: CodeValidator, max_fix_attempts: int = 3):
+        """Initializes the Animator with required infrastructure."""
         self.engine = engine
         self.validator = validator
-        self.max_iterations = max_iterations
-        self.types = engine.types  # Access Gemini types
+        self.max_fix_attempts = max_fix_attempts
         self.editor = ManimEditor()
-        self.scaffolder = ManimScaffolder()
-
-    def _create_content(self, role: str, text: Optional[str] = None, parts: Optional[List[Any]] = None):
-        """Helper to create a Gemini Content object."""
-        if parts:
-            return self.types.Content(role=role, parts=parts)
-        return self.types.Content(
-            role=role,
-            parts=[self.types.Part(text=text or "")]
-        )
-
-    def _create_tool_response(self, function_name: str, result: Dict[str, Any]):
-        """Creates a Gemini Part for a function response."""
-        return self.types.Part(
-            function_response=self.types.FunctionResponse(
-                name=function_name,
-                response=result
-            )
-        )
 
     async def animate(self, section: Dict[str, Any], duration: float) -> str:
-        """Runs the segmented iterative animation pipeline.
+        """Runs the single-shot animation generation pipeline.
         
-        This is more efficient as it generates code piece-by-piece,
-        validating and refining each segment before moving forward.
+        Args:
+            section: Section metadata from narration stage.
+            duration: Target duration for the animation.
+            
+        Returns:
+            The complete Manim code for the section.
+            
+        Raises:
+            ChoreographyError: If planning fails.
+            ImplementationError: If initial code generation fails.
+            RefinementError: If surgical fixes fail to stabilize the code.
         """
         section_title = section.get("title", f"Section {section.get('index', '')}")
-        segments = section.get("narration_segments", [])
-        logger.info(f"Animating section '{section_title}' with {len(segments)} segments")
+        logger.info(f"Starting single-shot animation for '{section_title}'")
         
-        # Define tool declarations using infrastructure helper
-        tool_declarations = [create_tool_declaration(self.editor, self.types)]
+        # 1. Phase 1: Holistic Planning
+        plan = await self._generate_plan(section, duration)
+        logger.info(f"Choreography plan finalized for '{section_title}'")
         
-        # 1. Turn 1: Holistic Planning
-        initial_prompt = ANIMATOR_USER.format(
-            title=section_title,
+        # 2. Phase 2: Full Implementation (Single-Shot)
+        code = await self._generate_full_code(section, plan, duration)
+        logger.info(f"Initial code generated for '{section_title}'")
+        logger.debug(f"Initial cleaned code:\n{code}")
+        
+        # 3. Phase 3: Surgical Refinement Loop
+        for attempt in range(1, self.max_fix_attempts + 1):
+            validation = self.validator.validate(code)
+            
+            if validation.valid:
+                logger.info(f"Animation code validated successfully on attempt {attempt}")
+                return code
+            
+            error_summary = validation.get_error_summary()
+            logger.warning(f"Validation failed (Attempt {attempt}): {error_summary[:100]}...")
+            
+            if attempt > self.max_fix_attempts:
+                break
+                
+            code = await self._apply_surgical_fix(code, error_summary)
+            logger.debug(f"Code after surgical fix (attempt {attempt}):\n{code}")
+            
+        # Final validation check
+        final_validation = self.validator.validate(code)
+        if final_validation.valid:
+            return code
+            
+        raise RefinementError(
+            f"Could not stabilize animation code after {self.max_fix_attempts} surgical fix attempts. "
+            f"Final errors: {final_validation.get_error_summary()}"
+        )
+
+    async def _generate_plan(self, section: Dict[str, Any], duration: float) -> str:
+        """Generates a visual choreography plan."""
+        prompt = ANIMATOR_USER.format(
+            title=section.get("title", "Untitled"),
             narration=section.get("narration", ""),
-            timing_info=json.dumps(segments, indent=2),
+            timing_info=json.dumps(section.get("narration_segments", []), indent=2),
             target_duration=duration
         )
         
-        history = [self._create_content("user", initial_prompt)]
         config = PromptConfig(enable_thinking=True, timeout=300.0)
-        
-        # Generate initial choreography plan
         result = await self.engine.generate(
-            prompt="", config=config,
+            prompt=prompt,
             system_prompt=ANIMATOR_SYSTEM.template,
-            contents=history
+            config=config
         )
         
         if not result.get("success") or not result.get("response"):
             raise ChoreographyError(f"Failed to generate animation plan: {result.get('error', 'Empty response')}")
             
-        history.append(self._create_content("model", result["response"]))
-        logger.info(f"Choreography plan finalized for '{section_title}'")
-        
-        # 2. Iterate through segments for incremental implementation
-        cumulative_code_lines = []
-        
-        for i, segment in enumerate(segments):
-            seg_text = segment.get("text", "")[:100] + "..."
-            logger.info(f"Implementing Segment {i+1}/{len(segments)}: {seg_text}")
-            
-            seg_prompt = SEGMENT_CODER_USER.format(
-                segment_index=i + 1,
-                segment_text=segment.get("text", ""),
-                duration=segment.get("duration", 5.0),
-                start_time=segment.get("start_time", 0.0)
-            )
-            
-            history.append(self._create_content("user", seg_prompt))
-            
-            # Segment coding state
-            segment_code = ""
-            
-            # Segment coding loop (local refinement)
-            for attempt in range(1, self.max_iterations + 1):
-                # If we are retrying, enable tools and encourage surgical edits
-                active_tools = tool_declarations if attempt > 1 else None
-                
-                # Multi-turn tool execution loop
-                while True:
-                    res = await self.engine.generate(
-                        prompt="", config=config,
-                        system_prompt=ANIMATOR_SYSTEM.template,
-                        contents=history,
-                        tools=active_tools
-                    )
-                    
-                    if not res.get("success"):
-                        raise ImplementationError(f"Failed to implement segment {i+1}")
-                    
-                    # Handle function calls (Surgical Edits)
-                    if res.get("function_calls"):
-                        # Add model's call to history
-                        parts = []
-                        if res.get("response"):
-                            parts.append(self.types.Part(text=res["response"]))
-                        
-                        for fc in res["function_calls"]:
-                            parts.append(self.types.Part(function_call=self.types.FunctionCall(
-                                name=fc["name"],
-                                args=fc["args"]
-                            )))
-                        history.append(self.types.Content(role="model", parts=parts))
-                        
-                        # Execute tools and add responses
-                        tool_responses = []
-                        for fc in res["function_calls"]:
-                            if fc["name"] == "apply_surgical_edit":
-                                try:
-                                    # Execute tool with current segment code
-                                    fc["args"]["code"] = segment_code
-                                    segment_code = self.editor.execute(**fc["args"])
-                                    tool_responses.append(self._create_tool_response(
-                                        fc["name"], {"status": "success", "info": "Edit applied"}
-                                    ))
-                                except Exception as e:
-                                    logger.warning(f"Surgical edit failed: {str(e)}")
-                                    tool_responses.append(self._create_tool_response(
-                                        fc["name"], {"status": "error", "error": str(e)}
-                                    ))
-                        
-                        history.append(self.types.Content(role="user", parts=tool_responses))
-                        continue # Re-call LLM to get final code or next edit
-                    
-                    # No more tool calls, we check for new code in response text
-                    new_code = clean_code(res.get("response", ""))
-                    if new_code.strip():
-                        segment_code = new_code
-                    break
+        return result["response"]
 
-                # Validate the CUMULATIVE code as a full file using Scaffolder
-                test_snippet = "\n".join(cumulative_code_lines + [segment_code])
-                test_full_code = self.scaffolder.assemble(test_snippet)
-                validation = self.validator.validate(test_full_code)
-                
-                if validation.valid:
-                    history.append(self._create_content("model", res.get("response", "")))
-                    cumulative_code_lines.append(segment_code)
-                    break
-                
-                # Fetch errors and translate them back to snippet coordinates
-                raw_errors = validation.get_error_summary()
-                translated_errors, _ = self.scaffolder.translate_error(
-                    raw_errors, 
-                    validation.syntax.line_number
-                )
-                
-                logger.warning(f"Segment {i+1} validation failed (Attempt {attempt}): {translated_errors[:100]}")
-                
-                # If invalid, stay in the same session and ask for fix, encouraging tool use
-                repair_prompt = REANIMATOR_USER.format(
-                    errors=translated_errors,
-                    code=segment_code
-                )
-                history.append(self._create_content("model", res.get("response", "")))
-                history.append(self._create_content("user", repair_prompt))
-                
-                if attempt == self.max_iterations:
-                    raise RefinementError(f"Could not stabilize Segment {i+1} after {self.max_iterations} attempts.")
+    async def _generate_full_code(self, section: Dict[str, Any], plan: str, duration: float) -> str:
+        """Generates the full Manim code in one call."""
+        segments = section.get("narration_segments", [])
+        segment_timings = "\n".join([
+            f"- Segment {i+1} ({s.get('start_time', 0):.1f}s - {s.get('start_time', 0) + s.get('duration', 5):.1f}s): "
+            f"{s.get('text', '')[:60]}..."
+            for i, s in enumerate(segments)
+        ])
+        
+        # Generate class name for the prompt
+        section_index = section.get('index', 0)
+        section_id = section.get("id", f"section_{section_index}").replace("-", "_").replace(" ", "_")
+        section_id_title = "".join(word.title() for word in section_id.split("_"))
+        
+        prompt = FULL_IMPLEMENTATION_USER.format(
+            plan=plan,
+            segment_timings=segment_timings,
+            total_duration=duration,
+            section_id_title=section_id_title
+        )
+        
+        config = PromptConfig(enable_thinking=True, timeout=300.0)
+        result = await self.engine.generate(
+            prompt=prompt,
+            system_prompt=ANIMATOR_SYSTEM.template,
+            config=config
+        )
+        
+        if not result.get("success") or not result.get("response"):
+            raise ImplementationError(f"Failed to generate initial code: {result.get('error', 'Empty response')}")
+            
+        return clean_code(result["response"])
 
-        return "\n".join(cumulative_code_lines)
+    async def _apply_surgical_fix(self, code: str, errors: str) -> str:
+        """Applies a surgical fix to existing code using tool calls."""
+        prompt = SURGICAL_FIX_USER.format(code=code, errors=errors)
+        
+        tool_declarations = [create_tool_declaration(self.editor, self.engine.types)]
+        config = PromptConfig(timeout=120.0)
+        
+        result = await self.engine.generate(
+            prompt=prompt,
+            system_prompt=ANIMATOR_SYSTEM.template,
+            tools=tool_declarations,
+            config=config
+        )
+        
+        if not result.get("success"):
+            logger.error(f"Surgical fix call failed: {result.get('error')}")
+            return code
+            
+        # Handle tool calls for surgical edits
+        tool_applied = False
+        if result.get("function_calls"):
+            for fc in result["function_calls"]:
+                if fc["name"] == "apply_surgical_edit":
+                    try:
+                        # Ensure we use the current code context for the edit
+                        fc["args"]["code"] = code
+                        code = self.editor.execute(**fc["args"])
+                        tool_applied = True
+                        logger.info("Surgical edit applied successfully")
+                    except Exception as e:
+                        logger.warning(f"Surgical tool execution failed: {str(e)}")
+        
+        # Check if LLM also returned a code block as fallback
+        # ONLY if tool wasn't applied or we want to allow hybrid (careful here)
+        if not tool_applied:
+            raw_response = result.get("response")
+            fallback_code = clean_code(raw_response) if raw_response else ""
+            if fallback_code and len(fallback_code) > len(code) * 0.7:
+                # If the response contains a large valid-looking code block, assume it's a full fix
+                logger.info("Using fallback response code as no tool was successfully applied")
+                return fallback_code
+            
+        return code
