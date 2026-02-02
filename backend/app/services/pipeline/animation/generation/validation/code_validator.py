@@ -89,41 +89,8 @@ class CodeValidator:
         """Run complete validation pipeline."""
         static_res = self.static_validator.validate(code)
         
-        # If static validation fails completely (like syntax), skip spatial
-        if not static_res.valid and any("Syntax Error" in e for e in static_res.errors):
-            spatial_res = SpatialValidationResult(valid=True, errors=[], warnings=[])
-        else:
-            spatial_res = self.spatial_validator.validate(code)
-            
-        return CodeValidationResult(
-            valid=static_res.valid and spatial_res.valid,
-            static=static_res,
-            spatial=spatial_res
-        )
-
-    def validate_code(self, code: str) -> Dict[str, Any]:
-        """Backward-compatible wrapper returning a simple dict."""
-        result = self.validate(code)
-        return {
-            "valid": result.valid,
-            "error": None if result.valid else result.get_error_summary(),
-            "details": result.to_dict()
-        }
-
-
-class CodeValidator:
-    """Coordinates the full validation pipeline."""
-    
-    def __init__(self, linter_path: str = "linter.py"):
-        self.static_validator = StaticValidator()
-        self.spatial_validator = SpatialValidator(linter_path)
-        
-    def validate(self, code: str) -> CodeValidationResult:
-        """Run complete validation pipeline."""
-        static_res = self.static_validator.validate(code)
-        
-        # If static validation fails completely (like syntax), skip spatial
-        if not static_res.valid and any("Syntax Error" in e for e in static_res.errors):
+        # If static validation fails (syntax, structure, or policy), skip spatial execution
+        if not static_res.valid:
             spatial_res = SpatialValidationResult(valid=True, errors=[], warnings=[])
         else:
             spatial_res = self.spatial_validator.validate(code)
