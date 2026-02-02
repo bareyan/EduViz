@@ -87,29 +87,49 @@ class Animator:
         Raises:
             ChoreographyError: If planning fails.
             ImplementationError: If initial code generation fails.
-            RefinementError: If surgical fixes fail to stabilize the code.
+            RefinementError: If surgical fixes fail to stabilize the code after all retries.
         """
+        from ..config import MAX_CLEAN_RETRIES
+        
         section_title = section.get("title", f"Section {section.get('index', '')}")
-        logger.info(f"Starting hybrid animation for '{section_title}'")
+        last_error = None
         
-        # Clear fix history for new section
-        self.fix_history = []
+        for clean_retry in range(MAX_CLEAN_RETRIES):
+            if clean_retry > 0:
+                logger.warning(f"Clean retry {clean_retry}/{MAX_CLEAN_RETRIES} for '{section_title}'")
+            
+            # Clear fix history for new attempt
+            self.fix_history = []
+            
+            try:
+                # 1. Phase 1: Deep Choreography Planning (gemini-3-pro-preview)
+                plan = await self._generate_plan(section, duration)
+                logger.info(f"Choreography plan finalized for '{section_title}'")
+                
+                # 2. Phase 2: Full Implementation (gemini-3-flash-preview, single-shot)
+                code = await self._generate_full_code(section, plan, duration)
+                logger.info(f"Initial code generated for '{section_title}'")
+                
+                # 3. Phase 3: Agentic Fix Loop (with memory)
+                code, is_valid = await self._agentic_fix_loop(code, section_title, duration)
+                
+                if is_valid:
+                    return code
+                else:
+                    # Fix loop failed, try clean regeneration
+                    last_error = "Surgical fixes could not stabilize code"
+                    continue
+                    
+            except (ChoreographyError, ImplementationError) as e:
+                last_error = str(e)
+                continue
         
-        # 1. Phase 1: Deep Choreography Planning (gemini-3-pro-preview)
-        plan = await self._generate_plan(section, duration)
-        logger.info(f"Choreography plan finalized for '{section_title}'")
-        
-        # 2. Phase 2: Full Implementation (gemini-3-flash-preview, single-shot)
-        code = await self._generate_full_code(section, plan, duration)
-        logger.info(f"Initial code generated for '{section_title}'")
-        
-        # 3. Phase 3: Agentic Fix Loop (with memory)
-        code = await self._agentic_fix_loop(code, section_title, duration)
-        
+        # All retries exhausted - return last code anyway to attempt render
+        logger.warning(f"All {MAX_CLEAN_RETRIES} clean retries exhausted. Returning last code.")
         return code
 
 
-    async def _agentic_fix_loop(self, code: str, section_title: str, target_duration: float) -> str:
+    async def _agentic_fix_loop(self, code: str, section_title: str, target_duration: float) -> tuple[str, bool]:
         """Agentic fix loop with memory and tool use.
         
         This loop:
@@ -118,6 +138,9 @@ class Animator:
         3. If errors exist, applies surgical fix
         4. If only warnings/info, proceeds to render
         5. Stops when valid (no errors) or max attempts reached
+        
+        Returns:
+            Tuple of (code, is_valid) where is_valid indicates if code is error-free
         
         Severity behavior:
         - errors: MUST fix, blocks loop
@@ -138,7 +161,7 @@ class Animator:
                     logger.info(f"Animation validated with {len(validation.spatial.warnings)} warnings (non-blocking)")
                 else:
                     logger.info(f"Animation code validated successfully on attempt {attempt}")
-                return code
+                return code, True
             
             error_summary = validation.get_error_summary()
             logger.warning(f"Validation failed (Attempt {attempt}): {error_summary[:100]}...")
@@ -158,15 +181,14 @@ class Animator:
         has_final_errors = (not final_validation.static.valid) or (len(final_validation.spatial.errors) > 0)
         
         if not has_final_errors:
-            return code
+            return code, True
         
-        # Even on failure, return the code to allow a render attempt
-        # The actual rendering may still work even with some issues
+        # Return code but indicate it's not fully valid
         logger.warning(
             f"Could not fully stabilize animation after {self.max_fix_attempts} attempts. "
-            f"Proceeding with render anyway. Remaining issues: {final_validation.get_error_summary()[:100]}..."
+            f"Remaining issues: {final_validation.get_error_summary()[:100]}..."
         )
-        return code
+        return code, False
 
 
     async def _generate_plan(self, section: Dict[str, Any], duration: float) -> str:
