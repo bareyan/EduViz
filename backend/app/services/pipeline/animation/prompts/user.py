@@ -105,16 +105,48 @@ SURGICAL_FIX_USER = PromptTemplate(
 ## ERRORS
 {errors}
 
+## SPATIAL FIX STRATEGIES
+
+### Overlapping Objects
+When two objects overlap, separate them by modifying position:
+- Use `.next_to(other_obj, direction, buff=0.3)` to position relative to another
+- Use `.shift(direction * amount)` to move (e.g., `.shift(UP * 0.5)`)
+- Use `.move_to(point)` for exact coordinates
+- Safe positions: Y from -2.5 to 2.5, X from -5 to 5
+
+Example fix for overlap:
+```python
+# Before (overlapping)
+text1.move_to(ORIGIN)
+text2.move_to(ORIGIN)
+
+# After (separated)
+text1.move_to(UP * 0.5)
+text2.move_to(DOWN * 0.5)
+```
+
+### Out of Bounds
+When object exceeds screen edges (error shows direction like "Right (+0.88)"):
+- Shift opposite direction: "Right" violation → `.shift(LEFT * 1)`
+- Scale down: `.scale(0.7)` to make smaller
+- Reposition to safe zone: `.move_to(LEFT * 2)` instead of edge
+
+### Low Contrast
+When text blends with background (#171717 is dark):
+- Use bright colors: WHITE, YELLOW, BLUE, GREEN, RED, ORANGE
+- Avoid: GRAY, BLACK, or any dark colors
+- Fix: Add `color=WHITE` in constructor OR `.set_color(WHITE)`
+
 ## INSTRUCTIONS
 Use the `apply_surgical_edit` tool to fix ONLY the problematic lines.
-Be precise - identify the exact text to replace and provide the fix.
+Look at the error line number and find the object creation in the code.
+Apply the appropriate spatial fix from above.
 
-Common fixes:
+Common syntax fixes (if needed):
 - `tracker.number` → `tracker.get_value()`
 - `ease_in_expo` → `smooth`
-- `self.wait(0)` → remove the line
-- Undefined variables → define them or use correct names""",
-    description="Isolated surgical fix prompt"
+- `self.wait(0)` → remove the line""",
+    description="Surgical fix prompt with spatial guidance"
 )
 
 

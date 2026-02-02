@@ -43,7 +43,7 @@ class CodeValidationResult:
         }
     
     def get_error_summary(self) -> str:
-        """Get LLM-friendly error summary with line numbers and code context."""
+        """Get LLM-friendly error summary with line numbers, code context, and fix suggestions."""
         sections = []
         
         # Static errors (highest priority - blocks other validation)
@@ -55,21 +55,23 @@ class CodeValidationResult:
                 static_lines.append(f"- {err}")
             sections.append("\n".join(static_lines))
         
-        # Spatial errors (with full context)
+        # Spatial errors (with full context and fix suggestions)
         if self.spatial.errors:
             spatial_lines = ["## SPATIAL ERRORS (Visual Violations)"]
             for err in self.spatial.errors:
                 line_info = f"Line {err.line_number}" if err.line_number else "Unknown line"
                 code_info = f"\n  Code: `{err.code_snippet}`" if err.code_snippet else ""
-                spatial_lines.append(f"- {line_info}: {err.message}{code_info}")
+                fix_info = f"\n  FIX: {err.suggested_fix}" if err.suggested_fix else ""
+                spatial_lines.append(f"- {line_info}: {err.message}{code_info}{fix_info}")
             sections.append("\n".join(spatial_lines))
             
-        # Spatial warnings
+        # Spatial warnings (also include fix suggestions)
         if self.spatial.warnings:
             warn_lines = ["## SPATIAL WARNINGS"]
             for warn in self.spatial.warnings:
                 line_info = f"Line {warn.line_number}" if warn.line_number else "Unknown line"
-                warn_lines.append(f"- {line_info}: {warn.message}")
+                fix_info = f" (FIX: {warn.suggested_fix})" if warn.suggested_fix else ""
+                warn_lines.append(f"- {line_info}: {warn.message}{fix_info}")
             sections.append("\n".join(warn_lines))
             
         if not sections:

@@ -28,7 +28,7 @@ from .core import (
     RefinementError,
     ManimEditor
 )
-from .validation import CodeValidator
+from .validation import CodeValidator, TimingAdjuster
 
 logger = get_logger(__name__, component="animation_processors")
 
@@ -59,6 +59,7 @@ class Animator:
         """
         self.engine = engine
         self.validator = validator
+        self.timing_adjuster = TimingAdjuster()
         self.max_fix_attempts = max_fix_attempts
         self.editor = ManimEditor()
         self.cost_tracker = cost_tracker or engine.cost_tracker
@@ -102,21 +103,25 @@ class Animator:
         logger.info(f"Initial code generated for '{section_title}'")
         
         # 3. Phase 3: Agentic Fix Loop (with memory)
-        code = await self._agentic_fix_loop(code, section_title)
+        code = await self._agentic_fix_loop(code, section_title, duration)
         
         return code
 
 
-    async def _agentic_fix_loop(self, code: str, section_title: str) -> str:
+    async def _agentic_fix_loop(self, code: str, section_title: str, target_duration: float) -> str:
         """Agentic fix loop with memory and tool use.
         
         This loop:
-        1. Validates the code
-        2. If invalid, applies surgical fix with context
-        3. Tracks fix history for smarter iterations
-        4. Stops when valid or max attempts reached
+        1. Corrects timing programmatically
+        2. Validates the code
+        3. If invalid, applies surgical fix with context
+        4. Tracks fix history for smarter iterations
+        5. Stops when valid or max attempts reached
         """
         for attempt in range(1, self.max_fix_attempts + 1):
+            # Deterministic timing fix (Post-processor)
+            code = self.timing_adjuster.adjust(code, target_duration)
+            
             validation = self.validator.validate(code)
             
             if validation.valid:
@@ -135,7 +140,8 @@ class Animator:
             # Apply surgical fix with context
             code = await self._apply_surgical_fix(code, error_summary)
             
-        # Final validation check
+        # Final timing check and validation
+        code = self.timing_adjuster.adjust(code, target_duration)
         final_validation = self.validator.validate(code)
         if final_validation.valid:
             return code

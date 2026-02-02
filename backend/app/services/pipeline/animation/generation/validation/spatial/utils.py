@@ -13,15 +13,17 @@ LOGGER = logging.getLogger(__name__)
 def get_user_code_context(linter_path: str) -> Tuple[str, int]:
     """Capture user file context for actionable diagnostics."""
     stack = inspect.stack(context=0)
+    linter_path = os.path.normcase(os.path.abspath(linter_path))
     for frame_info in stack:
-        filename = os.path.abspath(frame_info.filename)
+        filename = os.path.normcase(os.path.abspath(frame_info.filename))
         if filename == linter_path:
             continue
-        if "site-packages" in filename:
+        if "site-packages" in filename or "lib/python" in filename:
             continue
-        if "lib/python" in filename:
+        # Also skip THIS file
+        if filename == os.path.normcase(os.path.abspath(__file__)):
             continue
-        return filename, frame_info.lineno
+        return frame_info.filename, frame_info.lineno
     return "unknown", 0
 
 

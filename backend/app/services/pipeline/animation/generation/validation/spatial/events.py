@@ -98,6 +98,7 @@ class LintEvent:
         self.end_line = end_line
         self.persists_to_end = is_scene_end
 
+    @property
     def duration(self) -> float:
         return self.end_time - self.start_time
 

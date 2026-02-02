@@ -13,6 +13,7 @@ class SpatialIssue:
     severity: str  # "error", "warning", or "info"
     message: str
     code_snippet: str
+    suggested_fix: str = ""  # Actionable fix suggestion for LLM
 
 
 @dataclass
