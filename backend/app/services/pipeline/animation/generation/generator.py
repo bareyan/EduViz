@@ -8,27 +8,21 @@ Handles the multi-stage animation generation workflow:
 4. Render: Produce final video sections
 """
 
-import json
-from typing import Dict, Any, Optional, List
 from pathlib import Path
-
-# Prompting engine
-from app.services.infrastructure.llm import PromptingEngine, CostTracker
-
-# Model configuration
-from app.config.models import get_model_config
-
-# New Processors (SRP)
-from .processors import Choreographer, Implementer, Refiner
-from .exceptions import AnimationError, ChoreographyError, ImplementationError, RefinementError, RenderingError
-
-# Tool-based generation (unified approach)
-from .code_helpers import clean_code, create_scene_file
-from .validation import CodeValidator
-from . import renderer
-from ..config import MAX_CLEAN_RETRIES, MAX_CORRECTION_ATTEMPTS
+from typing import Dict, Any, Optional
 
 from app.core import get_logger
+from app.services.infrastructure.llm import PromptingEngine, CostTracker
+
+from .processors import Animator
+from .core import (
+    RefinementError, 
+    RenderingError, 
+    create_scene_file, 
+    render_scene
+)
+from .validation import CodeValidator
+from ..config import MAX_CLEAN_RETRIES, MAX_CORRECTION_ATTEMPTS
 
 logger = get_logger(__name__, component="manim_generator")
 
@@ -49,17 +43,11 @@ class ManimGenerator:
         self.cost_tracker = CostTracker()
         self.validator = CodeValidator()
         
-        # Initialize specialized processors (SRP)
-        self.choreographer = Choreographer(
-            PromptingEngine("animation_choreography", self.cost_tracker, pipeline_name=pipeline_name)
-        )
-        self.implementer = Implementer(
-            PromptingEngine("animation_implementation", self.cost_tracker, pipeline_name=pipeline_name)
-        )
-        self.refiner = Refiner(
-            PromptingEngine("animation_refinement", self.cost_tracker, pipeline_name=pipeline_name),
+        # Initialize the Unified Animator (Iterative Agent)
+        self.animator = Animator(
+            PromptingEngine("animation_implementation", self.cost_tracker, pipeline_name=pipeline_name),
             self.validator,
-            max_attempts=MAX_CORRECTION_ATTEMPTS
+            max_iterations=MAX_CORRECTION_ATTEMPTS
         )
 
         # Execution stats
@@ -109,14 +97,8 @@ class ManimGenerator:
         self.stats["total_sections"] += 1
         logger.info(f"Starting animation pipeline for section {section_index}")
 
-        # Stage 1: Planning (Visual Pedagogy)
-        choreography = await self.choreographer.plan(section)
-        
-        # Stage 2: Coding (Technical Implementation)
-        initial_code = await self.implementer.implement(section, choreography, audio_duration)
-        
-        # Stage 3: Automated Refinement (Quality Control)
-        final_manim_code = await self.refiner.refine(initial_code, section)
+        # Unified Agentic Flow (Plan -> Implement -> Refine in one session)
+        final_manim_code = await self.animator.animate(section, audio_duration)
 
         # Stage 4: Rendering (Production)
         return await self.process_code_and_render(
@@ -161,7 +143,7 @@ class ManimGenerator:
             f.write(full_code)
 
         # 3. Execution (Rendering)
-        output_video = await renderer.render_scene(
+        output_video = await render_scene(
             self, code_file, scene_name, output_dir,
             section_index, section=section, clean_retry=0
         )

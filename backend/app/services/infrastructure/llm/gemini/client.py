@@ -471,14 +471,3 @@ def create_client(api_key: Optional[str] = None) -> UnifiedGeminiClient:
 
 # Alias for backward compatibility
 get_gemini_client = create_client
-
-
-def get_types_module():
-    """
-    Get the types module for the active backend.
-    
-    DEPRECATED: Use client._types_module or self.types instead.
-    This function creates a temporary client just to get types, which is inefficient.
-    """
-    client = create_client()
-    return client._types_module

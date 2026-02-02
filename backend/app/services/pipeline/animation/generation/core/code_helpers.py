@@ -5,7 +5,12 @@ Code utilities - cleaning, normalization, scene file creation
 import re
 from typing import Optional
 
-from ..config import CONSTRUCT_INDENT_SPACES, MIN_DURATION_PADDING, DURATION_PADDING_PERCENTAGE
+from app.services.infrastructure.parsing.code_parser import (
+    extract_markdown_code_blocks,
+    normalize_indentation,
+    remove_markdown_wrappers
+)
+from ...config import CONSTRUCT_INDENT_SPACES, MIN_DURATION_PADDING, DURATION_PADDING_PERCENTAGE
 
 def get_theme_setup_code(style: str = "3b1b") -> str:
     """Returns the Manim setup code for a specific visual style.
@@ -23,109 +28,42 @@ def get_theme_setup_code(style: str = "3b1b") -> str:
 
 
 def clean_code(code: str) -> str:
-    """Clean up generated code while preserving nested indentation"""
+    """Extracts and cleans Manim code from LLM response.
+    
+    It handles responses that contain both conversational text (plans)
+    and code blocks, extracting only the Python content.
+    """
+    # 1. Extract Python code block if present using shared infra
+    blocks = extract_markdown_code_blocks(code, "python")
+    if blocks:
+        # Take the longest block if multiple, or just the first
+        code = max(blocks, key=len)
+    else:
+        # Fallback: remove wrappers if it's just a raw code block
+        code = remove_markdown_wrappers(code)
 
-    # Remove markdown code blocks
-    if code.startswith("```"):
-        lines = code.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        code = "\n".join(lines)
+    # Remove any leading/trailing whitespace
+    code = code.strip()
 
-    # Remove any class definitions or imports that might have slipped in
+    # 2. Filter out structural lines (imports/classes) to get only construct() body
     lines = code.split("\n")
     cleaned_lines = []
     skip_until_construct = False
 
     for line in lines:
         stripped = line.strip()
-        # Skip import lines
-        if stripped.startswith("from manim") or stripped.startswith("import"):
+        # Skip import lines - we handle these in the Scaffolder/Template level
+        if stripped.startswith("import ") or stripped.startswith("from "):
             continue
-        # Skip class definition
-        if stripped.startswith("class "):
-            skip_until_construct = True
-            continue
-        if skip_until_construct:
-            if "def construct" in line:
-                skip_until_construct = False
+        # Skip class definition and construct signature
+        if stripped.startswith("class ") or "def construct(self" in line:
             continue
         cleaned_lines.append(line)
 
     code = "\n".join(cleaned_lines)
 
-    # Normalize indentation while PRESERVING relative indentation
-    lines = code.split("\n")
-
-    # Find the minimum non-zero indentation to understand the base level
-    min_indent = float('inf')
-    for line in lines:
-        if line.strip():
-            # Replace tabs with 4 spaces for counting
-            normalized_line = line.replace('\t', '    ')
-            indent = len(normalized_line) - len(normalized_line.lstrip())
-            if indent > 0:
-                min_indent = min(min_indent, indent)
-
-    if min_indent == float('inf'):
-        min_indent = 0
-
-    # Re-indent: shift everything so base level is CONSTRUCT_INDENT_SPACES (inside construct)
-    indented_lines = []
-    for line in lines:
-        if line.strip():
-            # Replace tabs with 4 spaces
-            normalized_line = line.replace('\t', '    ')
-            current_indent = len(normalized_line) - len(normalized_line.lstrip())
-            content = normalized_line.lstrip()
-
-            # Calculate relative indentation (how many levels above base)
-            if min_indent > 0:
-                relative_indent = current_indent - min_indent
-            else:
-                relative_indent = current_indent
-
-            # New indent: CONSTRUCT_INDENT_SPACES + relative indentation
-            new_indent = CONSTRUCT_INDENT_SPACES + max(0, relative_indent)
-            indented_lines.append(" " * new_indent + content)
-        else:
-            indented_lines.append("")
-
-    return "\n".join(indented_lines)
-
-
-def normalize_indentation(code: str) -> str:
-    """Normalize indentation to use consistent 4-space indentation
-    
-    This fixes common issues:
-    - Tabs converted to 4 spaces
-    - Mixed tabs/spaces normalized
-    - Inconsistent indentation levels fixed
-    """
-    lines = code.split('\n')
-    normalized_lines = []
-
-    for line in lines:
-        if not line.strip():
-            # Empty line
-            normalized_lines.append('')
-            continue
-
-        # Count leading whitespace
-        stripped = line.lstrip()
-        leading = line[:len(line) - len(stripped)]
-
-        # Replace tabs with 4 spaces
-        leading = leading.replace('\t', '    ')
-
-        # Count the indentation level (how many 4-space units)
-        # Handle cases where spaces might not be exact multiples of 4
-        space_count = len(leading)
-        indent_level = (space_count + 2) // 4  # Round to nearest 4
-
-        # Reconstruct with clean 4-space indentation
-        normalized_lines.append('    ' * indent_level + stripped)
-
-    return '\n'.join(normalized_lines)
+    # 3. Normalize indentation using shared infra
+    return normalize_indentation(code, base_spaces=CONSTRUCT_INDENT_SPACES)
 
 
 def strip_theme_code_from_content(code: str) -> str:
@@ -160,7 +98,7 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
     code = strip_theme_code_from_content(code)
 
     # Normalize indentation to fix any tab/space issues from AI generation
-    normalized_code = normalize_indentation(code)
+    normalized_code = normalize_indentation(code, base_spaces=0)
 
     # Ensure the code has proper base indentation for inside construct()
     lines = normalized_code.split('\n')
@@ -268,16 +206,7 @@ def extract_scene_name(code: str) -> Optional[str]:
 
 def remove_markdown_blocks(code: str) -> str:
     """Remove markdown code block delimiters from code"""
-    if code.startswith("```"):
-        lines = code.split("\n")
-        # Remove first line if it's ```python or ```
-        if lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        # Remove last line if it's ```
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        code = "\n".join(lines)
-    return code
+    return remove_markdown_wrappers(code)
 
 
 def ensure_manim_structure(code: str) -> bool:

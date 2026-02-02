@@ -96,29 +96,13 @@ class CodeValidator:
         Run all validators on the code.
         
         Args:
-            code: Python/Manim code to validate
+            code: Python/Manim code to validate. Assumed to be a full file.
             
         Returns:
             CodeValidationResult with aggregated results
         """
-        # Auto-wrap snippets if they don't look like full files
-        # This allows the LLM to generate just the body (saving tokens)
-        code_to_validate = code
-        is_snippet = False
-        
-        if "class " not in code or "def construct" not in code:
-            is_snippet = True
-            # Wrap in standard template
-            indented_body = "\n".join(["        " + line for line in code.split("\n")])
-            code_to_validate = (
-                "from manim import *\n\n"
-                "class GeneratedScene(Scene):\n"
-                "    def construct(self):\n"
-                f"{indented_body}"
-            )
-
         # Validate syntax first (fast-fail)
-        syntax_result = self.syntax_validator.validate(code_to_validate)
+        syntax_result = self.syntax_validator.validate(code)
         
         # If syntax is invalid, skip other validators
         if not syntax_result.valid:
@@ -131,8 +115,8 @@ class CodeValidator:
             )
         
         # Run structure and imports validation
-        structure_result = self.structure_validator.validate(code_to_validate)
-        imports_result = self.imports_validator.validate(code_to_validate)
+        structure_result = self.structure_validator.validate(code)
+        imports_result = self.imports_validator.validate(code)
         
         # Short-circuit: If structure or imports fail, skip spatial validation
         if not structure_result.valid or not imports_result.valid:
@@ -145,7 +129,7 @@ class CodeValidator:
             )
             
         # Run spatial validation (expensive)
-        spatial_result = self.spatial_validator.validate(code_to_validate)
+        spatial_result = self.spatial_validator.validate(code)
         
         # Overall validity requires all validators to pass
         overall_valid = spatial_result.valid

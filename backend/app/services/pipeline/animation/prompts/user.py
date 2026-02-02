@@ -1,7 +1,9 @@
 from app.services.infrastructure.llm.prompting_engine.prompts.base import PromptTemplate
 
-CHOREOGRAPHER_USER = PromptTemplate(
-    template="""Create a Visual Choreography Plan for this educational section:
+ANIMATOR_USER = PromptTemplate(
+    template="""Phase 1: Planning.
+
+Create a detailed 'Visual Choreography Plan' for the following educational content:
 
 TITLE: {title}
 NARRATION:
@@ -10,33 +12,39 @@ NARRATION:
 TIMING INFO:
 {timing_info}
 
-Format your response as a structured list of segments.
-For each segment, specify the VISUAL action and the post-narration PAUSE.""",
-    description="User prompt for choreography planning"
+TARGET DURATION: {target_duration}s
+
+Break the animation into logical segments. For each segment, describe:
+- What objects appear.
+- How they move/transform.
+- The start/end timing relative to the narration.
+
+Return ONLY the structured plan.""",
+    description="User prompt for the planning phase of the session"
 )
 
-CODER_USER = PromptTemplate(
-    template="""Implement the following Visual Choreography Plan in Manim:
+SEGMENT_CODER_USER = PromptTemplate(
+    template="""Phase 2: Segment Implementation.
 
-TITLE: {title}
-CHOREOGRAPHY PLAN:
-{choreography_plan}
+Implement the Manim code for Segment {segment_index}:
+"{segment_text}"
 
-TARGET TOTAL DURATION: {target_duration}s
+DURATION: {duration}s
+START TIME: {start_time}s
 
-Generate the construct() method body only. Include comments for each segment.""",
-    description="User prompt for code generation"
+Follow the plan you created. If previous segments exist in history, ensure variables and positions are consistent.
+Return ONLY the Manim code (construct method body) in a python code block.""",
+    description="User prompt for implementing a single segment in the session"
 )
 
-REPAIR_USER = PromptTemplate(
-    template="""Fix the following Manim code:
+REANIMATOR_USER = PromptTemplate(
+    template="""Phase 3: Error Correction.
 
-ERRORS:
+The code you just generated for this segment has errors:
 {errors}
 
-CODE:
-{code}
-
-Adjust the code to pass validation while maintaining the visual message.""",
-    description="User prompt for code repair"
+Please provide the corrected Manim code for THIS SEGMENT ONLY.
+Ensure consistency with previous segments in history.
+Return your fixed code in a python code block.""",
+    description="Refinement user prompt for correcting a segment in context"
 )

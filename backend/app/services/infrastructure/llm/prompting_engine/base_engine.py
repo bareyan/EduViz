@@ -11,7 +11,6 @@ from dataclasses import dataclass
 
 from app.services.infrastructure.llm.gemini.client import (
     create_client,
-    get_types_module,
     GenerationConfig as UnifiedGenerationConfig
 )
 from app.config.models import get_model_config, get_thinking_config
@@ -63,7 +62,7 @@ class PromptingEngine:
         self.config_key = config_key
         self.pipeline_name = pipeline_name
         self.client = create_client()
-        self.types = get_types_module()
+        self.types = self.client._types_module
         self.cost_tracker = cost_tracker or CostTracker()
 
     def _get_config(self):

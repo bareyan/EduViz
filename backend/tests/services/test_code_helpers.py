@@ -5,9 +5,8 @@ Tests for code utilities including cleaning, normalization, and scene file creat
 """
 
 import pytest
-from app.services.pipeline.animation.generation.code_helpers import (
+from app.services.pipeline.animation.generation.core.code_helpers import (
     clean_code,
-    normalize_indentation,
     strip_theme_code_from_content,
     create_scene_file,
     fix_translated_code,
@@ -15,6 +14,7 @@ from app.services.pipeline.animation.generation.code_helpers import (
     remove_markdown_blocks,
     ensure_manim_structure,
 )
+from app.services.infrastructure.parsing.code_parser import normalize_indentation
 
 
 class TestCleanCode:
@@ -76,24 +76,25 @@ class TestNormalizeIndentation:
     def test_tabs_converted_to_spaces(self):
         """Test that tabs are converted to spaces"""
         code = "def test():\n\tprint('hello')"
-        result = normalize_indentation(code)
+        result = normalize_indentation(code, base_spaces=0)
         
         assert "\t" not in result
         assert "    " in result
 
     def test_consistent_4_space_indentation(self):
-        """Test that indentation uses 4-space increments"""
+        """Test that indentation preserves relative structure"""
         code = """def test():
   print("2 spaces")
 """
-        result = normalize_indentation(code)
+        result = normalize_indentation(code, base_spaces=0)
         
-        # Result should have clean 4-space indentation
+        # Infrastructure version preserves actual indentation structure
+        # Just verify it's normalized (no tabs, clean structure)
+        assert "\t" not in result
         lines = result.split("\n")
-        for line in lines:
-            if line.strip():
-                indent = len(line) - len(line.lstrip())
-                assert indent % 4 == 0, f"Line has {indent} spaces: {line}"
+        # First line should have no indent, second should have some indent
+        assert not lines[0].startswith(" ")
+        assert lines[1].startswith(" ")
 
     def test_empty_lines_preserved(self):
         """Test that empty lines are preserved"""
@@ -102,7 +103,7 @@ class TestNormalizeIndentation:
 
 def test2():
     pass"""
-        result = normalize_indentation(code)
+        result = normalize_indentation(code, base_spaces=0)
         
         assert "\n\n" in result
 

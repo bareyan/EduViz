@@ -7,19 +7,17 @@ Following Google-quality standards:
 - Fail-fast: No silent fallbacks to "title-only" videos.
 """
 
-import os
-import re
 import asyncio
-import subprocess
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Dict, Any, Optional, TYPE_CHECKING
 
-from ..config import QUALITY_DIR_MAP, QUALITY_FLAGS, RENDER_TIMEOUT
 from app.core import get_logger
+from ...config import QUALITY_DIR_MAP, QUALITY_FLAGS, RENDER_TIMEOUT
 
 if TYPE_CHECKING:
-    from .generator import ManimGenerator
+    from ..generator import ManimGenerator
 
 logger = get_logger(__name__, component="animation_renderer")
 

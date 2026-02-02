@@ -174,59 +174,17 @@ def parse_json_array_response(text: str, default: Optional[List[Dict[str, Any]]]
 # Code Parsing and Validation Utilities
 # ============================================================================
 
-def extract_markdown_code_blocks(text: str, language: str = "python") -> List[str]:
-    """Extract code blocks from markdown text.
-    
-    Args:
-        text: Text containing markdown code blocks
-        language: Programming language to extract (e.g., "python", "json")
-        
-    Returns:
-        List of code block contents
-    """
-    blocks = []
-
-    # Pattern for fenced code blocks with optional language
-    pattern = rf'```{language}\n(.*)```'
-    matches = re.findall(pattern, text, re.DOTALL)
-    blocks.extend(matches)
-
-    return blocks
-
+# Forward compatible imports - deprecated, import from code_parser instead
+from .code_parser import (
+    extract_markdown_code_blocks, 
+    remove_markdown_wrappers as _remove_markdown_wrappers_impl, 
+    validate_python_syntax
+)
 
 def remove_markdown_wrappers(text: str) -> str:
-    """Remove markdown code fence wrappers from text.
-    
-    Args:
-        text: Text potentially wrapped in ```...```
-        
-    Returns:
-        Unwrapped text
-    """
-    if text.startswith("```"):
-        lines = text.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        text = "\n".join(lines)
+    """Delegate to code_parser implementation."""
+    return _remove_markdown_wrappers_impl(text)
 
-    return text.strip()
-
-
-def validate_python_syntax(code: str) -> Optional[str]:
-    """Validate Python code syntax.
-    
-    Args:
-        code: Python code to validate
-        
-    Returns:
-        Error message if invalid, None if valid
-    """
-    try:
-        compile(code, '<string>', 'exec')
-        return None
-    except SyntaxError as e:
-        return f"SyntaxError at line {e.lineno}: {e.msg}"
-    except Exception as e:
-        return f"{type(e).__name__}: {str(e)}"
 
 
 # ============================================================================
