@@ -20,11 +20,12 @@ class SpatialIssue:
 class SpatialValidationResult:
     """Aggregated result of spatial validation across a script."""
     valid: bool
-    errors: List[SpatialIssue] = field(default_factory=list)
-    warnings: List[SpatialIssue] = field(default_factory=list)
+    errors: List[SpatialIssue] = field(default_factory=list)  # Blocking, must fix
+    warnings: List[SpatialIssue] = field(default_factory=list)  # Try to fix, but don't block
+    info: List[SpatialIssue] = field(default_factory=list)  # Informational only, don't send to LLM
     raw_report: str = ""
 
     @property
-    def has_issues(self) -> bool:
-        """Check if any noteworthy items were found."""
-        return len(self.errors) > 0 or len(self.warnings) > 0
+    def has_blocking_issues(self) -> bool:
+        """Check if there are errors that must be fixed."""
+        return len(self.errors) > 0

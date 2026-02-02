@@ -67,9 +67,9 @@ class StaticValidator:
         """Determine if a class inherits from Scene or ThreeDScene."""
         for base in node.bases:
             # Handle direct Scene or manim.Scene
-            if isinstance(base, ast.Name) and base.id in ('Scene', 'ThreeDScene'):
+            if isinstance(base, ast.Name) and base.id in ('Scene', 'ThreeDScene', 'MovingCameraScene', 'ZoomedScene', 'VectorScene'):
                 return True
-            if isinstance(base, ast.Attribute) and base.attr in ('Scene', 'ThreeDScene'):
+            if isinstance(base, ast.Attribute) and base.attr in ('Scene', 'ThreeDScene', 'MovingCameraScene', 'ZoomedScene', 'VectorScene'):
                 return True
         return False
 

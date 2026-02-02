@@ -82,7 +82,10 @@ FULL_IMPLEMENTATION_USER = PromptTemplate(
 4. Set background: `self.camera.background_color = "#171717"`
 5. Use ONLY valid rate functions: `linear`, `smooth`, `rush_into`, `rush_from`
 6. NO `self.wait(0)` - skip zero-duration waits
-7. Use `tracker.get_value()` not `tracker.number` for ValueTrackers
+8. Use `tracker.get_value()` not `tracker.number` for ValueTrackers
+
+## MANIM PATTERNS & RULES
+{patterns}
 
 ## OUTPUT
 Return the complete, runnable Python file in a code block.""",

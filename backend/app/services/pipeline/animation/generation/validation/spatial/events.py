@@ -131,7 +131,7 @@ class SceneTracker:
         self.history.sort(key=lambda x: x.start_time)
 
         for i, ev in enumerate(self.history, 1):
-            dur = ev.duration()
+            dur = ev.duration
             if ev.persists_to_end:
                 time_str = f"{ev.start_time:.2f}s -> END OF VIDEO"
                 dur_str = "(Persists to end of video)"

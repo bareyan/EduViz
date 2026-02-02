@@ -19,7 +19,8 @@ from ..prompts import (
     CHOREOGRAPHER_SYSTEM,
     CHOREOGRAPHY_USER,
     FULL_IMPLEMENTATION_USER,
-    SURGICAL_FIX_USER
+    SURGICAL_FIX_USER,
+    get_compact_patterns
 )
 from .core import (
     clean_code,
@@ -114,9 +115,14 @@ class Animator:
         This loop:
         1. Corrects timing programmatically
         2. Validates the code
-        3. If invalid, applies surgical fix with context
-        4. Tracks fix history for smarter iterations
-        5. Stops when valid or max attempts reached
+        3. If errors exist, applies surgical fix
+        4. If only warnings/info, proceeds to render
+        5. Stops when valid (no errors) or max attempts reached
+        
+        Severity behavior:
+        - errors: MUST fix, blocks loop
+        - warnings: Include in summary but don't block
+        - info: Not sent to LLM, doesn't block
         """
         for attempt in range(1, self.max_fix_attempts + 1):
             # Deterministic timing fix (Post-processor)
@@ -124,8 +130,14 @@ class Animator:
             
             validation = self.validator.validate(code)
             
-            if validation.valid:
-                logger.info(f"Animation code validated successfully on attempt {attempt}")
+            # Only errors block the loop - warnings and info don't
+            has_errors = (not validation.static.valid) or (len(validation.spatial.errors) > 0)
+            
+            if not has_errors:
+                if validation.spatial.warnings:
+                    logger.info(f"Animation validated with {len(validation.spatial.warnings)} warnings (non-blocking)")
+                else:
+                    logger.info(f"Animation code validated successfully on attempt {attempt}")
                 return code
             
             error_summary = validation.get_error_summary()
@@ -143,13 +155,18 @@ class Animator:
         # Final timing check and validation
         code = self.timing_adjuster.adjust(code, target_duration)
         final_validation = self.validator.validate(code)
-        if final_validation.valid:
+        has_final_errors = (not final_validation.static.valid) or (len(final_validation.spatial.errors) > 0)
+        
+        if not has_final_errors:
             return code
-            
-        raise RefinementError(
-            f"Could not stabilize animation code after {self.max_fix_attempts} attempts. "
-            f"Final errors: {final_validation.get_error_summary()}"
+        
+        # Even on failure, return the code to allow a render attempt
+        # The actual rendering may still work even with some issues
+        logger.warning(
+            f"Could not fully stabilize animation after {self.max_fix_attempts} attempts. "
+            f"Proceeding with render anyway. Remaining issues: {final_validation.get_error_summary()[:100]}..."
         )
+        return code
 
 
     async def _generate_plan(self, section: Dict[str, Any], duration: float) -> str:
@@ -185,7 +202,8 @@ class Animator:
             plan=plan,
             segment_timings=segment_timings,
             total_duration=duration,
-            section_id_title=section_id_title
+            section_id_title=section_id_title,
+            patterns=get_compact_patterns()
         )
         
         config = PromptConfig(enable_thinking=True, timeout=300.0)

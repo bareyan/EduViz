@@ -39,11 +39,21 @@ class CodeValidationResult:
                     {"line": w.line_number, "message": w.message, "code": w.code_snippet}
                     for w in self.spatial.warnings
                 ],
+                "info": [
+                    {"line": i.line_number, "message": i.message, "code": i.code_snippet}
+                    for i in self.spatial.info
+                ],
             }
         }
     
     def get_error_summary(self) -> str:
-        """Get LLM-friendly error summary with line numbers, code context, and fix suggestions."""
+        """Get LLM-friendly error summary - ONLY errors are sent to LLM for fixing.
+        
+        Severity levels:
+        - errors: Blocking, MUST send to LLM
+        - warnings: Include for awareness but don't block
+        - info: NOT sent to LLM at all (may be intentional)
+        """
         sections = []
         
         # Static errors (highest priority - blocks other validation)
@@ -55,9 +65,9 @@ class CodeValidationResult:
                 static_lines.append(f"- {err}")
             sections.append("\n".join(static_lines))
         
-        # Spatial errors (with full context and fix suggestions)
+        # Spatial errors (blocking - must fix)
         if self.spatial.errors:
-            spatial_lines = ["## SPATIAL ERRORS (Visual Violations)"]
+            spatial_lines = ["## SPATIAL ERRORS (Must Fix)"]
             for err in self.spatial.errors:
                 line_info = f"Line {err.line_number}" if err.line_number else "Unknown line"
                 code_info = f"\n  Code: `{err.code_snippet}`" if err.code_snippet else ""
@@ -65,14 +75,16 @@ class CodeValidationResult:
                 spatial_lines.append(f"- {line_info}: {err.message}{code_info}{fix_info}")
             sections.append("\n".join(spatial_lines))
             
-        # Spatial warnings (also include fix suggestions)
+        # Warnings are included but not blocking
         if self.spatial.warnings:
-            warn_lines = ["## SPATIAL WARNINGS"]
+            warn_lines = ["## SPATIAL WARNINGS (Non-blocking)"]
             for warn in self.spatial.warnings:
                 line_info = f"Line {warn.line_number}" if warn.line_number else "Unknown line"
                 fix_info = f" (FIX: {warn.suggested_fix})" if warn.suggested_fix else ""
                 warn_lines.append(f"- {line_info}: {warn.message}{fix_info}")
             sections.append("\n".join(warn_lines))
+        
+        # INFO level issues are NOT sent to LLM - they may be intentional
             
         if not sections:
             return "No errors found"
@@ -93,7 +105,7 @@ class CodeValidator:
         
         # If static validation fails (syntax, structure, or policy), skip spatial execution
         if not static_res.valid:
-            spatial_res = SpatialValidationResult(valid=True, errors=[], warnings=[])
+            spatial_res = SpatialValidationResult(valid=True, errors=[], warnings=[], info=[])
         else:
             spatial_res = self.spatial_validator.validate(code)
             

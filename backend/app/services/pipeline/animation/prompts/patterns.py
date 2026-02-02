@@ -237,9 +237,7 @@ COMMON_MISTAKES = '''
    - ❌ `self.wait(0)`
    - ✅ Skip the wait entirely
 
-4. **Undefined colors** - Always use Manim color constants
-   - ❌ `color="blue"` (may not work)
-   - ✅ `color=BLUE`
+4. **Undefined colors** - See "Valid Manim Colors" section above
 
 5. **scale() on groups** - Must use animate syntax for groups
    - ❌ `group.scale(2)` (doesn't animate)
@@ -249,6 +247,109 @@ COMMON_MISTAKES = '''
 
 7. **Forgetting background** - Always set dark background
    - ✅ `self.camera.background_color = "#171717"`
+
+8. **Animating lists** - `Animation` only works on Mobjects, not lists
+   - ❌ `self.play(FadeOut(self.mobjects))` (Crash! list not Mobject)
+   - ✅ `self.play(*[FadeOut(m) for m in self.mobjects])` (animate each)
+   
+9. **VGroup vs Group** - VGroup only accepts VMobjects, Group accepts any Mobject
+   - ❌ `VGroup(Group(...))` (Crash! Group inside VGroup)
+   - ✅ `Group(*self.mobjects)` for mixed mobjects
+   - ✅ `VGroup(*[m for m in self.mobjects if isinstance(m, VMobject)])` for VMobjects only
+
+10. **CENTER doesn't exist** - Use ORIGIN for center position
+    - ❌ `obj.move_to(CENTER)` (Crash!)
+    - ✅ `obj.move_to(ORIGIN)`
+
+11. **Camera.frame doesn't exist on regular Camera** - MovingCameraScene uses self.camera differently
+    - ❌ `self.camera.frame.scale(2)` (Crash on regular Scene!)
+    - ✅ For MovingCameraScene: `self.camera.frame.animate.scale(2)` 
+    - ✅ For regular Scene: Use `self.play(self.camera.frame.animate.scale(2))` ONLY if using MovingCameraScene
+
+12. **Mobject init kwargs** - Don't pass unexpected keyword arguments
+    - ❌ `Circle(size=2)` (Crash! no 'size' param)
+    - ✅ `Circle(radius=2)`
+    - ❌ `Text("hi", size=24)` (Crash! no 'size' param)
+    - ✅ `Text("hi", font_size=24)`
+'''
+
+# =============================================================================
+# VALID MANIM COLORS
+# =============================================================================
+
+VALID_COLORS = '''
+## Valid Manim Colors (USE ONLY THESE)
+
+### Primary Colors
+WHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PINK, PURPLE, TEAL, GOLD, GRAY, GREY
+
+### Color Variants (lighter to darker with _A through _E)
+- RED_A, RED_B, RED_C, RED_D, RED_E
+- BLUE_A, BLUE_B, BLUE_C, BLUE_D, BLUE_E  
+- GREEN_A, GREEN_B, GREEN_C, GREEN_D, GREEN_E
+- YELLOW_A, YELLOW_B, YELLOW_C, YELLOW_D, YELLOW_E
+- GRAY_A, GRAY_B, GRAY_C, GRAY_D, GRAY_E (also GREY_*)
+
+### Special Colors
+MAROON, LIGHT_GRAY, DARK_GRAY, DARK_BLUE, LIGHT_PINK, DARK_BROWN
+
+### COLORS THAT DO NOT EXIST (will crash!)
+❌ CYAN - Use TEAL instead
+❌ MAGENTA - Use PINK or PURPLE instead  
+❌ LIGHT_BLUE - Use BLUE_A or BLUE_B instead
+❌ DARK_RED - Use RED_E or MAROON instead
+❌ AQUA - Use TEAL instead
+'''
+
+# =============================================================================
+# VALID MANIM ANIMATIONS
+# =============================================================================
+
+VALID_ANIMATIONS = '''
+## Valid Manim Animations (USE ONLY THESE)
+
+### Creation Animations
+- `Create(mobject)` - Draw lines/shapes progressively
+- `Write(text)` - Write text character by character
+- `FadeIn(mobject)` - Fade in from transparent
+- `FadeOut(mobject)` - Fade out to transparent
+- `GrowFromCenter(mobject)` - Grow from center point
+- `GrowFromPoint(mobject, point)` - Grow from a specific point
+- `DrawBorderThenFill(mobject)` - Draw outline then fill
+
+### Transform Animations  
+- `Transform(source, target)` - Morph one mobject into another
+- `ReplacementTransform(source, target)` - Transform and replace
+- `TransformMatchingTex(source, target)` - Transform matching LaTeX parts
+- `TransformMatchingShapes(source, target)` - Transform matching shapes
+- `MoveToTarget(mobject)` - Move to mobject.target (set with .generate_target())
+
+### Movement Animations
+- `Rotate(mobject, angle)` - Rotate by angle in radians
+- `Circumscribe(mobject)` - Circle around a mobject
+- `Indicate(mobject)` - Briefly highlight
+- `Flash(point)` - Flash at a point
+- `Wiggle(mobject)` - Wiggle in place
+- `ApplyWave(mobject)` - Wave effect
+
+### Group Animations
+- `LaggedStart(*animations, lag_ratio=0.1)` - Stagger animations
+- `AnimationGroup(*animations)` - Play animations together
+- `Succession(*animations)` - Play animations in sequence
+
+### ANIMATIONS THAT DO NOT EXIST (will crash!)
+❌ Shake - Use Wiggle instead
+❌ Pulse - Use Indicate instead
+❌ Blink - Use Flash instead
+❌ Appear - Use FadeIn instead
+❌ Disappear - Use FadeOut instead
+❌ Morph - Use Transform instead
+❌ Slide - Use mobject.animate.shift() instead
+
+### API Gotchas
+- `Create(mobject)` - Takes ONLY the mobject, no other positional args
+- `Write(text)` - Takes ONLY the text object
+- Use `run_time=X` as keyword arg: `self.play(Create(obj), run_time=2)`
 '''
 
 # =============================================================================
@@ -300,6 +401,10 @@ def get_compact_patterns() -> str:
     """Returns a compact version of patterns for token efficiency."""
     return f"""
 ## Manim Quick Reference
+
+{VALID_COLORS}
+
+{VALID_ANIMATIONS}
 
 {COMMON_MISTAKES}
 

@@ -43,24 +43,6 @@ Your goal is to transform educational narration into clear, beautiful animations
 - ❌ `self.wait(0)` → ✅ Skip the wait entirely
 - ❌ Undefined rate functions (exponential, ease_in, ease_out)
 
-### ValueTracker Pattern (for animated counters)
-```python
-counter = ValueTracker(0)
-number = always_redraw(
-    lambda: DecimalNumber(counter.get_value(), num_decimal_places=0)
-)
-self.play(counter.animate.set_value(100), run_time=3.0)
-```
-
-### Axes Pattern
-```python
-axes = Axes(
-    x_range=[-3, 3, 1], y_range=[0, 5, 1],
-    axis_config={"include_tip": True, "color": GRAY}
-)
-graph = axes.plot(lambda x: x**2, color=BLUE)
-```
-
 Identify your code clearly in a python code block.""",
     description="System prompt for Manim animation generation with patterns"
 )

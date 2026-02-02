@@ -121,7 +121,7 @@ class PipelineModels:
     # Stage 5.2: Manim Code Implementation
     animation_implementation: ModelConfig = field(default_factory=lambda: ModelConfig(
         model_name="gemini-3-flash-preview",
-        thinking_level=ThinkingLevel.MEDIUM,
+        thinking_level=ThinkingLevel.LOW,
         description="Convert plan to Manim code"
     ))
 
