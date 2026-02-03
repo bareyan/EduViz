@@ -31,7 +31,6 @@ from .utils import (
     get_atomic_mobjects,
     get_user_code_context,
     is_overlapping,
-    is_visible,
 )
 from .events import LintEvent, SceneTracker
 
@@ -290,13 +289,48 @@ class SpatialValidator:
                         snippet, suggested_fix=fix
                     ))
                 else:
-                    # Non-text overlaps (e.g., text over graph) are info - don't send to LLM
-                    fix = "Consider using .shift() or .move_to() to separate objects"
-                    info.append(SpatialIssue(
-                        ev.start_line, "info",
-                        f"{ev.m1_name} overlaps {ev.m2_name} - {ev.details}",
-                        snippet, suggested_fix=fix
-                    ))
+                    # Check if this is Text overlapping a Shape (Circle, Square, Rectangle)
+                    shape_types = ('Circle', 'Square', 'Rectangle')
+                    is_text_shape_overlap = (
+                        (ev.m1_type in TEXT_TYPES and ev.m2_type in shape_types) or
+                        (ev.m2_type in TEXT_TYPES and ev.m1_type in shape_types)
+                    )
+                    
+                    if is_text_shape_overlap:
+                        # Parse containment ratio from details if available
+                        containment_ratio = 0.0
+                        if "[Containment: " in ev.details:
+                            try:
+                                # Extract percentage like "90%"
+                                containment_str = ev.details.split("[Containment: ")[1].split("]")[0]
+                                containment_ratio = float(containment_str.rstrip('%')) / 100.0
+                            except (IndexError, ValueError):
+                                pass
+                        
+                        if containment_ratio > 0.9:
+                            # Text is mostly inside shape - likely intentional label
+                            fix = "If unintentional, use .shift() to reposition"
+                            info.append(SpatialIssue(
+                                ev.start_line, "info",
+                                f"{ev.m1_name} overlaps {ev.m2_name} (label, {containment_ratio:.0%} contained) - {ev.details}",
+                                snippet, suggested_fix=fix
+                            ))
+                        else:
+                            # Text crosses shape boundary - messy overlap (ERROR)
+                            fix = "Reposition text outside shape with .shift() or .next_to()"
+                            errors.append(SpatialIssue(
+                                ev.start_line, "error",
+                                f"{ev.m1_name} overlaps {ev.m2_name} (crosses boundary, {containment_ratio:.0%} contained) - {ev.details}",
+                                snippet, suggested_fix=fix
+                            ))
+                    else:
+                        # Non-text overlaps (e.g., shapes overlapping) are info
+                        fix = "Consider using .shift() or .move_to() to separate objects"
+                        info.append(SpatialIssue(
+                            ev.start_line, "info",
+                            f"{ev.m1_name} overlaps {ev.m2_name} - {ev.details}",
+                            snippet, suggested_fix=fix
+                        ))
             elif ev.event_type == "occlusion":
                 # Occlusions are info - may be intentional (like labels on graphs)
                 fix = f"Consider .set_z_index(1) to bring to front"
@@ -364,14 +398,36 @@ class SpatialValidator:
         finally: self._cleanup_temp(temp_filename)
 
     def _apply_fast_config(self):
-        self._manim_config.update({"write_to_movie": False, "save_last_frame": False, "preview": False, 
-                                   "verbosity": "CRITICAL", "renderer": "cairo", "frame_rate": 1, "quality": "low_quality"})
+        # Ultra-low quality for fast validation while still executing animations
+        self._manim_config.update({
+            "write_to_movie": False,  # Don't write video file
+            "save_last_frame": False,  # Don't save frame
+            "preview": False,  # No preview window
+            "verbosity": "CRITICAL",  # Minimal logging
+            "renderer": "cairo",  # Faster than opengl for validation
+            "frame_rate": 1,  # Minimum framerate
+            "pixel_width": 320,  # Ultra-low resolution
+            "pixel_height": 180,  # 180p
+            "quality": "low_quality"
+        })
 
     def _run_validation(self, temp_filename, code) -> SpatialValidationResult:
-        # No longer patching play/wait - only check final state after render
         errors, warnings, info, raw = [], [], [], []
         module_name = os.path.basename(temp_filename).replace(".py", "")
+        
+        # Monkey-patch play to check state after every animation
+        original_play = self._Scene_class.play
+        validator_ref = self
+        
+        def patched_play(scene_self, *args, **kwargs):
+            # Run the actual animation
+            original_play(scene_self, *args, **kwargs)
+            # Check state immediately after this animation finishes
+            validator_ref._check_scene_state(scene_self)
+            
         try:
+            self._Scene_class.play = patched_play
+            
             spec = importlib.util.spec_from_file_location(module_name, temp_filename)
             user_module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = user_module
@@ -382,11 +438,8 @@ class SpatialValidator:
             for SCls in scenes:
                 self._manim_config.renderer = "opengl" if issubclass(SCls, self._ThreeDScene_class) else "cairo"
                 scene = SCls()
-                # Use construct() instead of render() - creates mobjects without rendering frames
-                # This is MUCH faster since we only need final positions, not video output
-                scene.construct()
-                # Check FINAL state after construct completes
-                self._check_scene_state(scene)
+                scene.render()
+                
                 if scene in self.trackers:
                     _, last = get_user_code_context(self._linter_path)
                     self._collect_issues(scene, code, errors, warnings, info)
@@ -397,8 +450,9 @@ class SpatialValidator:
             tb = traceback.format_exc()
             errors.append(SpatialIssue(0, "error", f"Validation crashed: {e}\nTraceback:\n{tb}", ""))
         finally:
+            self._Scene_class.play = original_play  # Restore original
             if module_name in sys.modules: del sys.modules[module_name]
-        # Only errors determine validity; warnings/info don't block rendering
+            
         return SpatialValidationResult(valid=not errors, errors=errors, warnings=warnings, info=info, raw_report="\n".join(raw))
 
     def _cleanup_temp(self, path):

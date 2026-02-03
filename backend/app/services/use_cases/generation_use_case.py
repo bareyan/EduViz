@@ -13,7 +13,6 @@ from typing import Callable, Optional, Dict, Any
 from fastapi import HTTPException, BackgroundTasks
 
 from app.config import OUTPUT_DIR
-from app.config.models import AVAILABLE_PIPELINES
 from app.models import GenerationRequest, JobResponse, ResumeInfo
 from app.services.pipeline.assembly import VideoGenerator
 from app.services.infrastructure.orchestration import get_job_manager, JobStatus
@@ -27,10 +26,8 @@ class GenerationUseCase:
         self.job_manager = get_job_manager()
 
     def _validate_pipeline(self, pipeline_name: str) -> str:
-        name = pipeline_name or "default"
-        if name not in AVAILABLE_PIPELINES:
-            raise HTTPException(status_code=400, detail=f"Unknown pipeline: {name}")
-        return name
+        # Only default pipeline is available now
+        return "default"
 
     def _select_job(self, resume_job_id: Optional[str]) -> tuple[str, bool]:
         """Create or reuse a job id; returns (job_id, resume_mode)."""

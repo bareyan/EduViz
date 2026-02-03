@@ -223,54 +223,77 @@ class CounterScene(Scene):
 # =============================================================================
 
 COMMON_MISTAKES = '''
-## Common Manim Mistakes to Avoid
+## CRITICAL RULES & COMMON PITFALLS (STRICT ADHERENCE REQUIRED)
+
+[CRITICAL_WARNING] MOST FREQUENT ERROR: FORGETTING TO CLEAN UP OLD OBJECTS
+   - You often forget to remove objects before adding new ones at the same position.
+   - **Visual Result**: Unreadable text overlaps and cluttered scenes.
+   - **Fix**: ALWAYS use `FadeOut()`, `ReplacementTransform()`, or `self.remove()` before placing new content.
 
 1. **ValueTracker.number** - WRONG! Use `tracker.get_value()` instead
-   - ❌ `tracker.number`
-   - ✅ `tracker.get_value()`
+   - [WRONG] `tracker.number`
+   - [CORRECT] `tracker.get_value()`
 
 2. **ease_in_expo, exponential** - Not standard rate functions
-   - ❌ `rate_func=ease_in_expo`
-   - ✅ `rate_func=smooth` or `rate_func=linear`
+   - [WRONG] `rate_func=ease_in_expo`
+   - [CORRECT] `rate_func=smooth` or `rate_func=linear`
 
 3. **self.wait(0)** - Zero-duration waits cause issues
-   - ❌ `self.wait(0)`
-   - ✅ Skip the wait entirely
+   - [WRONG] `self.wait(0)`
+   - [CORRECT] Skip the wait entirely
 
 4. **Undefined colors** - See "Valid Manim Colors" section above
 
 5. **scale() on groups** - Must use animate syntax for groups
-   - ❌ `group.scale(2)` (doesn't animate)
-   - ✅ `group.animate.scale(2)`
+   - [WRONG] `group.scale(2)` (doesn't animate)
+   - [CORRECT] `group.animate.scale(2)`
 
 6. **Missing imports** - Always start with `from manim import *`
 
 7. **Forgetting background** - Always set dark background
-   - ✅ `self.camera.background_color = "#171717"`
+   - [CORRECT] `self.camera.background_color = "#171717"`
 
 8. **Animating lists** - `Animation` only works on Mobjects, not lists
-   - ❌ `self.play(FadeOut(self.mobjects))` (Crash! list not Mobject)
-   - ✅ `self.play(*[FadeOut(m) for m in self.mobjects])` (animate each)
+   - [WRONG] `self.play(FadeOut(self.mobjects))` (Crash! list not Mobject)
+   - [CORRECT] `self.play(*[FadeOut(m) for m in self.mobjects])` (animate each)
    
 9. **VGroup vs Group** - VGroup only accepts VMobjects, Group accepts any Mobject
-   - ❌ `VGroup(Group(...))` (Crash! Group inside VGroup)
-   - ✅ `Group(*self.mobjects)` for mixed mobjects
-   - ✅ `VGroup(*[m for m in self.mobjects if isinstance(m, VMobject)])` for VMobjects only
+   - [WRONG] `VGroup(Group(...))` (Crash! Group inside VGroup)
+   - [CORRECT] `Group(*self.mobjects)` for mixed mobjects
+   - [CORRECT] `VGroup(*[m for m in self.mobjects if isinstance(m, VMobject)])` for VMobjects only
 
 10. **CENTER doesn't exist** - Use ORIGIN for center position
-    - ❌ `obj.move_to(CENTER)` (Crash!)
-    - ✅ `obj.move_to(ORIGIN)`
+    - [WRONG] `obj.move_to(CENTER)` (Crash!)
+    - [CORRECT] `obj.move_to(ORIGIN)`
 
 11. **Camera.frame doesn't exist on regular Camera** - MovingCameraScene uses self.camera differently
-    - ❌ `self.camera.frame.scale(2)` (Crash on regular Scene!)
-    - ✅ For MovingCameraScene: `self.camera.frame.animate.scale(2)` 
-    - ✅ For regular Scene: Use `self.play(self.camera.frame.animate.scale(2))` ONLY if using MovingCameraScene
+    - [WRONG] `self.camera.frame.scale(2)` (Crash on regular Scene!)
+    - [CORRECT] For MovingCameraScene: `self.camera.frame.animate.scale(2)` 
+    - [CORRECT] For regular Scene: Use `self.play(self.camera.frame.animate.scale(2))` ONLY if using MovingCameraScene
 
 12. **Mobject init kwargs** - Don't pass unexpected keyword arguments
-    - ❌ `Circle(size=2)` (Crash! no 'size' param)
-    - ✅ `Circle(radius=2)`
-    - ❌ `Text("hi", size=24)` (Crash! no 'size' param)
-    - ✅ `Text("hi", font_size=24)`
+    - [WRONG] `Circle(size=2)` (Crash! no 'size' param)
+    - [CORRECT] `Circle(radius=2)`
+    - [WRONG] `Text("hi", size=24)` (Crash! no 'size' param)
+    - [CORRECT] `Text("hi", font_size=24)`
+
+13. **Forgetting to remove old objects** - Clean up before placing new items
+    - [WRONG] Creating new text without removing old → Text overlaps!
+    - [CORRECT] `self.play(FadeOut(old_text)); self.play(FadeIn(new_text))`
+    - [CORRECT] `self.play(ReplacementTransform(old_obj, new_obj))`
+    - [CORRECT] `self.remove(old_obj)` before adding new at same position
+
+14. **Text/label overlapping** - Always position labels to avoid overlaps
+    - [WRONG] Multiple labels at same position → Unreadable!
+    - [CORRECT] Use `.next_to(obj, direction, buff=0.3)` to position labels
+    - [CORRECT] Use `.shift(UP * 0.5)` to offset overlapping items
+    - [CORRECT] For axis labels, use `.to_edge(DOWN)` or `.to_corner()`
+
+15. **Objects going out of frame** - Keep everything visible
+    - [WRONG] Objects positioned at edges get cut off
+    - [CORRECT] Use `.scale(0.8)` to shrink large groups
+    - [CORRECT] Check positions with `.move_to(ORIGIN)` then shift
+    - [CORRECT] X range: -6 to 6, Y range: -3.5 to 3.5 (visible area)
 '''
 
 # =============================================================================
@@ -294,11 +317,11 @@ WHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PINK, PURPLE, TEAL, GOLD, GRAY, 
 MAROON, LIGHT_GRAY, DARK_GRAY, DARK_BLUE, LIGHT_PINK, DARK_BROWN
 
 ### COLORS THAT DO NOT EXIST (will crash!)
-❌ CYAN - Use TEAL instead
-❌ MAGENTA - Use PINK or PURPLE instead  
-❌ LIGHT_BLUE - Use BLUE_A or BLUE_B instead
-❌ DARK_RED - Use RED_E or MAROON instead
-❌ AQUA - Use TEAL instead
+[WRONG] CYAN - Use TEAL instead
+[WRONG] MAGENTA - Use PINK or PURPLE instead  
+[WRONG] LIGHT_BLUE - Use BLUE_A or BLUE_B instead
+[WRONG] DARK_RED - Use RED_E or MAROON instead
+[WRONG] AQUA - Use TEAL instead
 '''
 
 # =============================================================================
@@ -338,13 +361,13 @@ VALID_ANIMATIONS = '''
 - `Succession(*animations)` - Play animations in sequence
 
 ### ANIMATIONS THAT DO NOT EXIST (will crash!)
-❌ Shake - Use Wiggle instead
-❌ Pulse - Use Indicate instead
-❌ Blink - Use Flash instead
-❌ Appear - Use FadeIn instead
-❌ Disappear - Use FadeOut instead
-❌ Morph - Use Transform instead
-❌ Slide - Use mobject.animate.shift() instead
+[WRONG] Shake - Use Wiggle instead
+[WRONG] Pulse - Use Indicate instead
+[WRONG] Blink - Use Flash instead
+[WRONG] Appear - Use FadeIn instead
+[WRONG] Disappear - Use FadeOut instead
+[WRONG] Morph - Use Transform instead
+[WRONG] Slide - Use mobject.animate.shift() instead
 
 ### API Gotchas
 - `Create(mobject)` - Takes ONLY the mobject, no other positional args

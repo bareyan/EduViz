@@ -28,23 +28,10 @@ Your goal is to transform educational narration into clear, beautiful animations
 - Always set `self.camera.background_color = "#171717"`
 - Use descriptive variable names for all objects
 - Ensure total animation duration matches target exactly
-
-## MANIM QUICK REFERENCE
-
-### Available Rate Functions (USE ONLY THESE)
-- `linear` - Constant speed
-- `smooth` - Smooth ease in/out (default, best for most animations)
-- `rush_into` - Fast start, slow end
-- `rush_from` - Slow start, fast end
-
-### Common Mistakes to AVOID
-- ❌ `tracker.number` → ✅ `tracker.get_value()`
-- ❌ `rate_func=ease_in_expo` → ✅ `rate_func=smooth`
-- ❌ `self.wait(0)` → ✅ Skip the wait entirely
-- ❌ Undefined rate functions (exponential, ease_in, ease_out)
+- **STRICTLY FOLLOW the "Manim Quick Reference" provided in the user prompt.**
 
 Identify your code clearly in a python code block.""",
-    description="System prompt for Manim animation generation with patterns"
+    description="System prompt for Manim animation generation"
 )
 
 

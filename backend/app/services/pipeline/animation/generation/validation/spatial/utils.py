@@ -27,19 +27,6 @@ def get_user_code_context(linter_path: str) -> Tuple[str, int]:
     return "unknown", 0
 
 
-def is_visible(mobj: Any, VMobject_class: type, ImageMobject_class: type) -> bool:
-    """Skip invisible objects to reduce false positives."""
-    if isinstance(mobj, VMobject_class):
-        if hasattr(mobj, "get_fill_opacity") and hasattr(mobj, "get_stroke_opacity"):
-            if mobj.get_fill_opacity() == 0 and mobj.get_stroke_opacity() == 0:
-                return False
-        else:
-            LOGGER.debug("VMobject missing opacity methods: %s", type(mobj).__name__)
-    elif isinstance(mobj, ImageMobject_class):
-        if hasattr(mobj, "opacity") and mobj.opacity == 0:
-            return False
-    return True
-
 
 def get_atomic_mobjects(mobject: Any, manim_classes: Dict[str, type]) -> List[Any]:
     """Flatten objects to the atomic level to avoid duplicate checks."""
@@ -58,16 +45,9 @@ def get_atomic_mobjects(mobject: Any, manim_classes: Dict[str, type]) -> List[An
         manim_classes['DashedLine'],
         manim_classes['Brace'],
         manim_classes['Vector'],
-        manim_classes['ComplexPlane'],
-        manim_classes['Circle'],
-        manim_classes['Square'],
-        manim_classes['Rectangle']
+        manim_classes['ComplexPlane']
     )
 
-    if isinstance(mobject, ignore_types):
-        return []
-    if not is_visible(mobject, manim_classes['VMobject'], manim_classes['ImageMobject']):
-        return []
 
     if isinstance(mobject, check_types):
         return [mobject]
@@ -90,7 +70,7 @@ def is_overlapping(m1: Any, m2: Any, overlap_margin: float) -> bool:
     try:
         w1, h1 = m1.width, m1.height
         w2, h2 = m2.width, m2.height
-        if w1 < 0.01 or h1 < 0.01 or w2 < 0.01 or h2 < 0.01:
+        if w1 < 0.001 or h1 < 0.001 or w2 < 0.001 or h2 < 0.001:
             return False
 
         c1, c2 = m1.get_center(), m2.get_center()

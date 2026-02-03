@@ -73,7 +73,29 @@ class LintEvent:
             area, _, desc = get_overlap_metrics(m1, m2)
             if area > self.max_severity:
                 self.max_severity = area
-                self.details = f"{desc} [Max Area: {area:.2f}]"
+                
+                # Check if this is Text/Shape overlap and calculate containment
+                shape_types = ('Circle', 'Square', 'Rectangle')
+                m1_type = m1.__class__.__name__
+                m2_type = m2.__class__.__name__
+                
+                is_text_shape = (
+                    (m1_type in TEXT_TYPES and m2_type in shape_types) or
+                    (m2_type in TEXT_TYPES and m1_type in shape_types)
+                )
+                
+                containment_info = ""
+                if is_text_shape:
+                    try:
+                        # Identify which is text
+                        text_obj = m1 if m1_type in TEXT_TYPES else m2
+                        text_area = text_obj.width * text_obj.height
+                        containment_ratio = area / text_area if text_area > 0 else 0
+                        containment_info = f" [Containment: {containment_ratio:.0%}]"
+                    except Exception:
+                        pass
+                
+                self.details = f"{desc} [Max Area: {area:.2f}]{containment_info}"
 
         elif self.event_type == "occlusion":
             area, _, desc = get_overlap_metrics(m1, m2)

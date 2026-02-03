@@ -27,33 +27,25 @@ async def get_resume_info(job_id: str):
 @router.get("/pipelines")
 async def get_available_pipelines():
     """Get available pipeline configurations"""
-    from ..config.models import AVAILABLE_PIPELINES, get_active_pipeline_name
+    from ..config.models import DEFAULT_PIPELINE_MODELS
 
-    pipelines = []
-    for name, pipeline in AVAILABLE_PIPELINES.items():
-        description = ""
-        if name == "default":
-            description = "Balanced quality and speed - best for comprehensive videos"
-        elif name == "high_quality":
-            description = "Maximum quality with stronger models and deeper thinking"
-        elif name == "cost_optimized":
-            description = "Budget-friendly with fastest models"
-        elif name == "overview":
-            description = "Optimized for overview videos - 85% cheaper than default"
-
-        pipelines.append({
-            "name": name,
-            "description": description,
-            "is_active": name == get_active_pipeline_name(),
-            "auto_selected_for": "overview" if name == "overview" else None,
+    pipeline = DEFAULT_PIPELINE_MODELS
+    pipelines = [
+        {
+            "name": "default",
+            "description": "Default pipeline with optimized models for each stage",
+            "is_active": True,
             "models": {
+                "analysis": pipeline.analysis.model_name,
                 "script_generation": pipeline.script_generation.model_name,
-                "manim_generation": pipeline.manim_generation.model_name,
-                "visual_script_generation": pipeline.visual_script_generation.model_name,
+                "animation_choreography": pipeline.animation_choreography.model_name,
+                "animation_implementation": pipeline.animation_implementation.model_name,
+                "animation_refinement": pipeline.animation_refinement.model_name,
             }
-        })
+        }
+    ]
 
     return {
         "pipelines": pipelines,
-        "active": get_active_pipeline_name()
+        "active": "default"
     }

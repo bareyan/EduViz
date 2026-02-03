@@ -75,16 +75,13 @@ FULL_IMPLEMENTATION_USER = PromptTemplate(
 - **Background**: #171717
 
 ## CODE REQUIREMENTS
-
 1. Start with `from manim import *`
 2. Define class `Scene{section_id_title}(Scene)`
 3. Implement `def construct(self):`
 4. Set background: `self.camera.background_color = "#171717"`
-5. Use ONLY valid rate functions: `linear`, `smooth`, `rush_into`, `rush_from`
-6. NO `self.wait(0)` - skip zero-duration waits
-8. Use `tracker.get_value()` not `tracker.number` for ValueTrackers
+5. **STRICTLY FOLLOW the Constraints & Patterns below to avoid crashes.**
 
-## MANIM PATTERNS & RULES
+## MANIM PATTERNS & CRITICAL CONSTRAINTS
 {patterns}
 
 ## OUTPUT
