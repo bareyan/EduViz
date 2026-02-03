@@ -8,6 +8,7 @@ Pipeline:
 """
 
 import json
+from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from app.core import get_logger
@@ -127,6 +128,41 @@ class Animator:
         # All retries exhausted - return last code anyway to attempt render
         logger.warning(f"All {MAX_CLEAN_RETRIES} clean retries exhausted. Returning last code.")
         return code
+    
+    
+    def _format_visual_context(self, validation) -> str:
+        """Format screenshot information for surgical fix prompt."""
+        spatial_result = validation.spatial
+        if not spatial_result.frame_captures:
+            return ""
+        
+        # Group issues by frame
+        frame_info = []
+        for fc in spatial_result.frame_captures:
+            issues_at_frame = [
+                issue for issue in (
+                    spatial_result.errors + 
+                    spatial_result.warnings + 
+                    spatial_result.info
+                )
+                if issue.frame_id == fc.screenshot_path
+            ]
+            
+            if issues_at_frame:
+                frame_info.append(
+                    f"**Frame at t={fc.timestamp}s** (screenshot attached):\n" +
+                    "\n".join(f"  - {issue.message}" for issue in issues_at_frame)
+                )
+        
+        if frame_info:
+            return (
+                "\n## VISUAL CONTEXT\n"
+                "Screenshots are attached showing the exact layout issues:\n\n" +
+                "\n\n".join(frame_info) +
+                "\n\nLook at the attached images to understand the spatial problems before applying fixes.\n"
+            )
+        
+        return ""
 
 
     async def _agentic_fix_loop(self, code: str, section_title: str, target_duration: float) -> tuple[str, bool]:
@@ -172,13 +208,19 @@ class Animator:
                 "error": error_summary[:200]
             })
             
-            # Apply surgical fix with context
-            code = await self._apply_surgical_fix(code, error_summary)
+            # Apply surgical fix with context (includes visual context)
+            code = await self._apply_surgical_fix(code, error_summary, validation)
             
+            # Clean up screenshots after fix attempt
+            validation.spatial.cleanup_screenshots()
+        
         # Final timing check and validation
         code = self.timing_adjuster.adjust(code, target_duration)
         final_validation = self.validator.validate(code)
         has_final_errors = (not final_validation.static.valid) or (len(final_validation.spatial.errors) > 0)
+        
+        # Clean up final validation screenshots
+        final_validation.spatial.cleanup_screenshots()
         
         if not has_final_errors:
             return code, True
@@ -243,8 +285,8 @@ class Animator:
         return clean_code(result["response"])
 
 
-    async def _apply_surgical_fix(self, code: str, errors: str) -> str:
-        """Applies a surgical fix using tool calls with optional history context."""
+    async def _apply_surgical_fix(self, code: str, errors: str, validation=None) -> str:
+        """Applies a surgical fix using tool calls with optional history context and visual context."""
         # Build prompt with optional history context
         history_context = ""
         if len(self.fix_history) > 1:
@@ -254,17 +296,59 @@ class Animator:
                 for h in recent
             ])
         
-        prompt = SURGICAL_FIX_USER.format(code=code, errors=errors) + history_context
+        # Add visual context from screenshots
+        visual_context = self._format_visual_context(validation) if validation else ""
+        
+        prompt_text = SURGICAL_FIX_USER.format(
+            code=code, 
+            errors=errors,
+            visual_context=visual_context
+        ) + history_context
         
         tool_declarations = [create_tool_declaration(self.editor, self.engine.types)]
         config = PromptConfig(timeout=120.0)
         
-        result = await self.engine.generate(
-            prompt=prompt,
-            system_prompt=ANIMATOR_SYSTEM.template,
-            tools=tool_declarations,
-            config=config
-        )
+        # Build multimodal content if screenshots exist
+        if validation and validation.spatial.frame_captures:
+            contents = [prompt_text]
+            
+            # Add screenshots as image parts
+            for fc in validation.spatial.frame_captures:
+                if Path(fc.screenshot_path).exists():
+                    try:
+                        image_data = Path(fc.screenshot_path).read_bytes()
+                        # Try Vertex AI method first, fallback to Gemini API method
+                        try:
+                            image_part = self.engine.types.Part.from_data(
+                                data=image_data,
+                                mime_type="image/png"
+                            )
+                        except (AttributeError, TypeError):
+                            # Fallback for Gemini API
+                            image_part = self.engine.types.Part.from_bytes(
+                                data=image_data,
+                                mime_type="image/png"
+                            )
+                        contents.append(image_part)
+                    except Exception as e:
+                        logger.warning(f"Failed to read screenshot {fc.screenshot_path}: {e}")
+            
+            # Use multimodal generate
+            result = await self.engine.generate(
+                prompt="",  # Empty because content is in contents
+                system_prompt=ANIMATOR_SYSTEM.template,
+                tools=tool_declarations,
+                config=config,
+                contents=contents
+            )
+        else:
+            # No screenshots - use standard text-only prompt
+            result = await self.engine.generate(
+                prompt=prompt_text,
+                system_prompt=ANIMATOR_SYSTEM.template,
+                tools=tool_declarations,
+                config=config
+            )
         
         if not result.get("success"):
             logger.error(f"Surgical fix call failed: {result.get('error')}")

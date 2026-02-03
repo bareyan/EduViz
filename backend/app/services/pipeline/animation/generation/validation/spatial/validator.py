@@ -17,7 +17,7 @@ from .constants import (
     OVERLAP_MARGIN,
     TEXT_TYPES,
 )
-from .models import SpatialIssue, SpatialValidationResult
+from .models import SpatialIssue, SpatialValidationResult, FrameCapture
 from .geometry import get_overlap_metrics, get_z_index, get_boundary_violation
 from .utils import (
     get_atomic_mobjects,
@@ -41,6 +41,7 @@ class SpatialValidator:
         self.linter_path = linter_path or os.path.abspath(__file__)
         self.engine = ManimEngine(self.linter_path)
         self.trackers: Dict[Any, SceneTracker] = {}
+        self.frame_captures: Dict[float, FrameCapture] = {}  # timestamp -> FrameCapture (dedup)
 
     def validate(self, code: str) -> SpatialValidationResult:
         """Entry point for spatial validation."""
@@ -50,6 +51,7 @@ class SpatialValidator:
             return SpatialValidationResult(valid=True, raw_report=f"Manim unavailable: {e}")
 
         self.trackers.clear()
+        self.frame_captures.clear()
         self.engine.apply_fast_config()
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
@@ -91,13 +93,15 @@ class SpatialValidator:
             errors=errors,
             warnings=warnings,
             info=info,
-            raw_report="\n".join(reports)
+            raw_report="\n".join(reports),
+            frame_captures=list(self.frame_captures.values())
         )
 
     def _check_scene_state(self, scene: Any) -> None:
         """Detection logic: Analyzes current scene state for spatial issues."""
         if scene not in self.trackers:
             self.trackers[scene] = SceneTracker()
+            self.trackers[scene]._scene = scene  # Store for frame capture
         tracker = self.trackers[scene]
 
         current_time = scene.renderer.time
@@ -117,7 +121,11 @@ class SpatialValidator:
 
                 if pair_id not in tracker.active_events:
                     line = self._get_line(m1, triggering_line)
-                    tracker.active_events[pair_id] = LintEvent(m1, m2, "overlap", current_time, "user_code", line)
+                    event = LintEvent(m1, m2, "overlap", current_time, "user_code", line)
+                    # Capture frame for new event (deduplicated by timestamp)
+                    frame_id = self._capture_frame_if_needed(scene, current_time, pair_id)
+                    event.frame_id = frame_id
+                    tracker.active_events[pair_id] = event
                 tracker.active_events[pair_id].update(current_time, m1, m2)
 
                 area, _, _ = get_overlap_metrics(m1, m2)
@@ -134,7 +142,10 @@ class SpatialValidator:
                 active_ids.add(b_id)
                 if b_id not in tracker.active_events:
                     line = self._get_line(m, triggering_line)
-                    tracker.active_events[b_id] = LintEvent(m, None, "boundary", current_time, "user_code", line)
+                    event = LintEvent(m, None, "boundary", current_time, "user_code", line)
+                    frame_id = self._capture_frame_if_needed(scene, current_time, b_id)
+                    event.frame_id = frame_id
+                    tracker.active_events[b_id] = event
                 tracker.active_events[b_id].update(current_time, m, manim_config=self.engine.config)
 
         # Cleanup finished events
@@ -157,7 +168,10 @@ class SpatialValidator:
                 active_ids.add(oid)
                 if oid not in tracker.active_events:
                     t_line = self._get_line(target, line)
-                    tracker.active_events[oid] = LintEvent(target, anchor, "occlusion", current_time, "user_code", t_line)
+                    event = LintEvent(target, anchor, "occlusion", current_time, "user_code", t_line)
+                    frame_id = self._capture_frame_if_needed(tracker._scene if hasattr(tracker, '_scene') else None, current_time, oid)
+                    event.frame_id = frame_id
+                    tracker.active_events[oid] = event
                 tracker.active_events[oid].update(current_time, target, anchor, z_info=f"z_index {tz:.2f} behind {az:.2f}")
 
     def _detect_quality_heuristics(self, atoms: List[Any], tracker: SceneTracker, current_time: float, line: int, active_ids: set) -> None:
@@ -172,7 +186,10 @@ class SpatialValidator:
                 active_ids.add(q_id)
                 if q_id not in tracker.active_events:
                     m_line = self._get_line(m, line)
-                    tracker.active_events[q_id] = LintEvent(m, None, "font_size", current_time, "user_code", m_line)
+                    event = LintEvent(m, None, "font_size", current_time, "user_code", m_line)
+                    frame_id = self._capture_frame_if_needed(tracker._scene if hasattr(tracker, '_scene') else None, current_time, q_id)
+                    event.frame_id = frame_id
+                    tracker.active_events[q_id] = event
                 tracker.active_events[q_id].update(current_time, m)
                 
             # Text length
@@ -182,10 +199,59 @@ class SpatialValidator:
                 active_ids.add(l_id)
                 if l_id not in tracker.active_events:
                     m_line = self._get_line(m, line)
-                    tracker.active_events[l_id] = LintEvent(m, None, "length", current_time, "user_code", m_line)
+                    event = LintEvent(m, None, "length", current_time, "user_code", m_line)
+                    frame_id = self._capture_frame_if_needed(tracker._scene if hasattr(tracker, '_scene') else None, current_time, l_id)
+                    event.frame_id = frame_id
+                    tracker.active_events[l_id] = event
                 tracker.active_events[l_id].update(current_time, m)
 
     def _cleanup_temp(self, path: str) -> None:
         try: os.unlink(path)
         except Exception: pass
         linecache.clearcache()
+
+    def _capture_frame_if_needed(self, scene: Any, timestamp: float, event_id: str) -> Optional[str]:
+        """
+        Capture frame at this timestamp if not already captured (deduplication).
+        Returns frame_id for linking issues to screenshots.
+        """
+        if scene is None:
+            return None
+            
+        # Round timestamp to avoid floating point comparison issues
+        timestamp_key = round(timestamp, 3)
+        
+        # Already captured at this moment? Reuse it
+        if timestamp_key in self.frame_captures:
+            self.frame_captures[timestamp_key].event_ids.append(event_id)
+            return self.frame_captures[timestamp_key].screenshot_path
+        
+        # Capture new frame
+        try:
+            screenshot_path = os.path.join(
+                tempfile.gettempdir(),
+                f"spatial_frame_{timestamp_key:.3f}_{id(scene)}.png"
+            )
+            
+            # Get current frame and save
+            frame = scene.renderer.get_frame()
+            if frame is not None:
+                from PIL import Image
+                import numpy as np
+                # Convert frame to image and save
+                img = Image.fromarray(np.uint8(frame))
+                img.save(screenshot_path)
+                
+                # Store in cache
+                frame_capture = FrameCapture(
+                    screenshot_path=screenshot_path,
+                    timestamp=timestamp_key,
+                    event_ids=[event_id]
+                )
+                self.frame_captures[timestamp_key] = frame_capture
+                LOGGER.debug(f"Captured frame at t={timestamp_key}s: {screenshot_path}")
+                return screenshot_path
+        except Exception as e:
+            LOGGER.warning(f"Failed to capture frame at t={timestamp}: {e}")
+            
+        return None

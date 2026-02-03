@@ -27,40 +27,44 @@ class IssueReporter:
         """Iterates through events and populates issue lists."""
         for ev in events:
             snippet = self._get_code_snippet(ev.start_line)
+            frame_id = getattr(ev, 'frame_id', None)
             
             if ev.event_type == "overlap":
-                self._handle_overlap_event(ev, snippet, errors, info)
+                self._handle_overlap_event(ev, snippet, errors, info, frame_id)
             elif ev.event_type == "occlusion":
                 info.append(SpatialIssue(
                     ev.start_line, "info",
                     f"{ev.m1_name} occluded by {ev.m2_name} - {ev.details}",
-                    snippet, suggested_fix="Consider .set_z_index(1) to bring to front"
+                    snippet, suggested_fix="Consider .set_z_index(1) to bring to front",
+                    frame_id=frame_id
                 ))
             elif ev.event_type == "boundary":
                 fix = self._get_boundary_fix(ev.details)
                 msg = f"{ev.m1_name} out of bounds" + (" (PERSISTS)" if ev.persists_to_end else "") + f" - {ev.details}"
-                errors.append(SpatialIssue(ev.start_line, "error", msg, snippet, suggested_fix=fix))
+                errors.append(SpatialIssue(ev.start_line, "error", msg, snippet, suggested_fix=fix, frame_id=frame_id))
             elif ev.event_type == "font_size":
                 warnings.append(SpatialIssue(
                     ev.start_line, "warning",
                     f"{ev.m1_name} font size too large - {ev.details}",
-                    snippet, suggested_fix="Reduce with font_size=36 or .scale(0.7)"
+                    snippet, suggested_fix="Reduce with font_size=36 or .scale(0.7)",
+                    frame_id=frame_id
                 ))
             elif ev.event_type == "length":
                 warnings.append(SpatialIssue(
                     ev.start_line, "warning",
                     f"{ev.m1_name} text too long - {ev.details}",
-                    snippet, suggested_fix="Shorten text or split into multiple Text objects"
+                    snippet, suggested_fix="Shorten text or split into multiple Text objects",
+                    frame_id=frame_id
                 ))
 
-    def _handle_overlap_event(self, ev: Any, snippet: str, errors: List[SpatialIssue], info: List[SpatialIssue]) -> None:
+    def _handle_overlap_event(self, ev: Any, snippet: str, errors: List[SpatialIssue], info: List[SpatialIssue], frame_id: Optional[str]) -> None:
         """Determines if an overlap is an error (collision) or info (intentional label)."""
         if ev.m1_type in TEXT_TYPES and ev.m2_type in TEXT_TYPES:
             fix = "Separate with .shift(UP * 0.5) or use .next_to() positioning"
             errors.append(SpatialIssue(
                 ev.start_line, "error",
                 f"{ev.m1_name} overlaps {ev.m2_name} (text/text) - {ev.details}",
-                snippet, suggested_fix=fix
+                snippet, suggested_fix=fix, frame_id=frame_id
             ))
         else:
             shape_types = ('Circle', 'Square', 'Rectangle')
@@ -68,15 +72,15 @@ class IssueReporter:
                              (ev.m2_type in TEXT_TYPES and ev.m1_type in shape_types)
             
             if is_text_shape:
-                self._handle_text_shape_overlap(ev, snippet, errors, info)
+                self._handle_text_shape_overlap(ev, snippet, errors, info, frame_id)
             else:
                 info.append(SpatialIssue(
                     ev.start_line, "info",
                     f"{ev.m1_name} overlaps {ev.m2_name} - {ev.details}",
-                    snippet, suggested_fix="Consider using .shift() or .move_to() to separate objects"
+                    snippet, suggested_fix="Consider using .shift() or .move_to() to separate objects", frame_id=frame_id
                 ))
 
-    def _handle_text_shape_overlap(self, ev: Any, snippet: str, errors: List[SpatialIssue], info: List[SpatialIssue]) -> None:
+    def _handle_text_shape_overlap(self, ev: Any, snippet: str, errors: List[SpatialIssue], info: List[SpatialIssue], frame_id: Optional[str]) -> None:
         """Special handling for text on shapes (potential labels)."""
         containment_ratio = 0.0
         if "[Containment: " in ev.details:
@@ -90,13 +94,13 @@ class IssueReporter:
             info.append(SpatialIssue(
                 ev.start_line, "info",
                 f"{ev.m1_name} overlaps {ev.m2_name} (label, {containment_ratio:.0%} contained) - {ev.details}",
-                snippet, suggested_fix="If unintentional, use .shift() to reposition"
+                snippet, suggested_fix="If unintentional, use .shift() to reposition", frame_id=frame_id
             ))
         else:
             errors.append(SpatialIssue(
                 ev.start_line, "error",
                 f"{ev.m1_name} overlaps {ev.m2_name} (crosses boundary, {containment_ratio:.0%} contained) - {ev.details}",
-                snippet, suggested_fix="Reposition text outside shape with .shift() or .next_to()"
+                snippet, suggested_fix="Reposition text outside shape with .shift() or .next_to()", frame_id=frame_id
             ))
 
     def _get_boundary_fix(self, details: str) -> str:

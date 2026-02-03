@@ -48,6 +48,9 @@ class LintEvent:
         # Metrics
         self.max_severity = 0.0
         self.details = "Unknown"
+        
+        # Visual context
+        self.frame_id: Optional[str] = None  # Links to FrameCapture
 
     def _clean_name(self, m: Optional[Any]) -> str:
         if not m:

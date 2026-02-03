@@ -105,6 +105,8 @@ SURGICAL_FIX_USER = PromptTemplate(
 ## ERRORS
 {errors}
 
+{visual_context}
+
 ## SPATIAL FIX STRATEGIES
 
 ### Overlapping Objects
