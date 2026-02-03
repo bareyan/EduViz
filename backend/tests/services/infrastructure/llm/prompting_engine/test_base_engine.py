@@ -17,14 +17,13 @@ class TestPromptingEngine:
         """Setup global patches for all tests in this class."""
         with patch("app.services.infrastructure.llm.prompting_engine.base_engine.create_client") as self.mock_create_client, \
              patch("app.services.infrastructure.llm.prompting_engine.base_engine.get_model_config") as self.mock_get_model_config, \
-             patch("app.services.infrastructure.llm.prompting_engine.base_engine.get_thinking_config") as self.mock_get_thinking_config, \
-             patch("app.services.infrastructure.llm.prompting_engine.base_engine.get_types_module") as self.mock_get_types:
+             patch("app.services.infrastructure.llm.prompting_engine.base_engine.get_thinking_config") as self.mock_get_thinking_config:
             
             self.client = MagicMock()
             self.mock_create_client.return_value = self.client
             self.mock_get_model_config.return_value = MagicMock(model_name="test-model")
             self.mock_get_thinking_config.return_value = None
-            self.mock_get_types.return_value = MagicMock()
+            self.client._types_module = MagicMock()
             
             yield
 

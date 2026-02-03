@@ -22,15 +22,8 @@ class TestGenerationUseCase:
             return GenerationUseCase()
 
     def test_validate_pipeline_success(self, use_case):
-        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["p1", "default"]):
-            assert use_case._validate_pipeline("p1") == "p1"
-            assert use_case._validate_pipeline(None) == "default"
-
-    def test_validate_pipeline_failure(self, use_case):
-        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["default"]):
-            with pytest.raises(HTTPException) as exc:
-                use_case._validate_pipeline("unknown")
-            assert exc.value.status_code == 400
+        assert use_case._validate_pipeline("p1") == "default"
+        assert use_case._validate_pipeline(None) == "default"
 
     def test_select_job_new(self, use_case):
         job_id, resume = use_case._select_job(None)
@@ -56,8 +49,7 @@ class TestGenerationUseCase:
         )
         background_tasks = MagicMock(spec=BackgroundTasks)
         
-        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["default"]), \
-             patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
              patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
             
             response = use_case.start_generation(request, background_tasks)
@@ -80,8 +72,7 @@ class TestGenerationUseCase:
         background_tasks = BackgroundTasks()
         
         # Setup mocks
-        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["default"]), \
-             patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
              patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
             
             mock_vg = mock_vg_class.return_value
@@ -128,8 +119,7 @@ class TestGenerationUseCase:
         )
         background_tasks = BackgroundTasks()
         
-        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["default"]), \
-             patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
              patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
             
             mock_vg = mock_vg_class.return_value

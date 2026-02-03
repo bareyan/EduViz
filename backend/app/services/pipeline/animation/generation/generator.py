@@ -56,12 +56,6 @@ class ManimGenerator:
             "failed_sections": [],
             "skipped_sections": 0
         }
-        
-        self.MAX_CLEAN_RETRIES = MAX_CLEAN_RETRIES
-
-    def _refresh_config(self):
-        """Refresh model configuration"""
-        self._manim_config = get_model_config("manim_generation")
 
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost summary"""

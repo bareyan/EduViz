@@ -14,6 +14,7 @@ def test_format_summary_errors():
         errors=[SpatialIssue(10, "error", "Overlaps everything", "obj.add()")],
         warnings=[]
     )
+    res.has_issues = True
     summary = format_spatial_issues(res)
     assert "ERRORS:" in summary
     assert "Line 10" in summary
@@ -26,6 +27,7 @@ def test_format_summary_warnings():
         errors=[],
         warnings=[SpatialIssue(5, "warning", "Low contrast", "Text()")]
     )
+    res.has_issues = True
     summary = format_spatial_issues(res)
     assert "WARNINGS:" in summary
     assert "Low contrast" in summary
@@ -33,5 +35,6 @@ def test_format_summary_warnings():
 def test_format_clean():
     """Test formatting for no issues."""
     res = SpatialValidationResult(valid=True, errors=[], warnings=[])
+    res.has_issues = False
     summary = format_spatial_issues(res)
     assert "No spatial layout issues found" in summary

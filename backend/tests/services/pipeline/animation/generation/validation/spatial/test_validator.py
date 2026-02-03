@@ -1,85 +1,97 @@
-"""
-Tests for SpatialValidator orchestration.
-Matches backend/app/services/pipeline/animation/generation/validation/spatial/validator.py
+﻿"""
+Tests for SpatialValidator orchestration and IssueReporter logic.
 """
 
 import pytest
 from unittest.mock import MagicMock
 from app.services.pipeline.animation.generation.validation.spatial.validator import SpatialValidator
+from app.services.pipeline.animation.generation.validation.spatial.reporters import IssueReporter
+from app.services.pipeline.animation.generation.validation.spatial.events import LintEvent
 
 @pytest.fixture
 def validator():
     return SpatialValidator()
 
-def test_collect_issues_text_text_overlap(validator):
+def test_issue_reporter_text_text_overlap():
     """Test severity logic: Text/Text overlap = error."""
-    from app.services.pipeline.animation.generation.validation.spatial.events import LintEvent
+    code = "text1 = Text('A')\ntext2 = Text('B')"
+    reporter = IssueReporter(code)
     
-    mock_scene = MagicMock()
-    tracker = MagicMock()
-    ev = LintEvent(MagicMock(), MagicMock(), "overlap", 0.0, "code.py", 10)
+    ev = LintEvent(MagicMock(), MagicMock(), "overlap", 0.0, "code.py", 1)
     ev.m1_type = "Text"
     ev.m2_type = "Text"
     ev.m1_name = "TextObj1"
     ev.m2_name = "TextObj2"
     ev.details = "100% overlap"
-    ev.finish(10)
+    ev.finish(1)
     
-    validator.trackers[mock_scene] = tracker
-    tracker.history = [ev]
-    
-    errors, warnings = [], []
-    validator._collect_issues(mock_scene, "text1 = Text('A')\ntext2 = Text('B')", errors, warnings)
+    errors, warnings, info = [], [], []
+    reporter.collect_issues([ev], errors, warnings, info)
     
     assert len(errors) == 1
     assert errors[0].severity == "error"
+    assert "overlaps" in errors[0].message
+    assert "Separate with .shift" in errors[0].suggested_fix
 
-def test_collect_issues_text_axes_overlap(validator):
+def test_issue_reporter_text_axes_overlap():
     """Test severity logic: Text/Axes overlap = info."""
-    from app.services.pipeline.animation.generation.validation.spatial.events import LintEvent
+    code = "label = Text('X')\ngraph = Axes()"
+    reporter = IssueReporter(code)
     
-    mock_scene = MagicMock()
-    tracker = MagicMock()
-    ev = LintEvent(MagicMock(), MagicMock(), "overlap", 0.0, "code.py", 10)
+    ev = LintEvent(MagicMock(), MagicMock(), "overlap", 0.0, "code.py", 1)
     ev.m1_type = "Text"
     ev.m2_type = "Axes"
     ev.m1_name = "label"
     ev.m2_name = "graph"
     ev.details = "5% overlap"
-    ev.finish(10)
+    ev.finish(1)
     
-    validator.trackers[mock_scene] = tracker
-    tracker.history = [ev]
-    
-    errors, warnings = [], []
-    validator._collect_issues(mock_scene, "label = Text('X')\ngraph = Axes()", errors, warnings)
+    errors, warnings, info = [], [], []
+    reporter.collect_issues([ev], errors, warnings, info)
     
     assert len(errors) == 0
-    assert len(warnings) == 1
-    assert warnings[0].severity == "info"
+    assert len(info) == 1
+    assert info[0].severity == "info"
 
-def test_collect_quality_heuristics(validator):
-    """Test detection of font size and length issues in _collect_issues."""
-    from app.services.pipeline.animation.generation.validation.spatial.events import LintEvent
+def test_issue_reporter_quality_heuristics():
+    """Test detection of font size and length issues in IssueReporter."""
+    code = "text = Text('Huge')"
+    reporter = IssueReporter(code)
     
-    mock_scene = MagicMock()
-    tracker = MagicMock()
-    
-    ev_font = LintEvent(MagicMock(), None, "font_size", 0.0, "code.py", 2)
+    ev_font = LintEvent(MagicMock(), None, "font_size", 0.0, "code.py", 1)
     ev_font.m1_name = "HugeText"
     ev_font.details = "font_size 72 > 48"
-    ev_font.finish(2)
+    ev_font.finish(1)
     
-    ev_len = LintEvent(MagicMock(), None, "length", 0.0, "code.py", 4)
+    ev_len = LintEvent(MagicMock(), None, "length", 0.0, "code.py", 1)
     ev_len.m1_name = "LongText"
     ev_len.details = "length 150 > 60"
-    ev_len.finish(4)
+    ev_len.finish(1)
     
-    validator.trackers[mock_scene] = tracker
-    tracker.history = [ev_font, ev_len]
-    
-    errors, warnings = [], []
-    validator._collect_issues(mock_scene, "code", errors, warnings)
+    errors, warnings, info = [], [], []
+    reporter.collect_issues([ev_font, ev_len], errors, warnings, info)
     
     assert any("font size" in w.message for w in warnings)
     assert any("text too long" in w.message for w in warnings)
+
+def test_issue_reporter_boundary_violation():
+    """Test boundary violation reporting."""
+    code = "text = Text('Offscreen')"
+    reporter = IssueReporter(code)
+    
+    ev = LintEvent(MagicMock(), None, "boundary", 1.0, "code.py", 1)
+    ev.m1_name = "OffscreenObj"
+    ev.details = "Out of bounds on Right"
+    ev.finish(1)
+    
+    errors, warnings, info = [], [], []
+    reporter.collect_issues([ev], errors, warnings, info)
+    
+    assert len(errors) == 1
+    assert "out of bounds" in errors[0].message
+    assert "Shift left" in errors[0].suggested_fix
+
+def test_validator_initialization(validator):
+    """Check that engine is initialized."""
+    assert validator.engine is not None
+    assert validator.linter_path.endswith("validator.py")

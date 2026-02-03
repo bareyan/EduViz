@@ -114,12 +114,3 @@ class CodeValidator:
             static=static_res,
             spatial=spatial_res
         )
-
-    def validate_code(self, code: str) -> Dict[str, Any]:
-        """Backward-compatible wrapper returning a simple dict."""
-        result = self.validate(code)
-        return {
-            "valid": result.valid,
-            "error": None if result.valid else result.get_error_summary(),
-            "details": result.to_dict()
-        }

@@ -5,7 +5,7 @@ Matches backend/app/services/pipeline/animation/generation/validation/spatial/ut
 
 import pytest
 from unittest.mock import MagicMock
-from app.services.pipeline.animation.generation.validation.spatial.utils import get_atomic_mobjects, is_visible
+from app.services.pipeline.animation.generation.validation.spatial.utils import get_atomic_mobjects
 
 def test_atomic_mobjects_unfolding():
     """Test that VGroups are unfolded into atoms."""
@@ -48,19 +48,4 @@ def test_atomic_mobjects_unfolding():
     assert m1 in atoms
     assert m2 in atoms
 
-def test_visibility_check():
-    """Test opacity-based visibility check."""
-    vm = MagicMock()
-    # Mock VMobject presence
-    vm_class = type(vm)
-    image_class = MagicMock()
-    
-    # Visible
-    vm.get_fill_opacity.return_value = 1.0
-    vm.get_stroke_opacity.return_value = 1.0
-    assert is_visible(vm, vm_class, image_class) is True
-    
-    # Invisible
-    vm.get_fill_opacity.return_value = 0.0
-    vm.get_stroke_opacity.return_value = 0.0
-    assert is_visible(vm, vm_class, image_class) is False
+

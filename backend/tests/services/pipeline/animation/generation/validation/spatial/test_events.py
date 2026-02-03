@@ -18,7 +18,7 @@ def test_event_lifecycle():
     m2.width = 1.0; m2.height = 1.0; m2.get_center.return_value = [0.1,0.1,0]
     
     ev.update(0.5, m1, m2)
-    assert ev.duration() == 0.5
+    assert ev.duration == 0.5
     
     # Finish
     ev.finish(12)
