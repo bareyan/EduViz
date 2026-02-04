@@ -11,9 +11,6 @@ Centralized configuration for animation generation constants and settings.
 # Maximum iterations for surgical fixes
 MAX_SURGICAL_FIX_ATTEMPTS = 3
 
-# Timeout for generation requests (seconds)
-GENERATION_TIMEOUT = 300  # 5 minutes
-
 # Timeout for correction requests (seconds)
 CORRECTION_TIMEOUT = 90  # 1.5 minutes
 
@@ -24,13 +21,13 @@ TEMPERATURE_INCREMENT = 0.1
 BASE_GENERATION_TEMPERATURE = 0.7
 
 # Base temperature for correction
-BASE_CORRECTION_TEMPERATURE = 0.1
+BASE_CORRECTION_TEMPERATURE = 1.0
 
 # Temperature bump per correction retry
 CORRECTION_TEMPERATURE_STEP = 0.05
 
 # Maximum tokens for refinement responses
-MAX_REFINEMENT_OUTPUT_TOKENS = 8192
+MAX_REFINEMENT_OUTPUT_TOKENS = 16384
 
 # Prompt sizing and snippet extraction limits
 MAX_PROMPT_CODE_CHARS = 8000
@@ -95,36 +92,9 @@ CONSTRUCT_INDENT_SPACES = 8
 # Master switch to enable/disable refinement cycle validation
 ENABLE_REFINEMENT_CYCLE = True
 
-# Timeout for validation operations (seconds)
-VALIDATION_TIMEOUT = 30
-
-# Tool availability flags (set to False to skip specific tools)
-REQUIRE_PYRIGHT = False  # Pyright is optional (requires Node.js: npm install -g pyright)
-REQUIRE_RUFF = True  # Ruff is required for syntax validation
-
-# Enable/disable specific validators
-ENABLE_SYNTAX_VALIDATION = True
-ENABLE_STRUCTURE_VALIDATION = True
-ENABLE_IMPORTS_VALIDATION = True
-ENABLE_SPATIAL_VALIDATION = True
-
 # Theme setup code blocks for code injection
 THEME_SETUP_CODES = {
     "light": '        self.camera.background_color = "#FFFFFF"\n',
     "3b1b": '        self.camera.background_color = "#171717"  # Slate dark\n',
     "dark": '        self.camera.background_color = "#171717"  # Slate dark\n'
-}
-
-# Fast configuration for validation engine (no video output)
-VALIDATION_RENDER_CONFIG = {
-    "write_to_movie": False,
-    "save_last_frame": False,
-    "preview": False,
-    "verbosity": "CRITICAL",
-    "renderer": "cairo",
-    "frame_rate": 1,
-    "pixel_width": 320,
-    "pixel_height": 180,
-    "quality": "low_quality",
-    "skip_animations": True
 }

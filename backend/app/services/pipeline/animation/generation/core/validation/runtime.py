@@ -6,6 +6,7 @@ import asyncio
 import os
 import re
 import sys
+import subprocess
 import tempfile
 import shutil
 from pathlib import Path
@@ -63,23 +64,22 @@ class RuntimeValidator:
                 str(tmp_path)
             ]
             
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+            # Use subprocess.run via thread to avoid ProactorEventLoop issues on Windows
+            result_proc = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30.0  # 30s timeout
             )
             
-            try:
-                # 30s timeout for dry run should be plenty
-                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
-            except asyncio.TimeoutError:
-                proc.kill()
-                result.add_error("Runtime", "Execution timed out (possible infinite loop)")
-                return result
-                
-            if proc.returncode != 0:
-                error_msg = self._parse_manim_error(stderr.decode())
+            if result_proc.returncode != 0:
+                error_msg = self._parse_manim_error(result_proc.stderr)
                 result.add_error("Runtime", error_msg)
+                
+        except subprocess.TimeoutExpired:
+            result.add_error("Runtime", "Execution timed out (possible infinite loop)")
+            return result
                 
         except Exception as e:
             logger.error(f"Runtime validation failed: {e}")

@@ -137,16 +137,7 @@ class AdaptiveFixerAgent:
                 )
                 continue
             
-            if not self._process_result(code, result, strategy, attempt):
-                # If processing failed (e.g. no edits), update reason and retry
-                last_failure_reason = "edits_application_failed"
-                continue
-
-            # If success (process_result handled application and return)
-            # Actually _process_result helps but to keep flow clear, let's keep logic here
-            # Or better, refactor this loop body slightly.
-            
-            # Let's keep strict parity with previous logic for safety
+            # Process result directly
             parsed_json = result.get("parsed_json") or {}
             edits = parsed_json.get("edits", [])
             
