@@ -82,6 +82,7 @@ async def render_scene(
     scene_name: str,
     output_dir: str,
     section_index: int,
+    file_manager: Any,  # AnimationFileManager
     section: Dict[str, Any] = None,
     quality: str = "low",
     **kwargs
@@ -97,6 +98,7 @@ async def render_scene(
         scene_name: Name of the Scene class to render.
         output_dir: Root directory for media outputs.
         section_index: Index for file naming.
+        file_manager: File manager for path handling.
         section: Metadata for logging context.
         quality: Manim quality setting ('low', 'medium', 'high').
         
@@ -105,8 +107,8 @@ async def render_scene(
     """
     logger.info(f"Rendering section {section_index} Scene: {scene_name}")
     
-    # 1. Clean environment
-    cleanup_output_artifacts(output_dir, code_file, quality)
+    # 1. Clean environment via Manager
+    file_manager.cleanup_artifacts(output_dir, code_file, quality)
     
     # 2. Build Command (use sys.executable -m manim for cross-platform compatibility)
     quality_flag = QUALITY_FLAGS.get(quality, "-ql")
@@ -134,33 +136,20 @@ async def render_scene(
             logger.error(f"Manim Stdout (full): {result.stdout}")
             raise RenderingError(f"Manim render failed for section {section_index}: {result.stderr[:500]}")
 
-        # 4. Locate and Validate Output
-        quality_subdir = get_quality_subdir(quality)
-        video_dir = Path(output_dir) / "videos" / code_file.stem / quality_subdir
-        
-        logger.debug(f"Looking for video in: {video_dir}")
-        
-        rendered_video = None
-        if video_dir.exists():
-            videos = list(video_dir.glob("*.mp4"))
-            logger.debug(f"Found {len(videos)} videos in {video_dir}")
-            if videos:
-                rendered_video = str(videos[0])
+        # 4. Locate and Validate Output via Manager
+        rendered_video = file_manager.get_expected_video_path(
+            output_dir=output_dir,
+            code_file=code_file,
+            quality=quality,
+            section_index=section_index
+        )
 
-        if not rendered_video:
-            # Fallback search in entire output_dir
-            videos = list(Path(output_dir).rglob(f"section_{section_index}.mp4"))
-            logger.debug(f"Fallback search found {len(videos)} videos")
-            if videos:
-                rendered_video = str(videos[0])
-
-        if rendered_video and await validate_video_file(rendered_video):
+        if rendered_video and await validate_video_file(str(rendered_video)):
             logger.info(f"Successfully rendered video: {rendered_video}")
-            return rendered_video
+            return str(rendered_video)
             
         # Enhanced error logging
         logger.error(f"Video file not found or invalid after rendering section {section_index}")
-        logger.error(f"Searched in: {video_dir}")
         logger.error(f"Code file was: {code_file}")
         logger.error(f"Manim stdout: {result.stdout[-1000:]}")
         logger.error(f"Manim stderr: {result.stderr[-1000:]}")

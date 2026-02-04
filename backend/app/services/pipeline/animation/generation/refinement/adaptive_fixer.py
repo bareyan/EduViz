@@ -10,7 +10,6 @@ Improvements over original FixerAgent:
 4. Better context management
 """
 
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core import get_logger
@@ -20,17 +19,15 @@ from ...config import (
     BASE_CORRECTION_TEMPERATURE,
     CORRECTION_TIMEOUT,
     CORRECTION_TEMPERATURE_STEP,
-    HEAD_TAIL_LINES,
     MAX_JSON_RETRIES,
-    MAX_PROMPT_CODE_CHARS,
     MAX_REFINEMENT_OUTPUT_TOKENS,
-    SNIPPET_CONTEXT_RADIUS,
-    SNIPPET_MAX_LINES,
 )
-from ...prompts import FIXER_SYSTEM, SURGICAL_FIX_USER
+from ...prompts import FIXER_SYSTEM
 from ...prompts.structured_edit_schema import CODE_EDIT_SCHEMA
 from .edit_applier import apply_edits_atomically
 from .strategies import StrategySelector
+from .context import FixerContextManager
+from .prompting import FixerPromptBuilder
 
 
 logger = get_logger(__name__, component="animation_adaptive_fixer")
@@ -40,11 +37,10 @@ class AdaptiveFixerAgent:
     """
     Adaptive fixer with strategy selection and failure memory.
     
-    Key features:
-    - Analyzes error patterns
-    - Selects specialized fix strategy
-    - Maintains failure history for learning
-    - Adapts prompts based on context
+    Now adheres to SRP by delegating:
+    - Context management -> FixerContextManager
+    - Prompt construction -> FixerPromptBuilder
+    - Strategy selection -> StrategySelector
     """
     
     def __init__(self, engine: PromptingEngine, max_turn_retries: int = 2):
@@ -56,7 +52,12 @@ class AdaptiveFixerAgent:
         """
         self.engine = engine
         self.max_turn_retries = max_turn_retries
+        
+        # Helper components
         self.strategy_selector = StrategySelector()
+        self.context_manager = FixerContextManager()
+        self.prompt_builder = FixerPromptBuilder(max_turn_retries)
+        
         self._history: List[Dict[str, Any]] = []
         self._consecutive_failures = 0
     
@@ -86,8 +87,8 @@ class AdaptiveFixerAgent:
         
         logger.info(f"🎯 Selected strategy: {strategy.name}")
         
-        # Prepare code for prompt (may truncate/excerpt)
-        code_for_prompt, code_scope_note = self._select_code_for_prompt(
+        # Delegate context preparation
+        code_for_prompt, code_scope_note = self.context_manager.select_context(
             code,
             errors
         )
@@ -95,13 +96,15 @@ class AdaptiveFixerAgent:
         last_failure_reason = None
         
         for attempt in range(1, self.max_turn_retries + 1):
-            retry_note = self._build_retry_note(last_failure_reason, attempt)
             
-            prompt = self._build_adaptive_prompt(
+            # Delegate prompt building
+            prompt = self.prompt_builder.build_prompt(
                 code=code_for_prompt,
                 errors=errors,
                 strategy=strategy,
-                retry_note=retry_note,
+                history=self._history,
+                last_failure_reason=last_failure_reason,
+                attempt=attempt,
                 code_scope_note=code_scope_note
             )
             
@@ -134,13 +137,19 @@ class AdaptiveFixerAgent:
                 )
                 continue
             
-            # Extract and validate edits
-            parsed_json = result.get("parsed_json") or {}
-            analysis = parsed_json.get("analysis", "")
-            if analysis:
-                logger.info(f"🔍 Analysis: {analysis}")
+            if not self._process_result(code, result, strategy, attempt):
+                # If processing failed (e.g. no edits), update reason and retry
+                last_failure_reason = "edits_application_failed"
+                continue
+
+            # If success (process_result handled application and return)
+            # Actually _process_result helps but to keep flow clear, let's keep logic here
+            # Or better, refactor this loop body slightly.
             
+            # Let's keep strict parity with previous logic for safety
+            parsed_json = result.get("parsed_json") or {}
             edits = parsed_json.get("edits", [])
+            
             if not edits:
                 last_failure_reason = "missing_edits"
                 logger.warning("⚠️ No edits returned")
@@ -187,132 +196,14 @@ class AdaptiveFixerAgent:
         self._record_failure(errors, strategy, meta)
         
         return code, meta
-    
-    def _build_adaptive_prompt(
-        self,
-        code: str,
-        errors: str,
-        strategy: Any,  # FixStrategy
-        retry_note: Optional[str],
-        code_scope_note: Optional[str]
-    ) -> str:
-        """Build prompt with strategy-specific guidance.
-        
-        Args:
-            code: Code to fix
-            errors: Error messages
-            strategy: Selected fix strategy
-            retry_note: Optional retry guidance
-            code_scope_note: Optional code scope info
-            
-        Returns:
-            Complete prompt string
-        """
-        extra_sections = []
-        
-        # Add strategy guidance
-        strategy_guidance = strategy.build_guidance()
-        if strategy_guidance:
-            extra_sections.append(strategy_guidance)
-        
-        # Add code scope note
-        if code_scope_note:
-            extra_sections.append(f"## CODE SCOPE\n{code_scope_note}")
-        
-        # Add retry note
-        if retry_note:
-            extra_sections.append(f"## RETRY NOTE\n{retry_note}")
-        
-        # Add failure history
-        history_str = self._format_history()
-        if history_str:
-            extra_sections.append(history_str)
-        
-        visual_context = ""
-        if extra_sections:
-            visual_context = "\n" + "\n".join(extra_sections) + "\n"
-        
-        return SURGICAL_FIX_USER.format(
-            code=code,
-            errors=errors,
-            visual_context=visual_context
-        )
-    
-    def _build_retry_note(
-        self,
-        last_failure_reason: Optional[str],
-        attempt: int
-    ) -> Optional[str]:
-        """Build retry guidance note.
-        
-        Args:
-            last_failure_reason: Previous failure reason
-            attempt: Current attempt number
-            
-        Returns:
-            Retry note or None
-        """
-        if not last_failure_reason:
-            # Even on first attempt, guide for conciseness
-            return (
-                "CRITICAL: Keep response SHORT and FOCUSED:\n"
-                "- analysis: max 2 sentences\n"
-                "- edits: 1-2 edits maximum\n"
-                "- search_text: 5-10 lines context\n"
-                "- replacement_text: only changed lines\n"
-                "This prevents JSON truncation issues."
-            )
-        
-        return (
-            f"Previous attempt failed: {last_failure_reason}. "
-            f"Attempt {attempt}/{self.max_turn_retries}. "
-            "Return ONLY valid JSON. Keep edits MINIMAL (1 edit preferred). "
-            "Short search_text (5-10 lines), brief analysis (1-2 sentences). "
-            "Ensure complete JSON to avoid truncation."
-        )
-    
-    def _format_history(self) -> str:
-        """Format recent failure history for prompt.
-        
-        Returns:
-            Formatted history string or empty
-        """
-        if not self._history:
-            return ""
-        
-        recent = self._history[-2:]  # Last 2 turns
-        lines = []
-        
-        for h in recent:
-            status = h.get("status") or "unknown"
-            strategy = h.get("strategy", "unknown")
-            reason = h.get("reason")
-            edits = h.get("edits")
-            
-            line = f"Turn {h.get('turn')}: {status} | strategy: {strategy}"
-            if edits is not None:
-                line += f" | edits: {edits}"
-            if reason:
-                line += f" | reason: {reason}"
-            line += f" | error: {h.get('error', '')[:60]}..."
-            
-            lines.append(line)
-        
-        return "\n## PREVIOUS ATTEMPTS\n" + "\n".join(lines)
-    
+
     def _record_success(
         self,
         errors: str,
         strategy: Any,
         meta: Dict[str, Any]
     ) -> None:
-        """Record successful fix in history.
-        
-        Args:
-            errors: Error messages
-            strategy: Strategy used
-            meta: Fix metadata
-        """
+        """Record successful fix in history."""
         self._history.append({
             "turn": len(self._history) + 1,
             "error": errors[:200],
@@ -329,13 +220,7 @@ class AdaptiveFixerAgent:
         strategy: Any,
         meta: Dict[str, Any]
     ) -> None:
-        """Record failed fix in history.
-        
-        Args:
-            errors: Error messages
-            strategy: Strategy used
-            meta: Fix metadata
-        """
+        """Record failed fix in history."""
         self._history.append({
             "turn": len(self._history) + 1,
             "error": errors[:200],
@@ -345,129 +230,3 @@ class AdaptiveFixerAgent:
             "attempts": meta.get("attempts"),
             "reason": meta.get("reason")
         })
-    
-    def _select_code_for_prompt(
-        self,
-        code: str,
-        errors: str
-    ) -> Tuple[str, Optional[str]]:
-        """Select relevant code excerpt for prompt.
-        
-        For large files, extracts relevant sections around error lines.
-        
-        Args:
-            code: Full code
-            errors: Error messages
-            
-        Returns:
-            Tuple of (code_excerpt, scope_note)
-        """
-        if len(code) <= MAX_PROMPT_CODE_CHARS:
-            return code, None
-        
-        # Try to extract error line numbers
-        line_numbers = self._extract_error_line_numbers(errors)
-        
-        if line_numbers:
-            snippets = self._build_code_snippets(code, line_numbers)
-            if snippets:
-                note = (
-                    "Code below shows only snippets around error lines. "
-                    "Keep search_text within shown lines."
-                )
-                return "\n\n".join(snippets), note
-        
-        # Fallback: head + tail
-        lines = code.splitlines()
-        if not lines:
-            return code, None
-        
-        head = "\n".join(lines[:HEAD_TAIL_LINES])
-        tail = "\n".join(lines[-HEAD_TAIL_LINES:]) if len(lines) > HEAD_TAIL_LINES else ""
-        
-        trimmed = head if not tail else f"{head}\n\n# ...snip...\n\n{tail}"
-        note = (
-            "Code is truncated (head/tail only). "
-            "Keep search_text within shown lines."
-        )
-        
-        return trimmed, note
-    
-    def _extract_error_line_numbers(self, errors: str) -> List[int]:
-        """Extract line numbers from error messages.
-        
-        Args:
-            errors: Error messages
-            
-        Returns:
-            Sorted list of unique line numbers
-        """
-        line_nums = []
-        for match in re.finditer(r"\\bLine\\s+(\\d+)\\b", errors):
-            try:
-                line_nums.append(int(match.group(1)))
-            except ValueError:
-                continue
-        return sorted(set(line_nums))
-    
-    def _build_code_snippets(
-        self,
-        code: str,
-        line_numbers: List[int],
-        context_radius: int = SNIPPET_CONTEXT_RADIUS,
-        max_total_lines: int = SNIPPET_MAX_LINES
-    ) -> List[str]:
-        """Build code snippets around error lines.
-        
-        Args:
-            code: Full code
-            line_numbers: Lines to excerpt around
-            context_radius: Lines before/after each error line
-            max_total_lines: Maximum total lines across all snippets
-            
-        Returns:
-            List of code snippet strings
-        """
-        lines = code.splitlines()
-        if not lines:
-            return []
-        
-        # Build ranges around each error line
-        ranges: List[Tuple[int, int]] = []
-        for ln in line_numbers:
-            start = max(1, ln - context_radius)
-            end = min(len(lines), ln + context_radius)
-            ranges.append((start, end))
-        
-        # Merge overlapping ranges
-        ranges.sort()
-        merged: List[Tuple[int, int]] = []
-        for start, end in ranges:
-            if not merged or start > merged[-1][1] + 1:
-                merged.append((start, end))
-            else:
-                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        
-        # Extract snippets up to max_total_lines
-        snippets = []
-        total_lines = 0
-        
-        for start, end in merged:
-            snippet_lines = lines[start - 1:end]
-            if not snippet_lines:
-                continue
-            
-            snippet_len = len(snippet_lines)
-            if total_lines + snippet_len > max_total_lines:
-                remaining = max_total_lines - total_lines
-                if remaining <= 0:
-                    break
-                snippet_lines = snippet_lines[:remaining]
-            
-            snippets.append("\n".join(snippet_lines))
-            total_lines += len(snippet_lines)
-            
-            if total_lines >= max_total_lines:
-                break
-        
-        return snippets

@@ -14,6 +14,12 @@ from .library import (
     VALID_COLORS,
     VALID_ANIMATIONS
 )
+from .fixer_prompts import (
+    INITIAL_RETRY_NOTE,
+    RETRY_FAILURE_NOTE,
+    CODE_CONTEXT_NOTE,
+    CODE_TRUNCATION_NOTE
+)
 
 __all__ = [
     "IMPLEMENTER_SYSTEM",
@@ -25,5 +31,9 @@ __all__ = [
     "COMMON_MISTAKES",
     "AVAILABLE_RATE_FUNCS",
     "VALID_COLORS",
-    "VALID_ANIMATIONS"
+    "VALID_ANIMATIONS",
+    "INITIAL_RETRY_NOTE",
+    "RETRY_FAILURE_NOTE",
+    "CODE_CONTEXT_NOTE",
+    "CODE_TRUNCATION_NOTE"
 ]

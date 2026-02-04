@@ -20,7 +20,8 @@ from .core import (
     ImplementationError,
     RenderingError, 
     create_scene_file, 
-    render_scene
+    render_scene,
+    AnimationFileManager
 )
 from ..config import MAX_SURGICAL_FIX_ATTEMPTS, MAX_CLEAN_RETRIES
 
@@ -41,6 +42,9 @@ class ManimGenerator:
 
         # Infrastructure
         self.cost_tracker = CostTracker()
+        
+        # Services
+        self.file_manager = AnimationFileManager()
         
         # Initialize the Animation Orchestrator (Modular Architecture)
         self.orchestrator = AnimationOrchestrator(
@@ -137,35 +141,36 @@ class ManimGenerator:
         """
         target_duration = audio_duration or section.get("duration_seconds", 60)
         
-        # 1. Final Stability Check
-        # We assume code is valid as per current configuration
+        # Validate code presence
         if not manim_code:
             logger.error(f"No code generated for section {section_index}")
             raise RefinementError(f"No code generated for section {section_index}")
 
-        # 2. File Preparation
+        # 2. File Preparation via Manager
         section_id = section.get("id", f"section_{section_index}").replace("-", "_").replace(" ", "_")
         scene_name = f"Section{section_id.title().replace('_', '')}"
-        code_file = Path(output_dir) / f"scene_{section_index}.py"
         
-        logger.info(f"Preparing code file: {code_file}")
-        logger.info(f"Scene name: {scene_name}")
-        logger.debug(f"Code length: {len(manim_code)} chars")
+        logger.info(f"Preparing scene: {scene_name}")
         
         full_code = create_scene_file(manim_code, section_id, target_duration, style)
         
-        # Ensure output directory exists
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
-        
-        with open(code_file, "w", encoding="utf-8") as f:
-            f.write(full_code)
-        
-        logger.info(f"Code file written: {code_file} ({code_file.stat().st_size} bytes)")
+        # Delegate I/O to FileManager
+        code_file = self.file_manager.prepare_scene_file(
+            output_dir=output_dir,
+            section_index=section_index,
+            code_content=full_code
+        )
 
         # 3. Execution (Rendering)
         output_video = await render_scene(
-            self, code_file, scene_name, output_dir,
-            section_index, section=section, clean_retry=0
+            self, 
+            code_file, 
+            scene_name, 
+            output_dir,
+            section_index, 
+            file_manager=self.file_manager,  # Inject manager
+            section=section, 
+            clean_retry=0
         )
 
         if not output_video:
@@ -176,7 +181,6 @@ class ManimGenerator:
             "video_path": output_video,
             "manim_code": full_code,
             "manim_code_path": str(code_file),
-            # "validation_results": {} # Removed
         }
 
     async def render_from_code(
