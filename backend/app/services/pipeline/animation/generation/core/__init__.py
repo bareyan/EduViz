@@ -2,8 +2,22 @@
 Core animation utilities and infrastructure
 """
 
-from .exceptions import *
-from .code_helpers import *
-from .scaffolder import *
-from .tools import *
-from .renderer import *
+from .exceptions import (
+    AnimationError, ChoreographyError, ImplementationError, 
+    RefinementError, RenderingError
+)
+from .code_helpers import clean_code, create_scene_file, extract_scene_name
+from .scaffolder import ManimScaffolder
+from .renderer import render_scene, validate_video_file, cleanup_output_artifacts
+
+__all__ = [
+    # Exceptions
+    "AnimationError", "ChoreographyError", "ImplementationError",
+    "RefinementError", "RenderingError",
+    # Code utilities
+    "clean_code", "create_scene_file", "extract_scene_name",
+    # Scaffolding
+    "ManimScaffolder",
+    # Rendering
+    "render_scene", "validate_video_file", "cleanup_output_artifacts",
+]

@@ -28,12 +28,14 @@ CHOREOGRAPHY_USER = PromptTemplate(
 
 Create a structured plan with:
 
-1. **Object Lifecycle**: List every visual object, when it's created, and when it's removed
-2. **Animation Timeline**: For each segment, describe:
-   - What appears/disappears
-   - How it animates (Create, FadeIn, Transform, etc.)
-   - Exact start time and duration
 3. **Spatial Layout**: Where objects are positioned
+
+## REASONING STEP (CRITICAL)
+Before writing the plan, think deeply about:
+- **Spatial Density**: How many objects are on screen? Will they overlap?
+- **Coordinate System**: Mentally map everything to the X [-5.5, 5.5] and Y [-3, 3] grid.
+- **Visual Flow**: How does the scene transition from one segment to the next?
+- **Timing**: Does the animation duration leave enough time for the narration to be understood?
 
 ## OUTPUT FORMAT
 
@@ -79,10 +81,13 @@ FULL_IMPLEMENTATION_USER = PromptTemplate(
 2. Define class `Scene{section_id_title}(Scene)`
 3. Implement `def construct(self):`
 4. Set background: `self.camera.background_color = "#171717"`
-5. **STRICTLY FOLLOW the Constraints & Patterns below to avoid crashes.**
+5. **STRICTLY FOLLOW the technical rules.**
 
-## MANIM PATTERNS & CRITICAL CONSTRAINTS
-{patterns}
+## SELF-CORRECTION (THINK BEFORE WRITING)
+- **Version Check**: Am I using Manim Community v0.19.2 syntax? (e.g., `font_size` instead of `size`)
+- **Spatial Check**: Is any object moving beyond X: 5.5 or Y: 3.0?
+- **Overlap Check**: Did I FadeOut the previous text before FadingIn the new text?
+- **Color Check**: Am I using only official Manim colors (e.g., `BLUE_C` NOT `CYAN`)?
 
 ## OUTPUT
 Return the complete, runnable Python file in a code block.""",
@@ -140,14 +145,29 @@ When text blends with background (#171717 is dark):
 - Fix: Add `color=WHITE` in constructor OR `.set_color(WHITE)`
 
 ## INSTRUCTIONS
-Use the `apply_surgical_edit` tool to fix ONLY the problematic lines.
-Look at the error line number and find the object creation in the code.
-Apply the appropriate spatial fix from above.
+1. **Analyze**: Provide a brief analysis of the error and your fix strategy.
+2. **Inspect**: Review the attached frames (if any) to confirm visual state.
+3. **Fix**: Return a JSON object with a list of surgical edits.
 
-Common syntax fixes (if needed):
-- `tracker.number` → `tracker.get_value()`
-- `ease_in_expo` → `smooth`
-- `self.wait(0)` → remove the line""",
+## OUTPUT FORMAT (JSON)
+Return a single JSON object with this structure:
+```json
+{
+    "analysis": "Explanation of the error and fix...",
+    "edits": [
+        {
+            "search_text": "exact lines of code to find",
+            "replacement_text": "new lines of code"
+        }
+    ]
+}
+```
+
+**Rules for Edits:**
+- `search_text` MUST be an EXACT match (copy-paste from code).
+- Include 2-3 lines of context in `search_text` to avoid ambiguity.
+- If multiple identical blocks exist, include more surrounding lines to disambiguate.
+- `replacement_text` must be valid, indented Python code.""",
     description="Surgical fix prompt with spatial guidance"
 )
 

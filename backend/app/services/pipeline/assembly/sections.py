@@ -144,7 +144,8 @@ async def process_single_subsection(
     section_index: int,
     voice: str,
     style: str,
-    language: str = "en"
+    language: str = "en",
+    job_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """Process a section with a single subsection (original flow)"""
     result = {
@@ -187,6 +188,7 @@ async def process_single_subsection(
             section_index=section_index,
             audio_duration=audio_duration,
             style=style,
+            job_id=job_id
         )
         video_path = manim_result.get("video_path") if isinstance(manim_result, dict) else manim_result
         if video_path and os.path.exists(video_path):
@@ -217,7 +219,8 @@ async def process_segments_audio_first(
     section_index: int,
     voice: str,
     style: str,
-    language: str = "en"
+    language: str = "en",
+    job_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """Process segments using audio-first approach for precise sync
     
@@ -361,6 +364,7 @@ async def process_segments_audio_first(
             section_index=section_index,
             audio_duration=total_duration,
             style=style,
+            job_id=job_id
         )
         video_path = manim_result.get("video_path")
         if isinstance(manim_result, dict) and manim_result.get("manim_code"):

@@ -6,7 +6,7 @@ Tests the full flow: Planning -> Code Generation -> Surgical Fixes.
 import pytest
 import json
 from unittest.mock import MagicMock, AsyncMock, patch
-from app.services.pipeline.animation.generation.processors import Animator
+from app.services.pipeline.animation.generation.animator import Animator
 
 @pytest.fixture
 def mock_engine():

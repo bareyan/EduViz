@@ -204,7 +204,8 @@ class VideoGenerator:
                     voice=voice,
                     style=style,
                     language=language,
-                    resume=resume
+                    resume=resume,
+                    job_id=job_id
                 )
 
                 # Step 4: Aggregate results

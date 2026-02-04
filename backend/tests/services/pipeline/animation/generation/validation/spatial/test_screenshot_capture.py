@@ -193,7 +193,7 @@ class TestVisualContextFormatting:
     
     def test_format_visual_context_with_screenshots(self):
         """Test formatting visual context from validation result."""
-        from app.services.pipeline.animation.generation.processors import Animator
+        from app.services.pipeline.animation.generation.animator import Animator
         from app.services.infrastructure.llm import PromptingEngine
         from app.services.pipeline.animation.generation.validation import CodeValidator
         
@@ -233,15 +233,14 @@ class TestVisualContextFormatting:
         
         context = animator._format_visual_context(validation)
         
-        assert "VISUAL CONTEXT" in context
+        assert "VISUAL ANALYTICS" in context
         assert "t=1.5s" in context
         assert "t=2.3s" in context
-        assert "Text overlaps with axis" in context
-        assert "Element near boundary" in context
+        # Errors are passed separately in the prompt, not in the visual context block
     
     def test_format_visual_context_empty_when_no_screenshots(self):
         """Test that visual context is empty when no screenshots exist."""
-        from app.services.pipeline.animation.generation.processors import Animator
+        from app.services.pipeline.animation.generation.animator import Animator
         from app.services.infrastructure.llm import PromptingEngine
         from app.services.pipeline.animation.generation.validation import CodeValidator
         
@@ -261,8 +260,8 @@ class TestMultimodalLLMIntegration:
     """Test multimodal content generation for LLM."""
     
     async def test_surgical_fix_with_screenshots(self):
-        """Test that _apply_surgical_fix builds multimodal content."""
-        from app.services.pipeline.animation.generation.processors import Animator
+        """Test that _execute_refinement_turn makes frames available via tool."""
+        from app.services.pipeline.animation.generation.animator import Animator
         from app.services.infrastructure.llm import PromptingEngine
         from app.services.pipeline.animation.generation.validation import CodeValidator
         
@@ -310,14 +309,16 @@ class TestMultimodalLLMIntegration:
             
             # Call surgical fix
             code = "test code"
-            await animator._apply_surgical_fix(code, "test error", validation)
+            await animator._execute_refinement_turn(code, "test error", validation)
             
-            # Verify multimodal content was passed
-            assert "contents" in generate_called_with
-            contents = generate_called_with["contents"]
-            assert isinstance(contents, list)
-            assert len(contents) == 2  # Text + 1 image
-            assert isinstance(contents[0], str)  # First is text prompt
+            # Verify frame inspector tool was registered
+            assert "tools" in generate_called_with
+            tools = generate_called_with["tools"]
+            assert len(tools) == 3  # ManimEditor + FrameInspector + ObservationTool
+            
+            # Verify prompt mentions available frames
+            prompt = generate_called_with.get("prompt", "")
+            assert "AVAILABLE FRAMES" in prompt or "inspect_frames" in prompt
             
         finally:
             # Cleanup
@@ -325,8 +326,8 @@ class TestMultimodalLLMIntegration:
                 os.remove(tmp.name)
     
     async def test_surgical_fix_without_screenshots(self):
-        """Test that _apply_surgical_fix works without screenshots (text-only)."""
-        from app.services.pipeline.animation.generation.processors import Animator
+        """Test that _execute_refinement_turn works without screenshots (text-only)."""
+        from app.services.pipeline.animation.generation.animator import Animator
         from app.services.infrastructure.llm import PromptingEngine
         from app.services.pipeline.animation.generation.validation import CodeValidator
         
@@ -353,7 +354,7 @@ class TestMultimodalLLMIntegration:
         
         # Call surgical fix
         code = "test code"
-        await animator._apply_surgical_fix(code, "test error", validation)
+        await animator._execute_refinement_turn(code, "test error", validation)
         
         # Verify text-only prompt was used
         assert "prompt" in generate_called_with

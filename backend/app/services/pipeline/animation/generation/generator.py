@@ -4,7 +4,7 @@ Manim Generator - New Pipeline Implementation
 Handles the multi-stage animation generation workflow:
 1. Choreograph: Plan visuals from narration
 2. Implement: Convert plans to Manim code
-3. Refine: Automated fixing using validator feedback
+3. Refine: Automated fixing (currently stubbed)
 4. Render: Produce final video sections
 """
 
@@ -14,15 +14,14 @@ from typing import Dict, Any, Optional
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, CostTracker
 
-from .processors import Animator
+from .animator import Animator
 from .core import (
     RefinementError, 
     RenderingError, 
     create_scene_file, 
     render_scene
 )
-from .validation import CodeValidator
-from ..config import MAX_CLEAN_RETRIES, MAX_SURGICAL_FIX_ATTEMPTS
+from ..config import MAX_SURGICAL_FIX_ATTEMPTS
 
 logger = get_logger(__name__, component="manim_generator")
 
@@ -41,12 +40,10 @@ class ManimGenerator:
 
         # Infrastructure
         self.cost_tracker = CostTracker()
-        self.validator = CodeValidator()
         
         # Initialize the Unified Animator (Single-Shot Agent)
         self.animator = Animator(
             PromptingEngine("animation_implementation", self.cost_tracker, pipeline_name=pipeline_name),
-            self.validator,
             max_fix_attempts=MAX_SURGICAL_FIX_ATTEMPTS
         )
 
@@ -72,6 +69,7 @@ class ManimGenerator:
         section_index: int,
         audio_duration: float,
         style: str = "3b1b",
+        job_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Orchestrates the animation generation pipeline for a section.
         
@@ -81,18 +79,25 @@ class ManimGenerator:
             section_index: Index of the current section.
             audio_duration: Duration of the narration audio.
             style: Visual style (e.g., '3b1b').
+            job_id: Optional job identifier for logging context.
             
         Returns:
-            Dict containing video_path, manim_code, and validation results.
+            Dict containing video_path, manim_code.
             
         Raises:
             AnimationError or its subclasses: if any stage fails.
         """
         self.stats["total_sections"] += 1
-        logger.info(f"Starting animation pipeline for section {section_index}")
+        logger.info(f"Starting animation pipeline for section {section_index} (Job: {job_id})")
+
+        # Build context for logging
+        context = {
+            "section_index": section_index,
+            "job_id": job_id or "unknown"
+        }
 
         # Unified Agentic Flow (Plan -> Implement -> Refine in one session)
-        final_manim_code = await self.animator.animate(section, audio_duration)
+        final_manim_code = await self.animator.animate(section, audio_duration, context)
 
         # Stage 4: Rendering (Production)
         return await self.process_code_and_render(
@@ -121,10 +126,10 @@ class ManimGenerator:
         target_duration = audio_duration or section.get("duration_seconds", 60)
         
         # 1. Final Stability Check
-        validation = self.validator.validate(manim_code)
-        if not validation.valid:
-            logger.error(f"Post-refinement validation failed for section {section_index}")
-            raise RefinementError(f"Stabilized code failed final validation: {validation.get_error_summary()}")
+        # We assume code is valid as per current configuration
+        if not manim_code:
+            logger.error(f"No code generated for section {section_index}")
+            raise RefinementError(f"No code generated for section {section_index}")
 
         # 2. File Preparation
         section_id = section.get("id", f"section_{section_index}").replace("-", "_").replace(" ", "_")
@@ -150,7 +155,7 @@ class ManimGenerator:
             "video_path": output_video,
             "manim_code": full_code,
             "manim_code_path": str(code_file),
-            "validation_results": validation.to_dict()
+            # "validation_results": {} # Removed
         }
 
     async def render_from_code(

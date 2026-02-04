@@ -169,6 +169,7 @@ class GeminiAPIModels:
         contents: Union[str, List[Any]],
         config: Optional[GenerationConfig] = None,
         tools: Optional[List[Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
     ):
         """
         Generate content using Gemini API.
@@ -177,6 +178,7 @@ class GeminiAPIModels:
             model: Model name (e.g., "gemini-2.5-flash")
             contents: Text prompt or list of content parts
             config: Generation configuration
+            context: Additional context for logging
         
         Returns:
             Response object with .text property
@@ -196,7 +198,7 @@ class GeminiAPIModels:
         # Add thinking config for Gemini 2.0 reasoning models
         if config.thinking_config:
             gen_config_dict["thinking_config"] = config.thinking_config
-
+        
         # Add thinking level for Gemini 3 models (direct parameter in google-genai 1.60.0+)
         if config.thinking_level:
             gen_config_dict["thinking_level"] = config.thinking_level
@@ -238,7 +240,8 @@ class GeminiAPIModels:
             contents=contents,
             config=gen_config_dict,
             tools=tools,
-            system_instruction=config.system_instruction if config else None
+            system_instruction=config.system_instruction if config else None,
+            context=context
         )
 
         try:
@@ -248,7 +251,8 @@ class GeminiAPIModels:
             self.llm_logger.log_response(
                 request_id=request_id,
                 response=response,
-                success=True
+                success=True,
+                context=context
             )
         except Exception as e:
             error_msg = str(e)
@@ -263,11 +267,12 @@ class GeminiAPIModels:
                         request_id=request_id,
                         response=response,
                         success=True,
-                        metadata={"retry": "removed_tools"}
+                        metadata={"retry": "removed_tools"},
+                        context=context
                     )
                 except Exception as retry_error:
                     # Log failed retry
-                    self.llm_logger.log_error(request_id, retry_error)
+                    self.llm_logger.log_error(request_id, retry_error, context=context)
                     raise
             # If the error is about thinking_config not being supported, retry without it
             elif (config.thinking_config or config.thinking_level) and ("thinking_level is not supported" in error_msg or "thinking" in error_msg.lower()):
@@ -282,7 +287,8 @@ class GeminiAPIModels:
                         request_id=request_id,
                         response=response,
                         success=True,
-                        metadata={"retry": "removed_thinking_config"}
+                        metadata={"retry": "removed_thinking_config"},
+                        context=context
                     )
                 except Exception as e2:
                     if "unexpected keyword argument 'tools'" in str(e2) or "got an unexpected keyword argument 'tools'" in str(e2):
@@ -294,19 +300,20 @@ class GeminiAPIModels:
                                 request_id=request_id,
                                 response=response,
                                 success=True,
-                                metadata={"retry": "removed_thinking_config_and_tools"}
+                                metadata={"retry": "removed_thinking_config_and_tools"},
+                                context=context
                             )
                         except Exception as final_error:
                             # Log final failure
-                            self.llm_logger.log_error(request_id, final_error)
+                            self.llm_logger.log_error(request_id, final_error, context=context)
                             raise
                     else:
                         # Log error
-                        self.llm_logger.log_error(request_id, e2)
+                        self.llm_logger.log_error(request_id, e2, context=context)
                         raise
             else:
                 # Log error for unhandled exception
-                self.llm_logger.log_error(request_id, e)
+                self.llm_logger.log_error(request_id, e, context=context)
                 raise
 
         return response
@@ -326,6 +333,7 @@ class VertexAIModels:
         contents: Union[str, List[Any]],
         config: Optional[GenerationConfig] = None,
         tools: Optional[List[Any]] = None,
+        context: Optional[Dict[str, Any]] = None,
     ):
         """
         Generate content using Vertex AI.
@@ -334,6 +342,7 @@ class VertexAIModels:
             model: Model name (e.g., "gemini-2.5-flash-002")
             contents: Text prompt or list of content parts
             config: Generation configuration
+            context: Additional context for logging
         
         Returns:
             Response object with .text property
@@ -398,7 +407,8 @@ class VertexAIModels:
             contents=contents,
             config=gen_config_dict,
             tools=tools,
-            system_instruction=system_instruction
+            system_instruction=system_instruction,
+            context=context
         )
 
         # Make the API call
@@ -412,7 +422,8 @@ class VertexAIModels:
             self.llm_logger.log_response(
                 request_id=request_id,
                 response=response,
-                success=True
+                success=True,
+                context=context
             )
         except TypeError:
             try:
@@ -425,15 +436,16 @@ class VertexAIModels:
                     request_id=request_id,
                     response=response,
                     success=True,
-                    metadata={"retry": "removed_tools"}
+                    metadata={"retry": "removed_tools"},
+                    context=context
                 )
             except Exception as error:
                 # Log error
-                self.llm_logger.log_error(request_id, error)
+                self.llm_logger.log_error(request_id, error, context=context)
                 raise
         except Exception as error:
             # Log error
-            self.llm_logger.log_error(request_id, error)
+            self.llm_logger.log_error(request_id, error, context=context)
             raise
 
         return response

@@ -10,7 +10,12 @@ from app.services.infrastructure.parsing.code_parser import (
     normalize_indentation,
     remove_markdown_wrappers
 )
-from ...config import CONSTRUCT_INDENT_SPACES, MIN_DURATION_PADDING, DURATION_PADDING_PERCENTAGE
+from ...config import (
+    CONSTRUCT_INDENT_SPACES, 
+    MIN_DURATION_PADDING, 
+    DURATION_PADDING_PERCENTAGE,
+    THEME_SETUP_CODES
+)
 
 def get_theme_setup_code(style: str = "3b1b") -> str:
     """Returns the Manim setup code for a specific visual style.
@@ -21,10 +26,7 @@ def get_theme_setup_code(style: str = "3b1b") -> str:
     Returns:
         A formatted string of Python code to be injected into construct().
     """
-    if style == "light":
-        return "        self.camera.background_color = \"#FFFFFF\"\n"
-    # Default to 3b1b / dark theme
-    return "        self.camera.background_color = \"#171717\"  # Slate dark\n"
+    return THEME_SETUP_CODES.get(style, THEME_SETUP_CODES["3b1b"])
 
 
 def clean_code(code_text: Optional[str]) -> str:
@@ -180,9 +182,6 @@ def extract_scene_name(code: str) -> Optional[str]:
     return None
 
 
-def remove_markdown_blocks(code: str) -> str:
-    """Remove markdown code block delimiters from code"""
-    return remove_markdown_wrappers(code)
 
 
 def ensure_manim_structure(code: str) -> bool:

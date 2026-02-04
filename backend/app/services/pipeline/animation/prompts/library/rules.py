@@ -1,0 +1,151 @@
+"""
+Critical rules, constraints, and valid API references for Manim.
+"""
+
+COMMON_MISTAKES = '''
+## CRITICAL RULES & COMMON PITFALLS (STRICT ADHERENCE REQUIRED)
+
+[CRITICAL_WARNING] MOST FREQUENT ERROR: FORGETTING TO CLEAN UP OLD OBJECTS
+   - You often forget to remove objects before adding new ones at the same position.
+   - **Visual Result**: Unreadable text overlaps and cluttered scenes.
+   - **Fix**: ALWAYS use `FadeOut()`, `ReplacementTransform()`, or `self.remove()` before placing new content.
+
+1. **ValueTracker.number** - WRONG! Use `tracker.get_value()` instead
+   - [WRONG] `tracker.number`
+   - [CORRECT] `tracker.get_value()`
+
+2. **ease_in_expo, exponential** - Not standard rate functions
+   - [WRONG] `rate_func=ease_in_expo`
+   - [CORRECT] `rate_func=smooth` or `rate_func=linear`
+
+3. **self.wait(0)** - Zero-duration waits cause issues
+   - [WRONG] `self.wait(0)`
+   - [CORRECT] Skip the wait entirely
+
+4. **Undefined colors** - See "Valid Manim Colors" section above
+
+5. **scale() on groups** - Must use animate syntax for groups
+   - [WRONG] `group.scale(2)` (doesn't animate)
+   - [CORRECT] `group.animate.scale(2)`
+
+6. **Missing imports** - Always start with `from manim import *`
+
+7. **Forgetting background** - Always set dark background
+   - [CORRECT] `self.camera.background_color = "#171717"`
+
+8. **Animating lists** - `Animation` only works on Mobjects, not lists
+   - [WRONG] `self.play(FadeOut(self.mobjects))` (Crash! list not Mobject)
+   - [CORRECT] `self.play(*[FadeOut(m) for m in self.mobjects])` (animate each)
+   
+9. **VGroup vs Group** - VGroup only accepts VMobjects, Group accepts any Mobject
+   - [WRONG] `VGroup(Group(...))` (Crash! Group inside VGroup)
+   - [CORRECT] `Group(*self.mobjects)` for mixed mobjects
+   - [CORRECT] `VGroup(*[m for m in self.mobjects if isinstance(m, VMobject)])` for VMobjects only
+
+10. **CENTER doesn't exist** - Use ORIGIN for center position
+    - [WRONG] `obj.move_to(CENTER)` (Crash!)
+    - [CORRECT] `obj.move_to(ORIGIN)`
+
+11. **Camera.frame doesn't exist on regular Camera** - MovingCameraScene uses self.camera differently
+    - [WRONG] `self.camera.frame.scale(2)` (Crash on regular Scene!)
+    - [CORRECT] For MovingCameraScene: `self.camera.frame.animate.scale(2)` 
+    - [CORRECT] For regular Scene: Use `self.play(self.camera.frame.animate.scale(2))` ONLY if using MovingCameraScene
+
+12. **Mobject init kwargs** - Don't pass unexpected keyword arguments
+    - [WRONG] `Circle(size=2)` (Crash! no 'size' param)
+    - [CORRECT] `Circle(radius=2)`
+    - [WRONG] `Text("hi", size=24)` (Crash! no 'size' param)
+    - [CORRECT] `Text("hi", font_size=24)`
+
+13. **Forgetting to remove old objects** - Clean up before placing new items
+    - [WRONG] Creating new text without removing old → Text overlaps!
+    - [CORRECT] `self.play(FadeOut(old_text)); self.play(FadeIn(new_text))`
+    - [CORRECT] `self.play(ReplacementTransform(old_obj, new_obj))`
+    - [CORRECT] `self.remove(old_obj)` before adding new at same position
+
+14. **Text/label overlapping** - Always position labels to avoid overlaps
+    - [WRONG] Multiple labels at same position → Unreadable!
+    - [CORRECT] Use `.next_to(obj, direction, buff=0.3)` to position labels
+    - [CORRECT] Use `.shift(UP * 0.5)` to offset overlapping items
+    - [CORRECT] For axis labels, use `.to_edge(DOWN)` or `.to_corner()`
+
+15. **Objects going out of frame** - Keep everything visible
+    - [WRONG] Objects positioned at edges get cut off
+    - [CORRECT] Use `.scale(0.8)` to shrink large groups
+    - [CORRECT] Check positions with `.move_to(ORIGIN)` then shift
+    - [CORRECT] X range: -6 to 6, Y range: -3.5 to 3.5 (visible area)
+
+16. **Common Undefined Names & Hallucinations (DO NOT USE)**
+    - [WRONG] `CYAN` (causes crash). Use `BLUE_C` or `TEAL` instead.
+    - [WRONG] `CENTER` (causes crash). Use `ORIGIN` instead.
+    - [WRONG] `create_neural_net()`, `NeuralNetwork()`, `Axes2D()` - These are NOT in Manim Community.
+    - [FIX] Build complex objects from primitives: Circles for neurons, Lines for synapses, Axes for plots.
+
+17. **ManimGL vs Community Syntax**
+    - [WRONG] `self.add(obj.set_color(RED))` (ManimGL style)
+    - [CORRECT] `obj.set_color(RED); self.add(obj)` (Community style)
+    - [WRONG] `self.play(obj.animate.scale(2))` inside `self.add_foreground_mobject`
+    - [CORRECT] Keep animations and additions separate.
+'''
+
+VALID_COLORS = '''
+## Valid Manim Colors (USE ONLY THESE)
+
+### Primary Colors
+WHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PINK, PURPLE, TEAL, GOLD, GRAY, GREY
+
+### Color Variants (lighter to darker with _A through _E)
+- RED_A, RED_B, RED_C, RED_D, RED_E
+- BLUE_A, BLUE_B, BLUE_C, BLUE_D, BLUE_E  
+- GREEN_A, GREEN_B, GREEN_C, GREEN_D, GREEN_E
+- YELLOW_A, YELLOW_B, YELLOW_C, YELLOW_D, YELLOW_E
+- GRAY_A, GRAY_B, GRAY_C, GRAY_D, GRAY_E (also GREY_*)
+
+### Special Colors
+MAROON, LIGHT_GRAY, DARK_GRAY, DARK_BLUE, LIGHT_PINK, DARK_BROWN
+'''
+
+VALID_ANIMATIONS = '''
+## Valid Manim Animations (USE ONLY THESE)
+
+### Creation Animations
+- `Create(mobject)` - Draw lines/shapes progressively
+- `Write(text)` - Write text character by character
+- `FadeIn(mobject)` - Fade in from transparent
+- `FadeOut(mobject)` - Fade out to transparent
+- `GrowFromCenter(mobject)` - Grow from center point
+- `GrowFromPoint(mobject, point)` - Grow from a specific point
+- `DrawBorderThenFill(mobject)` - Draw outline then fill
+
+### Transform Animations  
+- `Transform(source, target)` - Morph one mobject into another
+- `ReplacementTransform(source, target)` - Transform and replace
+- `TransformMatchingTex(source, target)` - Transform matching LaTeX parts
+- `TransformMatchingShapes(source, target)` - Transform matching shapes
+
+### Movement Animations
+- `Rotate(mobject, angle)` - Rotate by angle in radians
+- `Circumscribe(mobject)` - Circle around a mobject
+- `Indicate(mobject)` - Briefly highlight
+- `Flash(point)` - Flash at a point
+- `Wiggle(mobject)` - Wiggle in place
+- `ApplyWave(mobject)` - Wave effect
+
+### Group Animations
+- `LaggedStart(*animations, lag_ratio=0.1)` - Stagger animations
+- `AnimationGroup(*animations)` - Play animations together
+- `Succession(*animations)` - Play animations in sequence
+'''
+
+AVAILABLE_RATE_FUNCS = '''
+## Available Manim Rate Functions
+
+Use ONLY these rate functions:
+- `linear` - Constant speed
+- `smooth` - Smooth ease in/out (default, good for most animations)
+- `rush_into` - Fast start, slow end
+- `rush_from` - Slow start, fast end
+- `there_and_back` - Goes forward then returns
+- `double_smooth` - Extra smooth transitions
+- `lingering` - Slows down at the end
+'''

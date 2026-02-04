@@ -5,7 +5,7 @@ Matches backend/app/services/pipeline/animation/generation/validation/code_valid
 
 import pytest
 from unittest.mock import patch
-from app.services.pipeline.animation.generation.validation.code_validator import CodeValidator
+from app.services.pipeline.animation.generation.validation.orchestrator import CodeValidator
 
 @pytest.fixture
 def validator():

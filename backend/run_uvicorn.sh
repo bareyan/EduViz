@@ -9,7 +9,7 @@ fi
 
 LOGFILE="$(dirname "$0")/uvicorn.log"
 # Run with nohup, redirect stdout+stderr to logfile and disown so it won't be suspended by TTY output
-nohup micromamba run -n manim uvicorn app.main:app --host 0.0.0.0 --port 8000 $RELOAD_FLAG > "$LOGFILE" 2>&1 &
+nohup micromamba run -n manim uvicorn app.main:app --host 0.0.0.0 --port 8000 $RELOAD_FLAG --no-access-log > "$LOGFILE" 2>&1 &
 PID=$!
 # Disown and show PID
 disown

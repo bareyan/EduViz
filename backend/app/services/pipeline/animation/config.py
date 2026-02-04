@@ -82,3 +82,25 @@ ENABLE_SYNTAX_VALIDATION = True
 ENABLE_STRUCTURE_VALIDATION = True
 ENABLE_IMPORTS_VALIDATION = True
 ENABLE_SPATIAL_VALIDATION = True
+ENABLE_SPATIAL_VALIDATION = True
+
+# Theme setup code blocks for code injection
+THEME_SETUP_CODES = {
+    "light": '        self.camera.background_color = "#FFFFFF"\n',
+    "3b1b": '        self.camera.background_color = "#171717"  # Slate dark\n',
+    "dark": '        self.camera.background_color = "#171717"  # Slate dark\n'
+}
+
+# Fast configuration for validation engine (no video output)
+VALIDATION_RENDER_CONFIG = {
+    "write_to_movie": False,
+    "save_last_frame": False,
+    "preview": False,
+    "verbosity": "CRITICAL",
+    "renderer": "cairo",
+    "frame_rate": 1,
+    "pixel_width": 320,
+    "pixel_height": 180,
+    "quality": "low_quality",
+    "skip_animations": True
+}

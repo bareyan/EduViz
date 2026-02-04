@@ -157,7 +157,8 @@ class PromptingEngine:
                             model=model_name,
                             contents=payload,
                             tools=tools,
-                            config=gen_config
+                            config=gen_config,
+                            context=context
                         ),
                         timeout=config.timeout,
                     )
@@ -167,7 +168,8 @@ class PromptingEngine:
                         model=model_name,
                         contents=payload,
                         tools=tools,
-                        config=gen_config
+                        config=gen_config,
+                        context=context
                     )
                 
                 # Track costs
@@ -209,6 +211,8 @@ class PromptingEngine:
                 
                 # Get text response
                 text_response = response.text if hasattr(response, 'text') else ""
+                if text_response is None:
+                    text_response = ""
                 result["response"] = text_response
                 
                 # Parse JSON if requested
@@ -216,6 +220,9 @@ class PromptingEngine:
                     try:
                         result["parsed_json"] = parse_json_response(text_response)
                     except Exception as e:
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.error(f"JSON parse failure for response: {text_response[:500]}... Error: {str(e)}")
                         result["json_parse_error"] = str(e)
                 
                 return result

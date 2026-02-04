@@ -1,5 +1,7 @@
 from .system import (
     ANIMATOR_SYSTEM,
+    IMPLEMENTER_SYSTEM,
+    FIXER_SYSTEM,
     CHOREOGRAPHER_SYSTEM
 )
 from .user import (
@@ -8,22 +10,24 @@ from .user import (
     FULL_IMPLEMENTATION_USER,
     SURGICAL_FIX_USER
 )
-from .patterns import (
-    get_patterns_for_prompt,
-    get_compact_patterns,
+from .library import (
     COMMON_MISTAKES,
-    AVAILABLE_RATE_FUNCS
+    AVAILABLE_RATE_FUNCS,
+    VALID_COLORS,
+    VALID_ANIMATIONS
 )
 
 __all__ = [
     "ANIMATOR_SYSTEM",
+    "IMPLEMENTER_SYSTEM",
+    "FIXER_SYSTEM",
     "CHOREOGRAPHER_SYSTEM",
     "ANIMATOR_USER",
     "CHOREOGRAPHY_USER",
     "FULL_IMPLEMENTATION_USER",
     "SURGICAL_FIX_USER",
-    "get_patterns_for_prompt",
-    "get_compact_patterns",
     "COMMON_MISTAKES",
     "AVAILABLE_RATE_FUNCS",
+    "VALID_COLORS",
+    "VALID_ANIMATIONS"
 ]

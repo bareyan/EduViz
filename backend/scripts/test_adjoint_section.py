@@ -16,6 +16,9 @@ import shutil
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
+# Load environment variables from .env
+import app.config  # This triggers load_dotenv()
+
 from app.services.pipeline.animation.generation import ManimGenerator
 
 

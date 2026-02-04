@@ -11,7 +11,6 @@ from app.services.pipeline.animation.generation.core.code_helpers import (
     create_scene_file,
     fix_translated_code,
     extract_scene_name,
-    remove_markdown_blocks,
     ensure_manim_structure,
 )
 from app.services.infrastructure.parsing.code_parser import normalize_indentation
@@ -241,35 +240,6 @@ class MyTestScene(Scene):
         assert result == "Scene123"
 
 
-class TestRemoveMarkdownBlocks:
-    """Test suite for remove_markdown_blocks function"""
-
-    def test_removes_opening_fence(self):
-        """Test removing opening markdown fence"""
-        code = '''```python
-print("hello")
-```'''
-        result = remove_markdown_blocks(code)
-        
-        assert not result.strip().startswith("```")
-        assert "print" in result
-
-    def test_removes_closing_fence(self):
-        """Test removing closing markdown fence"""
-        code = '''```
-code here
-```'''
-        result = remove_markdown_blocks(code)
-        
-        assert not result.strip().endswith("```")
-        assert "code here" in result
-
-    def test_code_without_fences_unchanged(self):
-        """Test that code without fences is unchanged"""
-        code = "print('hello')"
-        result = remove_markdown_blocks(code)
-        
-        assert result == code
 
 
 class TestEnsureManimStructure:

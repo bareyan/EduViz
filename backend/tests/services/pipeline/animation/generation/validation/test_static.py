@@ -4,7 +4,7 @@ Matches backend/app/services/pipeline/animation/generation/validation/static_val
 """
 
 import pytest
-from app.services.pipeline.animation.generation.validation.static_validator import StaticValidator
+from app.services.pipeline.animation.generation.validation.static import StaticValidator
 
 @pytest.fixture
 def validator():

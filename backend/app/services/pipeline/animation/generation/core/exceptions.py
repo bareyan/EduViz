@@ -19,10 +19,6 @@ class RefinementError(AnimationError):
     """Raised when the refinement loop fails to stabilize the code within max attempts."""
     pass
 
-class ValidationError(AnimationError):
-    """Raised when code fails fundamental safety or spatial checks."""
-    pass
-
 class RenderingError(AnimationError):
     """Raised when the Manim engine fails to produce an output file."""
     pass

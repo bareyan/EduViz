@@ -87,7 +87,8 @@ class SectionOrchestrator:
         voice: str,
         style: str,
         language: str,
-        resume: bool = False
+        resume: bool = False,
+        job_id: Optional[str] = None
     ) -> List[SectionResult]:
         """
         Process all sections in parallel with controlled concurrency
@@ -141,7 +142,8 @@ class SectionOrchestrator:
                         language=language,
                         resume=resume,
                         completed_count=completed_count,
-                        total_sections=total_sections
+                        total_sections=total_sections,
+                        job_id=job_id
                     )
 
             # Create tasks for all sections
@@ -198,7 +200,8 @@ class SectionOrchestrator:
         language: str,
         resume: bool,
         completed_count: List[int],
-        total_sections: int
+        total_sections: int,
+        job_id: Optional[str] = None
     ) -> SectionResult:
         """
         Process a single section (internal method)

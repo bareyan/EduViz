@@ -5,7 +5,7 @@ Testing the new single-shot + surgical fix architecture.
 
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
-from app.services.pipeline.animation.generation.processors import Animator
+from app.services.pipeline.animation.generation.animator import Animator
 from app.services.pipeline.animation.generation.core.exceptions import (
     ChoreographyError,
     ImplementationError,
