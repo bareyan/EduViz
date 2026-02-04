@@ -26,6 +26,21 @@ BASE_GENERATION_TEMPERATURE = 0.7
 # Base temperature for correction
 BASE_CORRECTION_TEMPERATURE = 0.1
 
+# Temperature bump per correction retry
+CORRECTION_TEMPERATURE_STEP = 0.05
+
+# Maximum tokens for refinement responses
+MAX_REFINEMENT_OUTPUT_TOKENS = 8192
+
+# Prompt sizing and snippet extraction limits
+MAX_PROMPT_CODE_CHARS = 8000
+SNIPPET_CONTEXT_RADIUS = 6
+SNIPPET_MAX_LINES = 220
+HEAD_TAIL_LINES = 120
+
+# LLM retry policy for JSON responses
+MAX_JSON_RETRIES = 2
+
 
 # =============================================================================
 # RETRY SETTINGS
@@ -77,11 +92,20 @@ CONSTRUCT_INDENT_SPACES = 8
 # VALIDATION SETTINGS
 # =============================================================================
 
+# Master switch to enable/disable refinement cycle validation
+ENABLE_REFINEMENT_CYCLE = True
+
+# Timeout for validation operations (seconds)
+VALIDATION_TIMEOUT = 30
+
+# Tool availability flags (set to False to skip specific tools)
+REQUIRE_PYRIGHT = False  # Pyright is optional (requires Node.js: npm install -g pyright)
+REQUIRE_RUFF = True  # Ruff is required for syntax validation
+
 # Enable/disable specific validators
 ENABLE_SYNTAX_VALIDATION = True
 ENABLE_STRUCTURE_VALIDATION = True
 ENABLE_IMPORTS_VALIDATION = True
-ENABLE_SPATIAL_VALIDATION = True
 ENABLE_SPATIAL_VALIDATION = True
 
 # Theme setup code blocks for code injection

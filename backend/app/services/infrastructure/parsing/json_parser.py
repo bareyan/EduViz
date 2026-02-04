@@ -9,7 +9,50 @@ This module provides common utilities for:
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
+
+
+@dataclass(frozen=True)
+class JsonParseResult:
+    value: Optional[Any]
+    error: Optional[str]
+    truncated: bool
+
+
+def looks_truncated_json(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if stripped.endswith("..."):
+        return True
+    # Remove string contents before counting braces to avoid false positives.
+    no_strings = re.sub(r'"(?:\\.|[^"\\])*"', '""', stripped)
+    if no_strings.count("{") != no_strings.count("}"):
+        return True
+    if no_strings.count("[") != no_strings.count("]"):
+        return True
+    if stripped[-1] not in ("}", "]"):
+        return True
+    return False
+
+
+def parse_json_strict(text: str) -> JsonParseResult:
+    """Parse JSON strictly without fallback heuristics.
+    
+    Returns JsonParseResult with error metadata when parsing fails.
+    """
+    if not text or not text.strip():
+        return JsonParseResult(value=None, error="empty_response", truncated=True)
+
+    cleaned = remove_markdown_wrappers(text)
+
+    try:
+        value = json.loads(cleaned)
+        return JsonParseResult(value=value, error=None, truncated=False)
+    except json.JSONDecodeError as e:
+        truncated = looks_truncated_json(cleaned)
+        return JsonParseResult(value=None, error=f"json_decode_error: {e.msg}", truncated=truncated)
 
 
 # ============================================================================

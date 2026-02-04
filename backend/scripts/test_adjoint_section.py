@@ -126,8 +126,6 @@ async def main():
         print(f"   Lines: {len(result['manim_code'].splitlines())}")
         print(f"   Size: {len(result['manim_code'])} chars")
         
-        print(f"\n📊 Validation: {result['validation_results']['valid']}")
-        
         # Show first 40 lines of code
         print("\n" + "=" * 60)
         print("📄 Generated Code (first 40 lines):")

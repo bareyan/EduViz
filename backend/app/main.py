@@ -7,7 +7,8 @@ This is the main entry point that wires together all routes and services.
 
 import os
 import uuid
-from fastapi import FastAPI, Request
+import shutil
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -106,6 +107,89 @@ async def root():
         "message": "MathViz API - Generate educational math videos",
         "version": API_VERSION
     }
+
+
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint for container orchestration.
+    
+    Validates all critical system dependencies:
+    - External tools (manim, ffmpeg, ruff, pyright)
+    - API credentials (GEMINI_API_KEY)
+    - Disk space availability
+    
+    Returns 200 if healthy, 503 if any check fails.
+    """
+    checks = {
+        "status": "healthy",
+        "checks": {}
+    }
+    
+    all_healthy = True
+    
+    # Check external tools
+    tools = {
+        "manim": {"command": "manim", "required": True},
+        "ffmpeg": {"command": "ffmpeg", "required": True},
+        "ffprobe": {"command": "ffprobe", "required": True},
+        "ruff": {"command": "ruff", "required": True},
+        "pyright": {"command": "pyright", "required": False}  # Optional (requires Node.js)
+    }
+    
+    for tool_name, config in tools.items():
+        command = config["command"]
+        required = config["required"]
+        available = shutil.which(command) is not None
+        
+        checks["checks"][tool_name] = {
+            "available": available,
+            "required": required,
+            "path": shutil.which(command) if available else None
+        }
+        
+        if not available:
+            if required:
+                all_healthy = False
+                logger.warning(f"Health check: {tool_name} not found in PATH (REQUIRED)")
+            else:
+                logger.info(f"Health check: {tool_name} not found in PATH (optional - type checking disabled)")
+    
+    # Check API credentials
+    gemini_key_exists = bool(os.getenv("GEMINI_API_KEY"))
+    checks["checks"]["gemini_api_key"] = {
+        "configured": gemini_key_exists
+    }
+    if not gemini_key_exists:
+        all_healthy = False
+        logger.warning("Health check: GEMINI_API_KEY not configured")
+    
+    # Check disk space (warn if < 1GB available)
+    try:
+        stat = os.statvfs(OUTPUT_DIR)
+        free_space_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+        checks["checks"]["disk_space"] = {
+            "available_gb": round(free_space_gb, 2),
+            "sufficient": free_space_gb > 1.0
+        }
+        if free_space_gb < 1.0:
+            logger.warning(f"Health check: Low disk space ({free_space_gb:.2f} GB)")
+    except Exception as e:
+        checks["checks"]["disk_space"] = {
+            "error": str(e),
+            "sufficient": False
+        }
+        logger.error(f"Health check: Failed to check disk space: {e}")
+    
+    # Set overall status
+    if not all_healthy:
+        checks["status"] = "unhealthy"
+        raise HTTPException(
+            status_code=503,
+            detail=checks
+        )
+    
+    return checks
 
 
 @app.on_event("startup")

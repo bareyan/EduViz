@@ -105,14 +105,36 @@ class RuntimeValidator:
     def _parse_manim_error(self, stderr: str) -> str:
         """Extracts the meaningful error message from Manim traceback."""
         # Manim tracebacks are standard Python tracebacks.
-        # We want the last line (Exception: message) and maybe the line number in the script.
+        # We want the exception type + message and the context around it.
         
         lines = stderr.splitlines()
         if not lines:
             return "Unknown runtime error (no stderr output)"
-            
-        # Strategy: Look for the last line that isn't empty
-        last_line = lines[-1].strip()
+        
+        # Also log the full stderr for debugging - do this first
+        logger.debug(f"Full Manim stderr (first 2000 chars):\n{stderr[:2000]}")
+        
+        # Strategy 1: Look for standard Python exception pattern: "ExceptionType: message"
+        exception_line = None
+        for line in reversed(lines):
+            stripped = line.strip()
+            # Look for lines with exception pattern (colon after word)
+            if re.match(r'^[A-Z][a-zA-Z]*Error:', stripped) or re.match(r'^[A-Z][a-zA-Z]*:', stripped):
+                exception_line = stripped
+                logger.debug(f"Found exception line via pattern: {exception_line}")
+                break
+        
+        # Strategy 2: If no exception pattern found, look for last meaningful non-empty line
+        if not exception_line:
+            for line in reversed(lines):
+                stripped = line.strip()
+                if stripped and not stripped.startswith('During handling of'):
+                    exception_line = stripped
+                    logger.debug(f"Found fallback line (last meaningful): {exception_line}")
+                    break
+        
+        if not exception_line:
+            exception_line = "Unknown error"
         
         # Look for the file reference in the traceback to get line number
         # File "...", line X, in construct
@@ -122,6 +144,12 @@ class RuntimeValidator:
             if match:
                 line_num = match.group(1)
                 break
-                
+        
+        # Truncate if too long but preserve the key info
+        # Most exceptions are short, but we allow up to 300 chars for detailed messages
+        if len(exception_line) > 300:
+            exception_line = exception_line[:300] + "..."
+        
         prefix = f" (Line {line_num})" if line_num else ""
-        return f"{last_line}{prefix}"
+        
+        return f"{exception_line}{prefix}"

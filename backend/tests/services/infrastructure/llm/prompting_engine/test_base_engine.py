@@ -89,6 +89,19 @@ class TestPromptingEngine:
         assert result["success"] is True
         assert result["parsed_json"] == {"key": "value"}
 
+    async def test_generate_json_invalid_fails(self, engine):
+        """Test invalid JSON returns failure when strict validation is enabled."""
+        mock_response = MagicMock()
+        mock_response.text = '{"key": "value"'
+        self.client.models.generate_content.return_value = mock_response
+
+        config = PromptConfig(response_format="json", max_retries=1)
+        result = await engine.generate("Get JSON", config=config)
+
+        assert result["success"] is False
+        assert result["parsed_json"] is None
+        assert "json_decode_error" in result["error"]
+
     def test_generate_sync(self, engine):
         """Test synchronous wrapper."""
         engine.generate = AsyncMock(return_value={"success": True, "response": "Sync!"})

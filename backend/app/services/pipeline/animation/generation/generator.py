@@ -4,7 +4,7 @@ Manim Generator - New Pipeline Implementation
 Handles the multi-stage animation generation workflow:
 1. Choreograph: Plan visuals from narration
 2. Implement: Convert plans to Manim code
-3. Refine: Automated fixing (currently stubbed)
+3. Refine: Automated fixing with static and runtime validation
 4. Render: Produce final video sections
 """
 
@@ -14,14 +14,15 @@ from typing import Dict, Any, Optional
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, CostTracker
 
-from .animator import Animator
+from .orchestrator import AnimationOrchestrator
 from .core import (
-    RefinementError, 
+    RefinementError,
+    ImplementationError,
     RenderingError, 
     create_scene_file, 
     render_scene
 )
-from ..config import MAX_SURGICAL_FIX_ATTEMPTS
+from ..config import MAX_SURGICAL_FIX_ATTEMPTS, MAX_CLEAN_RETRIES
 
 logger = get_logger(__name__, component="manim_generator")
 
@@ -41,10 +42,10 @@ class ManimGenerator:
         # Infrastructure
         self.cost_tracker = CostTracker()
         
-        # Initialize the Unified Animator (Single-Shot Agent)
-        self.animator = Animator(
-            PromptingEngine("animation_implementation", self.cost_tracker, pipeline_name=pipeline_name),
-            max_fix_attempts=MAX_SURGICAL_FIX_ATTEMPTS
+        # Initialize the Animation Orchestrator (Modular Architecture)
+        self.orchestrator = AnimationOrchestrator(
+            engine=PromptingEngine("animation_implementation", self.cost_tracker, pipeline_name=pipeline_name),
+            cost_tracker=self.cost_tracker
         )
 
         # Execution stats
@@ -96,8 +97,19 @@ class ManimGenerator:
             "job_id": job_id or "unknown"
         }
 
-        # Unified Agentic Flow (Plan -> Implement -> Refine in one session)
-        final_manim_code = await self.animator.animate(section, audio_duration, context)
+        # Modular Pipeline Flow (Choreograph -> Implement -> Refine)
+        final_manim_code = await self.orchestrator.generate(section, audio_duration, context)
+        
+        # Check if generation succeeded
+        if not final_manim_code or not final_manim_code.strip():
+            logger.error(
+                f"Orchestrator failed to generate valid code for section {section_index} "
+                f"after all retry attempts"
+            )
+            raise ImplementationError(
+                f"Failed to generate valid animation code for section {section_index} "
+                f"after {MAX_CLEAN_RETRIES} attempts"
+            )
 
         # Stage 4: Rendering (Production)
         return await self.process_code_and_render(
@@ -136,10 +148,19 @@ class ManimGenerator:
         scene_name = f"Section{section_id.title().replace('_', '')}"
         code_file = Path(output_dir) / f"scene_{section_index}.py"
         
+        logger.info(f"Preparing code file: {code_file}")
+        logger.info(f"Scene name: {scene_name}")
+        logger.debug(f"Code length: {len(manim_code)} chars")
+        
         full_code = create_scene_file(manim_code, section_id, target_duration, style)
+        
+        # Ensure output directory exists
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         with open(code_file, "w", encoding="utf-8") as f:
             f.write(full_code)
+        
+        logger.info(f"Code file written: {code_file} ({code_file.stat().st_size} bytes)")
 
         # 3. Execution (Rendering)
         output_video = await render_scene(

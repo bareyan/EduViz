@@ -62,6 +62,10 @@ class CostTracker:
                 # Fallback for different response formats
                 input_tokens = 0
                 output_tokens = 0
+            
+            # Ensure tokens are integers (not None)
+            input_tokens = int(input_tokens) if input_tokens is not None else 0
+            output_tokens = int(output_tokens) if output_tokens is not None else 0
 
             # Update totals
             self.token_usage["input_tokens"] += input_tokens

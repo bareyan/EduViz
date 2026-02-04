@@ -15,7 +15,7 @@ from app.services.infrastructure.llm.gemini.client import (
 )
 from app.config.models import get_model_config, get_thinking_config
 from app.services.infrastructure.llm.cost_tracker import CostTracker
-from app.services.infrastructure.parsing import parse_json_response
+from app.services.infrastructure.parsing import parse_json_strict
 
 
 @dataclass
@@ -32,6 +32,7 @@ class PromptConfig:
     response_format: str = "text"  # "text", "json", or "function_call"
     system_instruction: Optional[str] = None
     response_schema: Optional[Any] = None
+    require_json_valid: bool = True
 
 
 class PromptingEngine:
@@ -131,7 +132,9 @@ class PromptingEngine:
                 - success: bool
                 - response: str (text response)
                 - function_calls: List[Dict] (if using function calling)
-                - parsed_json: Dict (if response_format is "json")
+                - parsed_json: Any (if response_format is "json")
+                - json_error: str (if JSON parsing fails)
+                - json_truncated: bool (if JSON appears truncated)
                 - error: str (if failed)
                 - usage: Dict (token usage info)
         """
@@ -215,15 +218,24 @@ class PromptingEngine:
                     text_response = ""
                 result["response"] = text_response
                 
-                # Parse JSON if requested
-                if config.response_format == "json" and text_response:
-                    try:
-                        result["parsed_json"] = parse_json_response(text_response)
-                    except Exception as e:
-                        import logging
-                        logger = logging.getLogger(__name__)
-                        logger.error(f"JSON parse failure for response: {text_response[:500]}... Error: {str(e)}")
-                        result["json_parse_error"] = str(e)
+                # Parse JSON if requested (strict)
+                if config.response_format == "json":
+                    if text_response:
+                        json_result = parse_json_strict(text_response)
+                        result["parsed_json"] = json_result.value
+                        result["json_error"] = json_result.error
+                        result["json_truncated"] = json_result.truncated
+                    else:
+                        result["parsed_json"] = None
+                        result["json_error"] = "empty_response"
+                        result["json_truncated"] = True
+
+                    if config.require_json_valid and result["parsed_json"] is None:
+                        if attempt < config.max_retries - 1:
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                        result["success"] = False
+                        result["error"] = result.get("json_error") or "invalid_json"
                 
                 return result
                 

@@ -16,6 +16,7 @@ from typing import Dict, Any, Optional, TYPE_CHECKING
 
 from app.core import get_logger
 from ...config import QUALITY_DIR_MAP, QUALITY_FLAGS, RENDER_TIMEOUT
+from .exceptions import RenderingError
 
 if TYPE_CHECKING:
     from ..generator import ManimGenerator
@@ -122,26 +123,34 @@ async def render_scene(
             subprocess.run, cmd, capture_output=True, text=True, timeout=RENDER_TIMEOUT
         )
         
+        # Log stdout for debugging (even on success)
+        if result.stdout:
+            logger.debug(f"Manim stdout: {result.stdout[-500:]}")
+        
         if result.returncode != 0:
             logger.error(f"Manim render process failed for section {section_index}")
-            # Log the tail of the error for context
-            error_output = result.stderr[-1000:]
-            logger.error(f"Manim Stderr: {error_output}")
-            return None
+            # Log the full stderr for context
+            logger.error(f"Manim Stderr (full): {result.stderr}")
+            logger.error(f"Manim Stdout (full): {result.stdout}")
+            raise RenderingError(f"Manim render failed for section {section_index}: {result.stderr[:500]}")
 
         # 4. Locate and Validate Output
         quality_subdir = get_quality_subdir(quality)
         video_dir = Path(output_dir) / "videos" / code_file.stem / quality_subdir
         
+        logger.debug(f"Looking for video in: {video_dir}")
+        
         rendered_video = None
         if video_dir.exists():
             videos = list(video_dir.glob("*.mp4"))
+            logger.debug(f"Found {len(videos)} videos in {video_dir}")
             if videos:
                 rendered_video = str(videos[0])
 
         if not rendered_video:
             # Fallback search in entire output_dir
             videos = list(Path(output_dir).rglob(f"section_{section_index}.mp4"))
+            logger.debug(f"Fallback search found {len(videos)} videos")
             if videos:
                 rendered_video = str(videos[0])
 
@@ -149,12 +158,20 @@ async def render_scene(
             logger.info(f"Successfully rendered video: {rendered_video}")
             return rendered_video
             
+        # Enhanced error logging
         logger.error(f"Video file not found or invalid after rendering section {section_index}")
-        return None
+        logger.error(f"Searched in: {video_dir}")
+        logger.error(f"Code file was: {code_file}")
+        logger.error(f"Manim stdout: {result.stdout[-1000:]}")
+        logger.error(f"Manim stderr: {result.stderr[-1000:]}")
+        raise RenderingError(f"Video output not found or invalid for section {section_index}")
 
     except subprocess.TimeoutExpired:
         logger.error(f"Manim rendering timed out for section {section_index} (Limit: {RENDER_TIMEOUT}s)")
-        return None
+        raise RenderingError(f"Rendering timeout for section {section_index} after {RENDER_TIMEOUT}s")
+    except RenderingError:
+        # Re-raise our own exceptions
+        raise
     except Exception as e:
         logger.error(f"Unexpected error during render: {e}")
-        return None
+        raise RenderingError(f"Unexpected rendering error for section {section_index}: {str(e)}")

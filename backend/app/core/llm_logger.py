@@ -403,17 +403,28 @@ class LLMLogger:
             else:
                 response_text = str(response)
         
-        # Truncate response if needed
+        # Truncate response if needed FOR CONSOLE/TRUNCATED LOGGERS
         truncated_response = self._truncate_text(
             response_text,
             self.max_response_length
         )
         
-        # Create truncated response record
+        # Create truncated response record for console/truncated loggers
         response_record = LLMResponse(
             request_id=request_id,
             timestamp=timestamp,
             response_text=truncated_response,
+            duration_seconds=round(duration, 3),
+            success=success,
+            error=error,
+            metadata=metadata
+        )
+        
+        # Create FULL response record for full logger (no truncation)
+        full_response_record = LLMResponse(
+            request_id=request_id,
+            timestamp=timestamp,
+            response_text=response_text,  # FULL text, not truncated
             duration_seconds=round(duration, 3),
             success=success,
             error=error,
@@ -428,7 +439,7 @@ class LLMLogger:
         
         level = logging.INFO if success else logging.ERROR
         
-        # Log truncated version
+        # Log truncated version to console
         if self.console_logging:
             if success:
                 self.logger.info(
@@ -441,6 +452,7 @@ class LLMLogger:
                     extra={"extra_data": {**base_log_data, **asdict(response_record)}}
                 )
         
+        # Log truncated version to file
         if self.truncated_logger:
             self.truncated_logger.log(
                 level,
@@ -448,12 +460,12 @@ class LLMLogger:
                 extra={"extra_data": {**base_log_data, **asdict(response_record)}}
             )
 
-        # Log to full logger (uses truncated content from response_record)
+        # Log FULL UNTRUNCATED version to full logger
         if self.full_logger:
             self.full_logger.log(
                 level,
                 f"LLM Response | Success: {success}",
-                extra={"extra_data": {**base_log_data, **asdict(response_record)}}
+                extra={"extra_data": {**base_log_data, **asdict(full_response_record)}}
             )
     
     def log_error(
@@ -500,7 +512,7 @@ def get_llm_logger() -> LLMLogger:
     if _default_logger is None:
         import os
         
-        max_prompt = int(os.getenv("LLM_LOG_MAX_PROMPT_LENGTH", "500"))
+        max_prompt = int(os.getenv("LLM_LOG_MAX_PROMPT_LENGTH", "100000"))
         max_response = os.getenv("LLM_LOG_MAX_RESPONSE_LENGTH")
         max_response = int(max_response) if max_response else None
         max_system = int(os.getenv("LLM_LOG_MAX_SYSTEM_LENGTH", "500"))

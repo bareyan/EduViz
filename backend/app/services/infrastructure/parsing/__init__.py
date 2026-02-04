@@ -10,6 +10,9 @@ Usage:
 from .json_parser import (
     parse_json_response,
     parse_json_array_response,
+    parse_json_strict,
+    JsonParseResult,
+    looks_truncated_json,
     fix_json_escapes,
     extract_markdown_code_blocks,
     remove_markdown_wrappers,
@@ -22,6 +25,9 @@ from .json_parser import (
 __all__ = [
     "parse_json_response",
     "parse_json_array_response",
+    "parse_json_strict",
+    "JsonParseResult",
+    "looks_truncated_json",
     "fix_json_escapes",
     "extract_markdown_code_blocks",
     "remove_markdown_wrappers",

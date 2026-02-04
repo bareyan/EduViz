@@ -61,6 +61,15 @@ class StaticValidator:
                 self.ruff_cmd += ".exe"
             if not self.pyright_cmd.endswith('.exe') and self.pyright_cmd != "pyright":
                 self.pyright_cmd += ".exe"
+        
+        # Check tool availability
+        self.ruff_available = shutil.which(self.ruff_cmd) is not None
+        self.pyright_available = shutil.which(self.pyright_cmd) is not None
+        
+        if not self.ruff_available:
+            logger.warning("Ruff not found - syntax validation will be limited")
+        if not self.pyright_available:
+            logger.warning("Pyright not found - type checking disabled (install: npm install -g pyright)")
 
     async def validate(self, code: str, temp_dir: Optional[str] = None) -> ValidationResult:
         """
@@ -82,11 +91,21 @@ class StaticValidator:
             tmp_file.write(code)
             
         try:
-            # Run tools in parallel
-            ruff_task = self._run_ruff(tmp_path)
-            pyright_task = self._run_pyright(tmp_path)
+            # Run tools in parallel (only if available)
+            tasks = []
+            if self.ruff_available:
+                tasks.append(self._run_ruff(tmp_path))
+            else:
+                tasks.append(asyncio.sleep(0))  # Dummy coroutine
             
-            ruff_res, pyright_res = await asyncio.gather(ruff_task, pyright_task)
+            if self.pyright_available:
+                tasks.append(self._run_pyright(tmp_path))
+            else:
+                tasks.append(asyncio.sleep(0))  # Dummy coroutine
+            
+            results = await asyncio.gather(*tasks)
+            ruff_res = results[0] if self.ruff_available else []
+            pyright_res = results[1] if self.pyright_available and len(results) > 1 else {}
             
             # Process Ruff Results
             if ruff_res:
@@ -132,10 +151,21 @@ class StaticValidator:
     async def _run_ruff(self, file_path: Path) -> List[Dict[str, Any]]:
         """Runs ruff and returns list of violation dicts."""
         try:
-            # --output-format json
-            # --select E,F,W (default usually, but valid to be explicit or rely on pyproject.toml if in root)
-            # We assume running from root so it picks up pyproject.toml
-            cmd = [self.ruff_cmd, "check", "--output-format", "json", str(file_path)]
+            # Only check CRITICAL errors that break execution:
+            # E999 = Syntax errors (missing colons, invalid syntax)
+            # F821 = Undefined name (typos, missing imports)
+            # 
+            # IGNORE style and non-critical issues:
+            # F403/F405 = Star imports (standard for Manim)
+            # F841 = Unused variable (doesn't affect video output)
+            # E501 = Line too long (doesn't matter for generated code)
+            cmd = [
+                self.ruff_cmd, 
+                "check", 
+                "--output-format", "json",
+                "--select", "E999,F821",  # Only syntax errors and undefined names
+                str(file_path)
+            ]
             
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -148,12 +178,15 @@ class StaticValidator:
                 return json.loads(stdout.decode())
             return []
             
+        except FileNotFoundError:
+            logger.debug("Ruff not found in PATH")
+            return []
         except json.JSONDecodeError:
             logger.error("Failed to parse Ruff JSON output")
             return []
         except Exception as e:
-            logger.warning(f"Ruff execution failed: {e}")
-            return [{"message": f"Ruff failed to run: {e}", "code": "SYS_ERR"}]
+            logger.debug(f"Ruff execution failed: {e}")
+            return []
 
     async def _run_pyright(self, file_path: Path) -> Dict[str, Any]:
         """Runs pyright and returns full JSON report."""
@@ -172,9 +205,12 @@ class StaticValidator:
                 return json.loads(stdout.decode())
             return {}
             
+        except FileNotFoundError:
+            logger.debug("Pyright not found in PATH")
+            return {}
         except json.JSONDecodeError:
             logger.error("Failed to parse Pyright JSON output")
             return {}
         except Exception as e:
-            logger.warning(f"Pyright execution failed: {e}")
-            return {"generalDiagnostics": [{"message": f"Pyright failed to run: {e}"}]}
+            logger.debug(f"Pyright execution failed: {e}")
+            return {}

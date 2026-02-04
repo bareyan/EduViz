@@ -100,80 +100,27 @@ Return the complete, runnable Python file in a code block.""",
 # =============================================================================
 
 SURGICAL_FIX_USER = PromptTemplate(
-    template="""The Manim code has validation errors. Fix them surgically.
+    template="""Fix the listed errors in the ManimCE v0.19.2 code using SURGICAL text replacements.
+
+You MUST output a single JSON object that matches the required schema:
+- analysis: string (<=200 chars)
+- edits: 1–2 objects with exact search_text and replacement_text
+
+RULES:
+- search_text MUST be copied EXACTLY from CURRENT CODE (including whitespace).
+- Include 2–3 lines of surrounding context (max ~10 lines total).
+- Replace ONLY the minimum lines needed to fix the errors.
+- Do NOT reformat or make cosmetic changes.
 
 ## CURRENT CODE
 ```python
 {code}
 ```
 
-## ERRORS
+## ERRORS TO FIX
+```
 {errors}
-
-{visual_context}
-
-## SPATIAL FIX STRATEGIES
-
-### Overlapping Objects
-When two objects overlap, separate them by modifying position:
-- Use `.next_to(other_obj, direction, buff=0.3)` to position relative to another
-- Use `.shift(direction * amount)` to move (e.g., `.shift(UP * 0.5)`)
-- Use `.move_to(point)` for exact coordinates
-- Safe positions: Y from -2.5 to 2.5, X from -5 to 5
-
-Example fix for overlap:
-```python
-# Before (overlapping)
-text1.move_to(ORIGIN)
-text2.move_to(ORIGIN)
-
-# After (separated)
-text1.move_to(UP * 0.5)
-text2.move_to(DOWN * 0.5)
 ```
-
-### Out of Bounds
-When object exceeds screen edges (error shows direction like "Right (+0.88)"):
-- Shift opposite direction: "Right" violation → `.shift(LEFT * 1)`
-- Scale down: `.scale(0.7)` to make smaller
-- Reposition to safe zone: `.move_to(LEFT * 2)` instead of edge
-
-### Low Contrast
-When text blends with background (#171717 is dark):
-- Use bright colors: WHITE, YELLOW, BLUE, GREEN, RED, ORANGE
-- Avoid: GRAY, BLACK, or any dark colors
-- Fix: Add `color=WHITE` in constructor OR `.set_color(WHITE)`
-
-## INSTRUCTIONS
-1. **Analyze**: Provide a brief analysis of the error and your fix strategy.
-2. **Inspect**: Review the attached frames (if any) to confirm visual state.
-3. **Fix**: Return a JSON object with a list of surgical edits.
-
-## OUTPUT FORMAT (JSON)
-Return a single JSON object with this structure:
-```json
-{
-    "analysis": "Explanation of the error and fix...",
-    "edits": [
-        {
-            "search_text": "exact lines of code to find",
-            "replacement_text": "new lines of code"
-        }
-    ]
-}
-```
-
-**Rules for Edits:**
-- `search_text` MUST be an EXACT match (copy-paste from code).
-- Include 2-3 lines of context in `search_text` to avoid ambiguity.
-- If multiple identical blocks exist, include more surrounding lines to disambiguate.
-- `replacement_text` must be valid, indented Python code.""",
-    description="Surgical fix prompt with spatial guidance"
+""",
+    description="Surgical fix prompt with clear examples"
 )
-
-
-# =============================================================================
-# LEGACY COMPATIBILITY (will be removed)
-# =============================================================================
-
-ANIMATOR_USER = CHOREOGRAPHY_USER  # Alias for backward compatibility
