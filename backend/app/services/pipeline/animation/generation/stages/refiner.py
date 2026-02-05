@@ -106,7 +106,10 @@ class Refiner:
             
             # Static passed, check runtime
             logger.info(f"✅ Static validation PASSED (Turn {turn_idx})")
-            runtime_result = await self.runtime_validator.validate(current_code)
+            runtime_result = await self.runtime_validator.validate(
+                current_code,
+                enable_spatial_checks=True
+            )
             
             if runtime_result.valid:
                 logger.info(

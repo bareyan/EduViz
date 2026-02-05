@@ -25,10 +25,14 @@ _MANIM_TECHNICAL_BASE = f"""
 - **Timing Precision**: Use self.wait() to sync animations with narration exactly
 
 ## SPATIAL CONSTRAINTS (CRITICAL)
-- Keep ALL objects within x: -5.5 to 5.5, y: -3.0 to 3.0
-- Use .scale() to ensure objects fit within bounds
-- Avoid 3D objects (ThreeDScene, ThreeDVMobject) - use 2D representations
-- Test positioning with .move_to() before animating
+- **X-AXIS LIMIT**: MUST be between -7.1 and 7.1. (X > 7.1 or X < -7.1 is a CRITICAL ERROR).
+- **Y-AXIS LIMIT**: MUST be between -4.0 and 4.0. (Y > 4.0 or Y < -4.0 is a CRITICAL ERROR).
+- **SAFE ZONE**: Best practice is to keep content within X [-5.5, 5.5], Y [-3.0, 3.0].
+- **OVERLAPS**: Do NOT overlap Text/Tex objects. This is a CRITICAL ERROR.
+- **VISIBILITY**: Do NOT set object color to background color (#171717). This is a CRITICAL ERROR.
+- Use .scale() to ensure objects fit within bounds.
+- Avoid 3D objects (ThreeDScene, ThreeDVMobject) - use 2D representations.
+- Test positioning with .move_to() before animating.
 
 {COMMON_MISTAKES}
 

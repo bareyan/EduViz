@@ -36,11 +36,22 @@ class RuntimeValidator:
         # We prefer 'python -m manim' to ensure we use the same environment
         self.python_exe = sys.executable
 
-    async def validate(self, code: str, temp_dir: Optional[str] = None) -> ValidationResult:
+    async def validate(self, code: str, temp_dir: Optional[str] = None, enable_spatial_checks: bool = False) -> ValidationResult:
         """
         Executes the code in dry-run mode.
         """
         result = ValidationResult(valid=True)
+
+        if enable_spatial_checks:
+            try:
+                from .spatial import SpatialCheckInjector
+                injector = SpatialCheckInjector()
+                # Inject logic before writing to file
+                code = injector.inject(code)
+            except ImportError:
+                 logger.warning("Spatial validation module not found, skipping checks.")
+            except Exception as e:
+                 logger.warning(f"Failed to inject spatial checks: {e}")
         
         # Create temp file
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, dir=temp_dir, encoding='utf-8') as tmp_file:

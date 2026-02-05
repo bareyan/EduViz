@@ -91,7 +91,35 @@ class StaticValidator:
             tmp_file.write(code)
             
         try:
-            # Run tools in parallel (only if available)
+            # 1. AST Checks (Syntax + Security) - Fast & Reliable
+            try:
+                import ast
+                tree = ast.parse(code)
+                
+                # Security Scan
+                for node in ast.walk(tree):
+                    # Check imports
+                    if isinstance(node, (ast.Import, ast.ImportFrom)):
+                        names = [alias.name for alias in node.names]
+                        if isinstance(node, ast.ImportFrom) and node.module:
+                            names.append(node.module)
+                        
+                        for name in names:
+                            if name.split('.')[0] in ['os', 'subprocess', 'sys', 'shutil']:
+                                result.add_error("Security", f"Forbidden import: {name}", line=node.lineno)
+                    
+                    # Check builtins
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                        if node.func.id in ['exec', 'eval', 'open', '__import__']:
+                            result.add_error("Security", f"Forbidden builtin: {node.func.id}", line=node.lineno)
+
+            except SyntaxError as e:
+                result.add_error("Syntax", f"{e.msg}", line=e.lineno)
+                return result # Stop here if syntax is bad
+            except Exception as e:
+                result.add_error("System", f"AST analysis failed: {e}")
+
+            # 2. External Tools (Ruff/Pyright)
             tasks = []
             if self.ruff_available:
                 tasks.append(self._run_ruff(tmp_path))
@@ -114,9 +142,9 @@ class StaticValidator:
                     # We accept some lints but fail on errors. 
                     # For now, we trap everything that isn't ignored by configuration.
                     msg = check.get("message", "Unknown error")
-                    code = check.get("code", "UNK")
+                    code_id = check.get("code", "UNK")
                     row = check.get("location", {}).get("row")
-                    result.add_error("Ruff", f"{code}: {msg}", line=row)
+                    result.add_error("Ruff", f"{code_id}: {msg}", line=row)
 
             # Process Pyright Results
             if pyright_res:
