@@ -77,6 +77,9 @@ class RuntimeValidator:
                 "--media_dir", str(temp_media_dir),
                 str(tmp_path)
             ]
+
+            env = os.environ.copy()
+            env["PYTHONWARNINGS"] = "ignore::SyntaxWarning"
             
             # Use subprocess.run via thread to avoid ProactorEventLoop issues on Windows
             result_proc = await asyncio.to_thread(
@@ -84,6 +87,7 @@ class RuntimeValidator:
                 cmd,
                 capture_output=True,
                 text=True,
+                env=env,
                 timeout=90.0  # 90s timeout - dry-run can be slow with complex loops
             )
             
