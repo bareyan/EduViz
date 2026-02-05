@@ -124,3 +124,21 @@ RULES:
 """,
     description="Surgical fix prompt with clear examples"
 )
+
+
+SURGICAL_FIX_FOLLOWUP = PromptTemplate(
+    template="""The previous edits were applied, but validation failed with the following errors.
+
+## REVISED CODE STATE
+```python
+{code}
+```
+
+## NEW ERRORS
+```
+{errors}
+```
+
+Please analyze the new state and errors. Provide a new JSON correction following the same schema.""",
+    description="Follow-up prompt for conversational fixing"
+)

@@ -60,6 +60,9 @@ class Refiner:
             logger.info(f"Refinement disabled for '{section_title}'")
             return code, True
         
+        # Reset fixer state for new session
+        self.fixer.reset()
+        
         current_code = code
         stats = {
             "attempts": 0,

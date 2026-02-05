@@ -6,7 +6,8 @@ from .system import (
 from .user import (
     CHOREOGRAPHY_USER,
     FULL_IMPLEMENTATION_USER,
-    SURGICAL_FIX_USER
+    SURGICAL_FIX_USER,
+    SURGICAL_FIX_FOLLOWUP
 )
 from .library import (
     COMMON_MISTAKES,
@@ -28,6 +29,7 @@ __all__ = [
     "CHOREOGRAPHY_USER",
     "FULL_IMPLEMENTATION_USER",
     "SURGICAL_FIX_USER",
+    "SURGICAL_FIX_FOLLOWUP",
     "COMMON_MISTAKES",
     "AVAILABLE_RATE_FUNCS",
     "VALID_COLORS",
