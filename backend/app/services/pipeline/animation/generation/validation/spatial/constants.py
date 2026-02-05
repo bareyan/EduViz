@@ -19,3 +19,13 @@ TEXT_TYPES = {
     'Text', 'MathTex', 'Tex', 'Paragraph', 'MarkupText',
     'Title', 'BulletedList', 'Code'
 }
+
+CONNECTOR_TYPES = {
+    'Arrow', 'DoubleArrow', 'CurvedArrow', 'CurvedDoubleArrow',
+    'Line', 'DashedLine', 'Vector', 'Brace', 'Arc', 'ArcBetweenPoints'
+}
+
+CONNECTOR_TYPE_HINTS = ("Arrow", "Line", "Vector", "Brace", "Arc")
+
+# Text fully contained within a shape is likely an intentional label.
+TEXT_SHAPE_LABEL_CONTAINMENT = 0.75

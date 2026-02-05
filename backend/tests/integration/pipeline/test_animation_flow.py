@@ -4,7 +4,6 @@ Tests the full flow: Planning -> Code Generation -> Surgical Fixes.
 """
 
 import pytest
-import json
 from unittest.mock import MagicMock, AsyncMock, patch
 from app.services.pipeline.animation.generation.processors import Animator
 
@@ -29,7 +28,7 @@ def animator(mock_engine, mock_validator):
     anim.choreography_engine = mock_engine
     return anim
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_animator_full_flow_with_surgical_fix(animator, mock_engine, mock_validator):
     """
     Simulates a full integration flow where:
@@ -52,7 +51,7 @@ async def test_animator_full_flow_with_surgical_fix(animator, mock_engine, mock_
     # 1. Planning Phase Response
     plan_response = {
         "success": True,
-        "response": "CHOREOGRAPHY PLAN:\n1. Show text 'Integration Test'\n2. Pulse animation"
+        "parsed_json": {"objects": [], "segments": []}
     }
     
     # 2. Initial Implementation Phase Response (Broken Code)
@@ -76,16 +75,14 @@ class Scene(Scene):
 """
     fix_response = {
         "success": True,
-        "function_calls": [
-            {
-                "name": "apply_surgical_edit",
-                "args": {
-                    "target": 'text = Text("Broken"',
-                    "replacement": 'text = Text("Fixed")'
+        "parsed_json": {
+            "edits": [
+                {
+                    "search_text": 'text = Text("Broken"',
+                    "replacement_text": 'text = Text("Fixed")'
                 }
-            }
-        ],
-        "response": "I fixed the missing parenthesis."
+            ]
+        }
     }
     
     mock_engine.generate.side_effect = [plan_response, impl_response, fix_response]
@@ -122,14 +119,14 @@ class Scene(Scene):
         
         # 3. Verify Implementation call args
         impl_call = mock_engine.generate.call_args_list[1]
-        assert "CHOREOGRAPHY PLAN" in impl_call.kwargs["prompt"]
+        assert "\"objects\"" in impl_call.kwargs["prompt"]
         
         # 4. Verify Fix call args
         fix_call = mock_engine.generate.call_args_list[2]
         assert "SyntaxError" in fix_call.kwargs["prompt"]
         assert "Broken" in fix_call.kwargs["prompt"]
         
-        # 5. Verify Tool was called
+        # 5. Verify editor was called
         assert mock_edit_exec.called
         
         # 6. Final verification of code content
@@ -137,13 +134,19 @@ class Scene(Scene):
         assert "Broken" not in final_code
         assert "def construct(self):" in final_code
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_animator_failure_max_attempts(animator, mock_engine, mock_validator):
     """Verifies that the animator fails correctly if code cannot be stabilized."""
     section = {"title": "Stub", "narration": "Stub", "narration_segments": []}
     
-    # Mock responses - always returns code text
-    mock_engine.generate.return_value = {"success": True, "response": "```python\npass\n```"}
+    # Mock responses - plan + code + fix attempts
+    mock_engine.generate.side_effect = (
+        [
+            {"success": True, "parsed_json": {"objects": [], "segments": []}},
+            {"success": True, "response": "```python\npass\n```"},
+        ]
+        + [{"success": True, "parsed_json": {"edits": []}}] * 12
+    )
     
     # Always invalid
     invalid_res = MagicMock(valid=False)

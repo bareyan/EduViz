@@ -9,7 +9,7 @@ Centralized configuration for animation generation constants and settings.
 # =============================================================================
 
 # Maximum iterations for surgical fixes
-MAX_SURGICAL_FIX_ATTEMPTS = 3
+MAX_SURGICAL_FIX_ATTEMPTS = 5
 
 # Timeout for generation requests (seconds)
 GENERATION_TIMEOUT = 300  # 5 minutes
@@ -25,6 +25,19 @@ BASE_GENERATION_TEMPERATURE = 0.7
 
 # Base temperature for correction
 BASE_CORRECTION_TEMPERATURE = 0.1
+
+# Choreography planning temperature (lower for structured JSON)
+CHOREOGRAPHY_TEMPERATURE = 0.3
+
+# Surgical fix temperature (keep low to reduce JSON drift)
+FIX_TEMPERATURE = 0.2
+
+# Chunked choreography: max segments per call
+CHOREOGRAPHY_MAX_SEGMENTS_PER_CALL = 3
+
+# Output token limits (32k to reduce truncation)
+CHOREOGRAPHY_MAX_OUTPUT_TOKENS = 32768
+IMPLEMENTATION_MAX_OUTPUT_TOKENS = 32768
 
 
 # =============================================================================
@@ -63,11 +76,11 @@ QUALITY_FLAGS = {
 # CODE GENERATION SETTINGS
 # =============================================================================
 
-# Minimum duration padding at end of animation (seconds or percentage)
-MIN_DURATION_PADDING = 3.0
+# Minimum duration padding at end of animation (seconds)
+MIN_DURATION_PADDING = 0.5
 
-# Duration padding percentage (25% of total duration)
-DURATION_PADDING_PERCENTAGE = 0.25
+# Duration padding percentage (disabled)
+DURATION_PADDING_PERCENTAGE = 0.0
 
 # Base indentation level for construct() method body (spaces)
 CONSTRUCT_INDENT_SPACES = 8

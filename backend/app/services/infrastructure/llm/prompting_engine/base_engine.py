@@ -16,6 +16,21 @@ from app.services.infrastructure.llm.gemini.client import (
 from app.config.models import get_model_config, get_thinking_config
 from app.services.infrastructure.llm.cost_tracker import CostTracker
 from app.services.infrastructure.parsing import parse_json_response
+from app.core import get_logger
+
+logger = get_logger(__name__, component="prompting_engine")
+
+def _strip_additional_properties(schema: Any) -> Any:
+    """Remove unsupported additionalProperties keys from response schemas."""
+    if isinstance(schema, dict):
+        return {
+            key: _strip_additional_properties(value)
+            for key, value in schema.items()
+            if key not in ("additionalProperties", "additional_properties")
+        }
+    if isinstance(schema, list):
+        return [_strip_additional_properties(item) for item in schema]
+    return schema
 
 
 @dataclass
@@ -98,7 +113,9 @@ class PromptingEngine:
             kwargs["response_mime_type"] = "application/json"
 
         if prompt_config.response_schema is not None:
-            kwargs["response_schema"] = prompt_config.response_schema
+            kwargs["response_schema"] = _strip_additional_properties(
+                prompt_config.response_schema
+            )
 
         if prompt_config.system_instruction:
             kwargs["system_instruction"] = prompt_config.system_instruction
@@ -144,7 +161,9 @@ class PromptingEngine:
         model_name = model or config.model_name or config_obj.model_name
         payload = contents if contents is not None else prompt
         
-        for attempt in range(config.max_retries):
+        schema_retry_used = False
+        attempt = 0
+        while attempt < config.max_retries:
             try:
                 # Build generation config
                 gen_config = self._get_generation_config(config)
@@ -213,32 +232,58 @@ class PromptingEngine:
                 
                 # Parse JSON if requested
                 if config.response_format == "json" and text_response:
-                    try:
-                        result["parsed_json"] = parse_json_response(text_response)
-                    except Exception as e:
-                        result["json_parse_error"] = str(e)
+                    sentinel = object()
+                    parsed = parse_json_response(text_response, default=sentinel)
+                    if parsed is sentinel:
+                        result["json_parse_error"] = "Failed to parse JSON response"
+                        result["success"] = False
+                        result["error"] = "JSON parse failed"
+                        result["error_reason"] = "json_parse_failed"
+                        logger.error(
+                            "JSON parse failed in PromptingEngine.generate",
+                            extra={"error_reason": "json_parse_failed"},
+                        )
+                    else:
+                        result["parsed_json"] = parsed
                 
                 return result
-                
+
             except asyncio.TimeoutError:
                 if attempt < config.max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
+                    attempt += 1
                     continue
                 return {
                     "success": False,
                     "error": "Request timed out",
                     "context": context,
                 }
-                
+
             except Exception as e:
+                error_msg = str(e)
+                schema_error = (
+                    ("schema" in error_msg.lower() or "response_schema" in error_msg.lower())
+                    and ("invalid_argument" in error_msg.lower() or "too many states" in error_msg.lower())
+                )
+                if config.response_schema is not None and schema_error and not schema_retry_used:
+                    schema_retry_used = True
+                    config.response_schema = None
+                    logger.warning(
+                        "LLM schema rejected; retrying without response_schema",
+                        extra={"error_reason": "schema_too_complex"},
+                    )
+                    # Retry immediately without counting against attempt
+                    continue
+
                 if attempt < config.max_retries - 1:
                     # Exponential backoff
                     await asyncio.sleep(2 ** attempt)
+                    attempt += 1
                     continue
-                    
+
                 return {
                     "success": False,
-                    "error": str(e),
+                    "error": error_msg,
                     "error_type": type(e).__name__,
                     "context": context,
                 }

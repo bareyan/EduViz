@@ -20,6 +20,7 @@ from .ffmpeg import (
     generate_silence,
 )
 from app.utils.section_status import write_status
+from .config import MAX_SECTION_RETRIES
 from app.core import get_logger
 
 if TYPE_CHECKING:
@@ -151,7 +152,8 @@ async def process_single_subsection(
         "video_path": None,
         "audio_path": None,
         "duration": 30,
-        "manim_code": None
+        "manim_code": None,
+        "error": None,
     }
 
     audio_path = section_dir / "audio.mp3"
@@ -161,11 +163,12 @@ async def process_single_subsection(
     write_status(section_dir, "generating_audio")
 
     try:
-        await tts_engine.generate_speech(
-            text=narration,
-            output_path=str(audio_path),
-            voice=voice
-        )
+        if not audio_path.exists():
+            await tts_engine.generate_speech(
+                text=narration,
+                output_path=str(audio_path),
+                voice=voice
+            )
         audio_duration = await get_audio_duration(str(audio_path))
         section["actual_duration"] = audio_duration
         result["duration"] = audio_duration
@@ -173,37 +176,53 @@ async def process_single_subsection(
         logger.info(f"Section {section_index} audio duration: {audio_duration:.1f}s")
     except Exception as e:
         logger.error(f"TTS error for section {section_index}: {e}")
-        write_status(section_dir, "fixing_error", str(e))
-        audio_path = None
+        result["error"] = str(e)
+        write_status(section_dir, "failed", str(e))
+        return result
 
-    # Status: generating video
-    write_status(section_dir, "generating_video")
+    def _status_callback(status: str, error: Optional[str] = None) -> None:
+        try:
+            write_status(section_dir, status, error)
+        except Exception:
+            pass
 
-    try:
-        # Using the NEW Animation Pipeline (Choreograph -> Implement -> Refine)
-        manim_result = await manim_generator.generate_animation(
-            section=section,
-            output_dir=str(section_dir),
-            section_index=section_index,
-            audio_duration=audio_duration,
-            style=style,
-        )
-        video_path = manim_result.get("video_path") if isinstance(manim_result, dict) else manim_result
-        if video_path and os.path.exists(video_path):
+    last_error = None
+    for attempt in range(1, MAX_SECTION_RETRIES + 1):
+        try:
+            # Status: generating manim (choreography + code)
+            write_status(section_dir, "generating_manim")
+
+            # Using the NEW Animation Pipeline (Choreograph -> Implement -> Refine)
+            manim_result = await manim_generator.generate_animation(
+                section=section,
+                output_dir=str(section_dir),
+                section_index=section_index,
+                audio_duration=audio_duration,
+                style=style,
+                status_callback=_status_callback,
+            )
+            video_path = manim_result.get("video_path") if isinstance(manim_result, dict) else manim_result
+            if not video_path or not os.path.exists(video_path):
+                raise RuntimeError(f"Manim returned no video for section {section_index}: {video_path}")
+
             result["video_path"] = video_path
+            if isinstance(manim_result, dict):
+                if manim_result.get("manim_code_path"):
+                    result["manim_code_path"] = manim_result["manim_code_path"]
+                if manim_result.get("manim_code"):
+                    result["manim_code"] = manim_result["manim_code"]
+
             write_status(section_dir, "completed")
-        else:
-            logger.warning(f"Manim returned no video for section {section_index}: {video_path}")
-        if isinstance(manim_result, dict):
-            if manim_result.get("manim_code_path"):
-                result["manim_code_path"] = manim_result["manim_code_path"]
-            if manim_result.get("manim_code"):
-                result["manim_code"] = manim_result["manim_code"]
-    except Exception as e:
-        import traceback
-        logger.error(f"Manim error for section {section_index}: {e}")
-        traceback.print_exc()
-        write_status(section_dir, "fixing_error", str(e))
+            return result
+        except Exception as e:
+            last_error = str(e)
+            logger.error(f"Manim error for section {section_index} (Attempt {attempt}): {e}")
+            if attempt < MAX_SECTION_RETRIES:
+                write_status(section_dir, "fixing_manim", last_error)
+                continue
+            result["error"] = last_error
+            write_status(section_dir, "failed", last_error)
+            return result
 
     return result
 
@@ -233,7 +252,8 @@ async def process_segments_audio_first(
         "video_path": None,
         "audio_path": None,
         "duration": 0,
-        "manim_code": None
+        "manim_code": None,
+        "error": None,
     }
 
     num_segments = len(narration_segments)
@@ -257,11 +277,12 @@ async def process_segments_audio_first(
         audio_duration = segment.get("estimated_duration", 10.0)
 
         try:
-            await tts_engine.generate_speech(
-                text=clean_text,
-                output_path=str(audio_path),
-                voice=voice
-            )
+            if not audio_path.exists():
+                await tts_engine.generate_speech(
+                    text=clean_text,
+                    output_path=str(audio_path),
+                    voice=voice
+                )
             audio_duration = await get_audio_duration(str(audio_path))
         except Exception as e:
             logger.error(f"TTS error for section {section_index} segment {seg_idx}: {e}")
@@ -294,6 +315,8 @@ async def process_segments_audio_first(
         shutil.copy(valid_audio_paths[0], str(section_audio_path))
     else:
         logger.warning(f"Section {section_index}: No valid audio segments")
+        result["error"] = "No valid audio segments"
+        write_status(section_dir, "failed", result["error"])
         return result
 
     result["audio_path"] = str(section_audio_path)
@@ -348,36 +371,48 @@ async def process_segments_audio_first(
 
     logger.info(f"Section {section_index}: Generating unified video using NEW Pipeline ({total_duration:.1f}s total)")
 
-    # Status: generating video
-    write_status(section_dir, "generating_video")
+    def _status_callback(status: str, error: Optional[str] = None) -> None:
+        try:
+            write_status(section_dir, status, error)
+        except Exception:
+            pass
 
     video_path = None
     manim_code = None
+    last_error = None
 
-    try:
-        manim_result = await manim_generator.generate_animation(
-            section=unified_section,
-            output_dir=str(section_dir),
-            section_index=section_index,
-            audio_duration=total_duration,
-            style=style,
-        )
-        video_path = manim_result.get("video_path")
-        if isinstance(manim_result, dict) and manim_result.get("manim_code"):
-            manim_code = manim_result["manim_code"]
-    except Exception as e:
-        logger.error(f"Manim error for unified section {section_index}: {e}")
-        import traceback
-        traceback.print_exc()
-        write_status(section_dir, "fixing_error", str(e))
-        return result
+    for attempt in range(1, MAX_SECTION_RETRIES + 1):
+        try:
+            # Status: generating manim (choreography + code)
+            write_status(section_dir, "generating_manim")
 
-    if not video_path:
-        logger.error(f"Section {section_index}: Failed to process unified video")
-        write_status(section_dir, "fixing_error", "No video generated")
-        return result
+            manim_result = await manim_generator.generate_animation(
+                section=unified_section,
+                output_dir=str(section_dir),
+                section_index=section_index,
+                audio_duration=total_duration,
+                style=style,
+                status_callback=_status_callback,
+            )
+            video_path = manim_result.get("video_path")
+            if isinstance(manim_result, dict) and manim_result.get("manim_code"):
+                manim_code = manim_result["manim_code"]
+            if isinstance(manim_result, dict) and manim_result.get("manim_code_path"):
+                result["manim_code_path"] = manim_result["manim_code_path"]
+            if not video_path:
+                raise RuntimeError("No video generated")
 
-    result["manim_code"] = manim_code
+            result["manim_code"] = manim_code
+            break
+        except Exception as e:
+            last_error = str(e)
+            logger.error(f"Manim error for unified section {section_index} (Attempt {attempt}): {e}")
+            if attempt < MAX_SECTION_RETRIES:
+                write_status(section_dir, "fixing_manim", last_error)
+                continue
+            result["error"] = last_error
+            write_status(section_dir, "failed", last_error)
+            return result
 
     # Step 4: Finalize audio
     final_audio_path = section_audio_path
@@ -399,6 +434,7 @@ async def process_segments_audio_first(
     )
 
     try:
+        write_status(section_dir, "generating_video")
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -413,10 +449,12 @@ async def process_segments_audio_first(
             write_status(section_dir, "completed")
         else:
             logger.error(f"Section {section_index}: FFmpeg merge failed: {stderr.decode()[:500]}")
-            write_status(section_dir, "fixing_error", "FFmpeg merge failed")
+            result["error"] = "FFmpeg merge failed"
+            write_status(section_dir, "failed", result["error"])
     except Exception as e:
         logger.error(f"Section {section_index}: Error merging video and audio: {e}")
-        write_status(section_dir, "fixing_error", str(e))
+        result["error"] = str(e)
+        write_status(section_dir, "failed", result["error"])
 
     return result
 

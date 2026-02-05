@@ -7,6 +7,8 @@ import logging
 import os
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from .constants import CONNECTOR_TYPES, CONNECTOR_TYPE_HINTS
+
 LOGGER = logging.getLogger(__name__)
 
 
@@ -82,3 +84,12 @@ def is_overlapping(m1: Any, m2: Any, overlap_margin: float) -> bool:
     except Exception as exc:
         LOGGER.debug("Failed overlap check: %s", exc)
         return False
+
+
+def is_connector_type_name(type_name: Optional[str]) -> bool:
+    """Identify connector-like types (arrows/lines) that should be de-emphasized."""
+    if not type_name:
+        return False
+    if type_name in CONNECTOR_TYPES:
+        return True
+    return any(token in type_name for token in CONNECTOR_TYPE_HINTS)

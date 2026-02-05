@@ -38,9 +38,9 @@ Core capabilities:
 2. Content analysis → generate script sections
 3. For each section: produce narration + visual script
 4. Animation generation (LLM).
-   - Use `write_manim_code` tool for full code generation
-   - Use `patch_manim_code` for targeted fixes
-   - Iterate until validation succeeds
+   - Generate choreography JSON
+   - Generate full Manim code
+   - Apply surgical JSON fixes when validation fails
 5. Render segments and assemble into final video
 6. Store outputs
 
@@ -65,77 +65,57 @@ Core capabilities:
   - `backend/app/core` + repository services under `backend/app/services/infrastructure/storage`
 
 
-## Animation generation: prompts and tools
+## Animation generation: prompts and schemas
 
 All Manim-related prompt templates are centralized in:
-- File: [backend/app/services/pipeline/animation/prompts.py](backend/app/services/pipeline/animation/prompts.py)
+- Directory: `backend/app/services/pipeline/animation/prompts/`
 
-Primary templates exported there (used by generation flows):
-- `AGENTIC_GENERATION_SYSTEM`: System prompt describing tool-based iteration and rules (used to start the agentic generation flow).
-- `AGENTIC_GENERATION_USER`: User prompt template that asks the model to generate the `construct()` method body for a section.
-- `AGENTIC_GENERATION_WITH_VISUAL_SCRIPT_USER`: Variant that consumes the Visual Script (segments + timing) to strictly follow the script.
-- `RECOMPILE_SYSTEM` / `RECOMPILE_USER`: Prompts exposed for user-driven recompilation of code via the sections route.
-- `TOOL_CORRECTION_SYSTEM`: System prompt used when performing tool-based corrections (calls into `patch_manim_code` / `write_manim_code`).
-- `FIX_CODE_USER`, `FIX_CODE_RETRY_USER`, `GENERATION_RETRY_USER`: Templates the generation tool uses when receiving validation errors and instructing the model to fix code.
+Primary templates (used by the animation generation flow):
+- `ANIMATOR_SYSTEM` — system prompt for full Manim code generation.
+- `CHOREOGRAPHER_SYSTEM` — system prompt for JSON choreography planning.
+- `CHOREOGRAPHY_USER` / `CHOREOGRAPHY_COMPACT_USER` / `CHOREOGRAPHY_OBJECTS_USER` / `CHOREOGRAPHY_SEGMENTS_USER` — user prompts for planning.
+- `FULL_IMPLEMENTATION_USER` — user prompt for full file implementation.
+- `SURGICAL_FIX_SYSTEM` / `SURGICAL_FIX_USER` — JSON-only repair prompts for validation fixes.
 
-Helper formatting functions (also in `prompts.py`):
-- `format_section_context(section)` — short section metadata for prompts
-- `format_timing_context(section)` — simple timing lines for narration-to-animation alignment
-- `format_visual_script_for_prompt(visual_script)` — turns a VisualScriptPlan into a human-readable chunk for the LLM
-- `format_segment_timing_for_prompt(visual_script)` — tabular timing breakdown for the LLM
+Prompt usage:
+- Generation orchestration: `backend/app/services/pipeline/animation/generation/processors.py`
+- Scene file assembly and theme enforcement: `backend/app/services/pipeline/animation/generation/core/code_helpers.py`
 
-Where these prompts are used:
-- Generation orchestration: `backend/app/services/pipeline/animation/generation/tools/generation.py` — imports and formats templates before sending to the LLM tools.
-  - File: [backend/app/services/pipeline/animation/generation/tools/generation.py](backend/app/services/pipeline/animation/generation/tools/generation.py)
-- Context / Manim-specific reference: `backend/app/services/pipeline/animation/generation/tools/context.py` — contains canonical `MANIM_VERSION` and `get_manim_reference()` which supplies `manim_context` used in prompts.
-  - File: [backend/app/services/pipeline/animation/generation/tools/context.py](backend/app/services/pipeline/animation/generation/tools/context.py)
-
-Tools the prompting engine exposes to the LLM (declared in the prompting engine / tool handler):
-- `write_manim_code` — full code generation tool (returns validation results)
-- `patch_manim_code` — targeted patching tool (search/replace or small edits)
-
-These tools implement validation + return feedback; the system enforces the iteration rules from `AGENTIC_GENERATION_SYSTEM` where the agent must stop on "Validation Successful".
+The system enforces iteration rules via the prompts and validators, stopping once validation succeeds.
 
 
 ## Validation & iteration loop
 
-- The generation tool executes this loop:
-  1. Send `AGENTIC_GENERATION_SYSTEM` + `AGENTIC_GENERATION_USER` to the LLM (via the prompting engine) and call `write_manim_code`.
-  2. The tool runs code validation (syntax + Manim CE expectations).
-  3. If validation fails, the system prepares a `FIX_CODE_USER` request (with error output) and prefers `patch_manim_code` for small fixes.
-  4. Iterate until success or max attempts reached. If user asks for a rewrite, `RECOMPILE_USER` can be used via route handlers.
-
-Important enforcement rules (from templates):
-- Model should not emit code in chat messages; it must call tools.
-- When receiving "Validation Successful" the model must stop making changes.
-- Timing rules (for visual scripts) must be honored: animations during audio segments must complete within the audio duration; `self.wait()` should honor post-narration pause.
+- The animation pipeline executes this loop:
+  1. Generate a JSON choreography plan.
+  2. Generate full Manim code from the plan.
+  3. Validate (syntax + runtime + spatial).
+  4. Apply surgical fixes with structured JSON edits or a full replacement file.
+  5. Iterate until valid or retries exhausted.
 
 
 ## Key files & quick reference
 
-- Prompts: [backend/app/services/pipeline/animation/prompts.py](backend/app/services/pipeline/animation/prompts.py)
-- Generation orchestration & tools: [backend/app/services/pipeline/animation/generation/tools/generation.py](backend/app/services/pipeline/animation/generation/tools/generation.py)
-- Manim context: [backend/app/services/pipeline/animation/generation/tools/context.py](backend/app/services/pipeline/animation/generation/tools/context.py)
+- Prompts: `backend/app/services/pipeline/animation/prompts/`
+- Generation orchestration: `backend/app/services/pipeline/animation/generation/processors.py`
 - Route for recompilation (user-facing): [backend/app/routes/sections.py](backend/app/routes/sections.py)
 - LLM prompting engine base and tool handling: [backend/app/services/infrastructure/llm/prompting_engine](backend/app/services/infrastructure/llm/prompting_engine)
 
 Tests covering prompts and generation behaviors:
-- `tests/services/pipeline/animation/test_animation_prompts.py` — ensures helpers and prompt formatting behave as expected.
-- `tests/services/pipeline/animation/generation/tools/test_generation_tool.py` — tests tool behavior and iteration loop.
+- `tests/services/test_code_helpers.py` — checks scene parsing and code utilities.
+- `tests/services/infrastructure/parsing/test_json_parser.py` — validates JSON repair helpers.
 
 
 ## Extending the pipeline
 
-- To add a new prompt variant, add a `PromptTemplate` in `prompts.py` and import it in the generation tool where you need it.
-- To add a new LLM tool (e.g. `refine_manim_code`): register it with the prompting engine, implement its wrapper in `generation/tools/*`, and update `AGENTIC_GENERATION_SYSTEM` (if you want agents to use it).
-- To change canonical Manim references or versioning: update `generation/tools/context.py` (single source of truth for `MANIM_VERSION` and `get_manim_reference()`).
+- To add a new prompt variant, add a `PromptTemplate` under `backend/app/services/pipeline/animation/prompts/` and import it in `generation/processors.py`.
+- To change canonical Manim references or versioning: update the prompt reference blocks in `backend/app/services/pipeline/animation/prompts/`.
 
 
 ## Next steps / PR checklist
 
 - [ ] Review this file for completeness and add missing components if you expect other prompts to be documented
-- [ ] If you want the removed items reintroduced (e.g. `MANIM_VERSION` in `prompts.py`), revert with a short PR and add tests
-- [ ] Optionally open a PR for this docs file and the `prompts.py` cleanup change together
+- [ ] If you add new themes, update `code_helpers.py` and prompt guidance
 - [ ] Run the backend test suite after changes: from `backend/` run:
 
 ```bash

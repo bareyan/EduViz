@@ -32,11 +32,13 @@ Usage:
 import logging
 import json
 import time
-from typing import Any, Dict, Optional, Union, List
+from typing import Any, Dict, Optional, Union, List, Iterator
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, asdict
 import uuid
+from contextvars import ContextVar
+from contextlib import contextmanager
 
 from .logging import get_logger
 
@@ -117,6 +119,55 @@ class LLMLogger:
         
         # Track active requests for timing
         self._active_requests: Dict[str, float] = {}
+
+    def _extract_image_metadata(self, contents: Union[str, List[Any]]) -> Dict[str, int]:
+        """Extract image metadata from multimodal contents."""
+        if not isinstance(contents, list):
+            return {"image_count": 0, "image_bytes_total": 0}
+
+        image_count = 0
+        image_bytes_total = 0
+
+        for item in contents:
+            # Raw bytes
+            if isinstance(item, (bytes, bytearray)):
+                image_count += 1
+                image_bytes_total += len(item)
+                continue
+
+            # Dict-like parts
+            if isinstance(item, dict):
+                mime_type = item.get("mime_type") or item.get("mimeType")
+                if mime_type and isinstance(mime_type, str) and mime_type.startswith("image/"):
+                    image_count += 1
+                    data = item.get("data") or item.get("inline_data")
+                    if isinstance(data, (bytes, bytearray)):
+                        image_bytes_total += len(data)
+                continue
+
+            # Object-like parts
+            if hasattr(item, "parts"):
+                for part in item.parts:
+                    if isinstance(part, (bytes, bytearray)):
+                        image_count += 1
+                        image_bytes_total += len(part)
+                        continue
+                    mime_type = getattr(part, "mime_type", None)
+                    data = getattr(part, "data", None) or getattr(part, "inline_data", None)
+                    if mime_type and isinstance(mime_type, str) and mime_type.startswith("image/"):
+                        image_count += 1
+                        if isinstance(data, (bytes, bytearray)):
+                            image_bytes_total += len(data)
+                continue
+
+            data = getattr(item, "data", None) or getattr(item, "inline_data", None)
+            mime_type = getattr(item, "mime_type", None)
+            if mime_type and isinstance(mime_type, str) and mime_type.startswith("image/"):
+                image_count += 1
+                if isinstance(data, (bytes, bytearray)):
+                    image_bytes_total += len(data)
+
+        return {"image_count": image_count, "image_bytes_total": image_bytes_total}
     
     def _truncate_text(self, text: Optional[str], max_length: Optional[int]) -> str:
         """Truncate text to specified length"""
@@ -215,13 +266,16 @@ class LLMLogger:
         
         # Truncate system instruction
         truncated_system = None
+        full_system_text = None
         if system_instruction:
             if isinstance(system_instruction, str):
                 truncated_system = self._truncate_text(system_instruction, 200)
+                full_system_text = system_instruction
             else:
                 # Try to extract text from object
                 sys_text = self._extract_prompt_text(system_instruction)
                 truncated_system = self._truncate_text(sys_text, 200)
+                full_system_text = sys_text
         
         # Create request record
         request = LLMRequest(
@@ -256,7 +310,26 @@ class LLMLogger:
                 f"LLM Request | Model: {model}",
                 extra={"extra_data": log_data}
             )
-        
+
+        # Per-section JSONL logging (full prompt/response)
+        section_log_path = llm_section_log_path_var.get()
+        if section_log_path:
+            image_meta = self._extract_image_metadata(contents)
+            section_log_data = {
+                "event": "llm_request",
+                "request_id": request_id,
+                "timestamp": timestamp,
+                "model": model,
+                "prompt": full_prompt,
+                "prompt_length": len(full_prompt),
+                "config": config or {},
+                "system_instruction": full_system_text,
+                "tools": tool_names,
+                **image_meta,
+                "section_context": llm_section_context_var.get() or {},
+            }
+            _append_section_log(section_log_path, section_log_data)
+
         return request_id
     
     def log_response(
@@ -345,6 +418,23 @@ class LLMLogger:
                 f"LLM Response | Success: {success}",
                 extra={"extra_data": log_data}
             )
+
+        # Per-section JSONL logging (full response)
+        section_log_path = llm_section_log_path_var.get()
+        if section_log_path:
+            section_log_data = {
+                "event": "llm_response",
+                "request_id": request_id,
+                "timestamp": timestamp,
+                "response_text": response_text,
+                "response_length": len(response_text),
+                "duration_seconds": round(duration, 3),
+                "success": success,
+                "error": error,
+                "metadata": metadata,
+                "section_context": llm_section_context_var.get() or {},
+            }
+            _append_section_log(section_log_path, section_log_data)
     
     def log_error(
         self,
@@ -371,6 +461,62 @@ class LLMLogger:
 
 # Global singleton instance
 _default_logger: Optional[LLMLogger] = None
+
+# Context for per-section LLM logging
+llm_section_log_path_var: ContextVar[Optional[Path]] = ContextVar(
+    "llm_section_log_path", default=None
+)
+llm_section_context_var: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+    "llm_section_context", default=None
+)
+
+
+def _append_section_log(log_path: Path, data: Dict[str, Any]) -> None:
+    """Append a JSONL record to the per-section log file."""
+    try:
+        log_path = Path(log_path)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(data) + "\n")
+    except Exception:
+        # Avoid raising during pipeline execution; logging must be best-effort.
+        pass
+
+
+def set_llm_section_log(path: Path, context: Optional[Dict[str, Any]] = None) -> None:
+    """Set the per-section log path and base context."""
+    llm_section_log_path_var.set(Path(path))
+    llm_section_context_var.set(context or {})
+
+
+def clear_llm_section_log() -> None:
+    """Clear per-section log path and context."""
+    llm_section_log_path_var.set(None)
+    llm_section_context_var.set(None)
+
+
+@contextmanager
+def llm_section_log(path: Path, context: Optional[Dict[str, Any]] = None) -> Iterator[None]:
+    """Context manager for scoped per-section logging."""
+    path_token = llm_section_log_path_var.set(Path(path))
+    context_token = llm_section_context_var.set(context or {})
+    try:
+        yield
+    finally:
+        llm_section_log_path_var.reset(path_token)
+        llm_section_context_var.reset(context_token)
+
+
+@contextmanager
+def llm_section_context(updates: Dict[str, Any]) -> Iterator[None]:
+    """Temporarily update the per-section context."""
+    current = llm_section_context_var.get() or {}
+    merged = {**current, **(updates or {})}
+    token = llm_section_context_var.set(merged)
+    try:
+        yield
+    finally:
+        llm_section_context_var.reset(token)
 
 
 def get_llm_logger() -> LLMLogger:

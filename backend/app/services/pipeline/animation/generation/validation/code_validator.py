@@ -10,6 +10,9 @@ from dataclasses import dataclass
 
 from .static_validator import StaticValidator, StaticValidationResult
 from .spatial import SpatialValidator, SpatialValidationResult
+from .runtime_validator import RuntimeValidator, RuntimeValidationResult
+from app.core import get_logger
+import time
 
 
 @dataclass
@@ -17,6 +20,7 @@ class CodeValidationResult:
     """Aggregated validation result from all validators"""
     valid: bool
     static: StaticValidationResult
+    runtime: RuntimeValidationResult
     spatial: SpatialValidationResult
     
     def to_dict(self) -> Dict[str, Any]:
@@ -28,6 +32,13 @@ class CodeValidationResult:
                 "errors": self.static.errors,
                 "warnings": self.static.warnings,
                 "line_number": self.static.line_number,
+            },
+            "runtime": {
+                "valid": self.runtime.valid,
+                "errors": self.runtime.errors,
+                "exception_type": self.runtime.exception_type,
+                "exception_message": self.runtime.exception_message,
+                "line_number": self.runtime.line_number,
             },
             "spatial": {
                 "valid": self.spatial.valid,
@@ -64,6 +75,15 @@ class CodeValidationResult:
             for err in self.static.errors:
                 static_lines.append(f"- {err}")
             sections.append("\n".join(static_lines))
+
+        # Runtime errors (blocking)
+        if not self.runtime.valid and self.runtime.errors:
+            runtime_lines = ["## RUNTIME ERRORS"]
+            if self.runtime.line_number:
+                runtime_lines.append(f"(Line {self.runtime.line_number})")
+            for err in self.runtime.errors:
+                runtime_lines.append(f"- {err}")
+            sections.append("\n".join(runtime_lines))
         
         # Spatial errors (blocking - must fix)
         if self.spatial.errors:
@@ -97,20 +117,52 @@ class CodeValidator:
     
     def __init__(self, linter_path: str = "linter.py"):
         self.static_validator = StaticValidator()
+        self.runtime_validator = RuntimeValidator(linter_path)
         self.spatial_validator = SpatialValidator(linter_path)
+        self.logger = get_logger(__name__, component="code_validator")
         
     def validate(self, code: str) -> CodeValidationResult:
         """Run complete validation pipeline."""
+        start_total = time.perf_counter()
+
+        start_static = time.perf_counter()
         static_res = self.static_validator.validate(code)
+        static_duration_ms = (time.perf_counter() - start_static) * 1000.0
         
-        # If static validation fails (syntax, structure, or policy), skip spatial execution
+        # If static validation fails (syntax, structure, or policy), skip runtime/spatial execution
         if not static_res.valid:
+            runtime_res = RuntimeValidationResult(valid=True, errors=[])
             spatial_res = SpatialValidationResult(valid=True, errors=[], warnings=[], info=[])
+            runtime_duration_ms = 0.0
+            spatial_duration_ms = 0.0
         else:
-            spatial_res = self.spatial_validator.validate(code)
+            start_runtime = time.perf_counter()
+            runtime_res = self.runtime_validator.validate(code)
+            runtime_duration_ms = (time.perf_counter() - start_runtime) * 1000.0
+
+            if not runtime_res.valid:
+                spatial_res = SpatialValidationResult(valid=True, errors=[], warnings=[], info=[])
+                spatial_duration_ms = 0.0
+            else:
+                start_spatial = time.perf_counter()
+                spatial_res = self.spatial_validator.validate(code)
+                spatial_duration_ms = (time.perf_counter() - start_spatial) * 1000.0
+
+        total_duration_ms = (time.perf_counter() - start_total) * 1000.0
+
+        self.logger.info(
+            "Validation timings",
+            extra={
+                "static_duration_ms": round(static_duration_ms, 2),
+                "runtime_duration_ms": round(runtime_duration_ms, 2),
+                "spatial_duration_ms": round(spatial_duration_ms, 2),
+                "total_duration_ms": round(total_duration_ms, 2),
+            },
+        )
             
         return CodeValidationResult(
-            valid=static_res.valid and spatial_res.valid,
+            valid=static_res.valid and runtime_res.valid and spatial_res.valid,
             static=static_res,
+            runtime=runtime_res,
             spatial=spatial_res
         )

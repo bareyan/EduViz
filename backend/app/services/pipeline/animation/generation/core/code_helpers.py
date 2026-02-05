@@ -2,6 +2,7 @@
 Code utilities - cleaning, normalization, scene file creation
 """
 
+import ast
 import re
 from typing import Optional
 
@@ -10,21 +11,42 @@ from app.services.infrastructure.parsing.code_parser import (
     normalize_indentation,
     remove_markdown_wrappers
 )
-from ...config import CONSTRUCT_INDENT_SPACES, MIN_DURATION_PADDING, DURATION_PADDING_PERCENTAGE
+from ...config import CONSTRUCT_INDENT_SPACES, MIN_DURATION_PADDING
+
+# Theme presets used for prompt guidance and scene setup.
+THEME_PRESETS = {
+    "3b1b": {
+        "background": "#171717",
+        "palette": ["WHITE", "BLUE", "YELLOW", "GREEN", "RED", "ORANGE", "TEAL"],
+    },
+    "light": {
+        "background": "#FFFFFF",
+        "palette": ["BLACK", "BLUE", "DARK_BLUE", "RED", "GREEN", "ORANGE", "TEAL"],
+    },
+    "neon": {
+        "background": "#0B0B12",
+        "palette": ["WHITE", "PURPLE", "PINK", "BLUE", "TEAL", "YELLOW", "ORANGE"],
+    },
+}
 
 def get_theme_setup_code(style: str = "3b1b") -> str:
     """Returns the Manim setup code for a specific visual style.
-    
+
     Args:
-        style: The name of the style (e.g., '3b1b', 'light').
-        
+        style: The name of the style (e.g., '3b1b', 'light', 'neon').
+
     Returns:
         A formatted string of Python code to be injected into construct().
     """
-    if style == "light":
-        return "        self.camera.background_color = \"#FFFFFF\"\n"
-    # Default to 3b1b / dark theme
-    return "        self.camera.background_color = \"#171717\"  # Slate dark\n"
+    preset = THEME_PRESETS.get(style, THEME_PRESETS["3b1b"])
+    return f"        self.camera.background_color = \"{preset['background']}\"\n"
+
+
+def get_theme_palette_text(style: str = "3b1b") -> str:
+    """Return a compact palette guidance string for prompts."""
+    preset = THEME_PRESETS.get(style, THEME_PRESETS["3b1b"])
+    palette = ", ".join(preset["palette"])
+    return f"Style: {style}. Background: {preset['background']}. Palette: {palette}."
 
 
 def clean_code(code_text: Optional[str]) -> str:
@@ -48,6 +70,28 @@ def clean_code(code_text: Optional[str]) -> str:
 
     # 2. Basic cleaning (strip whitespace)
     return extracted_code.strip()
+
+
+def is_incomplete_code(code_text: Optional[str]) -> bool:
+    """Detect likely truncated Python code (unterminated strings/brackets)."""
+    if not code_text or not code_text.strip():
+        return True
+
+    try:
+        ast.parse(code_text)
+    except SyntaxError as exc:
+        msg = (exc.msg or "").lower()
+        if (
+            "unexpected eof" in msg
+            or "was never closed" in msg
+            or "unterminated string literal" in msg
+            or "eol while scanning string literal" in msg
+        ):
+            return True
+    except Exception:
+        return True
+
+    return False
 
 
 def strip_theme_code_from_content(code: str) -> str:
@@ -77,7 +121,7 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
     Since the LLM now provides the full file structure, this function primarily
     ensures basic requirements are met:
     1. Theme setup is consistent
-    2. Final duration padding is added if missing
+    2. Minimal wait is added if no waits exist
     """
     # Fix any translated common issues
     code = fix_translated_code(code)
@@ -102,10 +146,9 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
                 
             code = code[:insertion_point] + "\n" + indent + theme_setup.strip() + "\n" + code[insertion_point:]
 
-    # Add final padding wait if it seems missing
-    # We look for self.wait( at the end of the file
-    if "self.wait(" not in code[-200:]:
-        padding_wait = max(MIN_DURATION_PADDING, duration * DURATION_PADDING_PERCENTAGE)
+    # Add a minimal final wait only if there are no waits at all
+    if "self.wait(" not in code:
+        padding_wait = max(MIN_DURATION_PADDING, 0.1)
         # Find indentation of the last line to match it
         lines = code.strip().split("\n")
         last_indent = ""
@@ -173,8 +216,11 @@ def fix_translated_code(code: str) -> str:
 
 
 def extract_scene_name(code: str) -> Optional[str]:
-    """Extract the Scene class name from Manim code"""
-    match = re.search(r"class\s+(\w+)\s*\(\s*Scene\s*\)", code)
+    """Extract the Scene class name from Manim code."""
+    match = re.search(
+        r"class\s+(\w+)\s*\(\s*(Scene|ThreeDScene|MovingCameraScene|ZoomedScene|VectorScene)\s*\)",
+        code,
+    )
     if match:
         return match.group(1)
     return None

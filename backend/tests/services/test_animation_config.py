@@ -133,7 +133,7 @@ class TestCodeGenerationSettings:
 
     def test_duration_padding_percentage_valid(self):
         """Test DURATION_PADDING_PERCENTAGE is valid percentage"""
-        assert 0 < DURATION_PADDING_PERCENTAGE < 1
+        assert 0 <= DURATION_PADDING_PERCENTAGE < 1
         assert isinstance(DURATION_PADDING_PERCENTAGE, float)
 
     def test_construct_indent_spaces_positive(self):

@@ -8,6 +8,7 @@ import logging
 import os
 import tempfile
 import traceback
+import time
 from typing import Any, Dict, List, Optional
 
 from .constants import (
@@ -23,6 +24,7 @@ from .utils import (
     get_atomic_mobjects,
     get_user_code_context,
     is_overlapping,
+    is_connector_type_name,
 )
 from .events import LintEvent, SceneTracker
 from .engine import ManimEngine
@@ -45,10 +47,13 @@ class SpatialValidator:
 
     def validate(self, code: str) -> SpatialValidationResult:
         """Entry point for spatial validation."""
+        start_total = time.perf_counter()
+        start_engine = time.perf_counter()
         try:
             self.engine.initialize()
         except ImportError as e:
             return SpatialValidationResult(valid=True, raw_report=f"Manim unavailable: {e}")
+        engine_initialize_ms = (time.perf_counter() - start_engine) * 1000.0
 
         self.trackers.clear()
         self.frame_captures.clear()
@@ -59,18 +64,35 @@ class SpatialValidator:
             temp_filename = f.name
             
         try:
-            return self._run_validation_cycle(temp_filename, code)
+            result, timings = self._run_validation_cycle(temp_filename, code)
+            total_duration_ms = (time.perf_counter() - start_total) * 1000.0
+            LOGGER.info(
+                "Spatial validation timings",
+                extra={
+                    "engine_initialize_ms": round(engine_initialize_ms, 2),
+                    "run_scenes_ms": round(timings.get("run_scenes_ms", 0.0), 2),
+                    "issue_collection_ms": round(timings.get("issue_collection_ms", 0.0), 2),
+                    "frame_capture_count": timings.get("frame_capture_count", 0),
+                    "spatial_total_ms": round(total_duration_ms, 2),
+                },
+            )
+            return result
         finally:
             self._cleanup_temp(temp_filename)
 
-    def _run_validation_cycle(self, temp_filename: str, code: str) -> SpatialValidationResult:
+    def _run_validation_cycle(self, temp_filename: str, code: str) -> tuple[SpatialValidationResult, Dict[str, Any]]:
         """Runs the validation engine and collects issues using IssueReporter."""
         errors, warnings, info, reports = [], [], [], []
         reporter = IssueReporter(code)
+        run_scenes_ms = 0.0
+        issue_collection_ms = 0.0
         
         with self.engine.patched_runtime(on_play_callback=self._check_scene_state):
             try:
+                start_run = time.perf_counter()
                 scenes = self.engine.run_scenes(temp_filename)
+                run_scenes_ms = (time.perf_counter() - start_run) * 1000.0
+                start_collect = time.perf_counter()
                 for scene in scenes:
                     if scene in self.trackers:
                         _, last_line = get_user_code_context(self.linter_path)
@@ -84,11 +106,12 @@ class SpatialValidator:
                         report_str = tracker.generate_report_string(scene.__class__.__name__)
                         if report_str:
                             reports.append(report_str)
+                issue_collection_ms = (time.perf_counter() - start_collect) * 1000.0
             except Exception as e:
                 tb = traceback.format_exc()
                 errors.append(SpatialIssue(0, "error", f"Validation crashed: {e}\n{tb}", ""))
 
-        return SpatialValidationResult(
+        result = SpatialValidationResult(
             valid=not errors,
             errors=errors,
             warnings=warnings,
@@ -96,6 +119,12 @@ class SpatialValidator:
             raw_report="\n".join(reports),
             frame_captures=list(self.frame_captures.values())
         )
+        timings = {
+            "run_scenes_ms": run_scenes_ms,
+            "issue_collection_ms": issue_collection_ms,
+            "frame_capture_count": len(self.frame_captures),
+        }
+        return result, timings
 
     def _check_scene_state(self, scene: Any) -> None:
         """Detection logic: Analyzes current scene state for spatial issues."""
@@ -115,6 +144,8 @@ class SpatialValidator:
 
         # 1. Overlaps & Occlusions
         for m1, m2 in itertools.combinations(atoms, 2):
+            if is_connector_type_name(m1.__class__.__name__) or is_connector_type_name(m2.__class__.__name__):
+                continue
             if is_overlapping(m1, m2, OVERLAP_MARGIN):
                 pair_id = f"OVLP_{id(m1)}_{id(m2)}"
                 active_ids.add(pair_id)

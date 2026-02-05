@@ -88,6 +88,7 @@ class ProgressTracker:
         self.progress_callback = progress_callback
 
         self.completed_sections: Set[int] = set()
+        self.failed_sections: Set[int] = set()
         self.total_sections: int = 0
 
         logger.info(f"Initialized ProgressTracker for job {job_id[:8]}", extra={
@@ -184,9 +185,22 @@ class ProgressTracker:
             section_index: Index of the completed section
         """
         self.completed_sections.add(section_index)
+        if section_index in self.failed_sections:
+            self.failed_sections.discard(section_index)
         logger.debug(f"Marked section {section_index} as complete", extra={
             "section_index": section_index,
             "completed_count": len(self.completed_sections),
+            "total_sections": self.total_sections
+        })
+
+    def mark_section_failed(self, section_index: int) -> None:
+        """Mark a section as failed."""
+        self.failed_sections.add(section_index)
+        if section_index in self.completed_sections:
+            self.completed_sections.discard(section_index)
+        logger.debug(f"Marked section {section_index} as failed", extra={
+            "section_index": section_index,
+            "failed_count": len(self.failed_sections),
             "total_sections": self.total_sections
         })
 
@@ -236,10 +250,14 @@ class ProgressTracker:
             is_cached: Whether this section was resumed from cache
         """
         self.total_sections = total_count
-        progress_pct = int((completed_count / total_count) * 100) if total_count > 0 else 0
+        done_count = completed_count + len(self.failed_sections)
+        progress_pct = int((done_count / total_count) * 100) if total_count > 0 else 0
 
         status = "cached" if is_cached else "completed"
-        message = f"Section {completed_count}/{total_count} {status}"
+        if len(self.failed_sections) > 0:
+            message = f"Sections {done_count}/{total_count} done ({len(self.failed_sections)} failed)"
+        else:
+            message = f"Section {completed_count}/{total_count} {status}"
 
         self.report_stage_progress("sections", progress_pct, message)
 
@@ -329,9 +347,10 @@ class ProgressTracker:
         return {
             "job_id": self.job_id,
             "completed_sections": len(self.completed_sections),
+            "failed_sections": len(self.failed_sections),
             "total_sections": self.total_sections,
             "completion_percentage": (
-                (len(self.completed_sections) / self.total_sections * 100)
+                ((len(self.completed_sections) + len(self.failed_sections)) / self.total_sections * 100)
                 if self.total_sections > 0 else 0
             ),
             "is_complete": len(self.completed_sections) == self.total_sections,

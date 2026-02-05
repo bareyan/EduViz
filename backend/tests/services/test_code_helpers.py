@@ -240,6 +240,18 @@ class MyTestScene(Scene):
         
         assert result == "Scene123"
 
+    def test_extracts_three_d_scene_name(self):
+        """Test extracting ThreeDScene class name"""
+        code = '''from manim import *
+
+class OrbitScene(ThreeDScene):
+    def construct(self):
+        pass
+'''
+        result = extract_scene_name(code)
+
+        assert result == "OrbitScene"
+
 
 class TestRemoveMarkdownBlocks:
     """Test suite for remove_markdown_blocks function"""

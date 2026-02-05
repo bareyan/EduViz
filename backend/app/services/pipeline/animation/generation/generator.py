@@ -19,7 +19,8 @@ from .core import (
     RefinementError, 
     RenderingError, 
     create_scene_file, 
-    render_scene
+    render_scene,
+    extract_scene_name,
 )
 from .validation import CodeValidator
 from ..config import MAX_CLEAN_RETRIES, MAX_SURGICAL_FIX_ATTEMPTS
@@ -72,6 +73,7 @@ class ManimGenerator:
         section_index: int,
         audio_duration: float,
         style: str = "3b1b",
+        status_callback: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """Orchestrates the animation generation pipeline for a section.
         
@@ -91,8 +93,37 @@ class ManimGenerator:
         self.stats["total_sections"] += 1
         logger.info(f"Starting animation pipeline for section {section_index}")
 
+        # Persist intermediate scene code to disk after initial generation and each fix
+        section_id = section.get("id", f"section_{section_index}").replace("-", "_").replace(" ", "_")
+        target_duration = audio_duration or section.get("duration_seconds", 60)
+        code_file = Path(output_dir) / f"scene_{section_index}.py"
+
+        def code_persistor(code: str, stage: str) -> None:
+            try:
+                full_code = create_scene_file(code, section_id, target_duration, style)
+                code_file.parent.mkdir(parents=True, exist_ok=True)
+                code_file.write_text(full_code, encoding="utf-8")
+                logger.info(
+                    f"Persisted intermediate scene code for section {section_index}",
+                    extra={"stage": stage, "path": str(code_file)},
+                )
+            except Exception as exc:
+                logger.warning(f"Failed to persist scene code at stage {stage}: {exc}")
+
         # Unified Agentic Flow (Plan -> Implement -> Refine in one session)
-        final_manim_code = await self.animator.animate(section, audio_duration)
+        if status_callback:
+            try:
+                status_callback("generating_manim", None)
+            except Exception:
+                pass
+
+        final_manim_code, fallback_used = await self.animator.animate(
+            section,
+            audio_duration,
+            style=style,
+            code_persistor=code_persistor,
+            status_callback=status_callback,
+        )
 
         # Stage 4: Rendering (Production)
         return await self.process_code_and_render(
@@ -101,7 +132,9 @@ class ManimGenerator:
             output_dir=output_dir,
             section_index=section_index,
             audio_duration=audio_duration,
-            style=style
+            style=style,
+            status_callback=status_callback,
+            allow_static_only=fallback_used,
         )
 
     async def process_code_and_render(
@@ -112,6 +145,8 @@ class ManimGenerator:
         section_index: int,
         audio_duration: Optional[float] = None,
         style: str = "3b1b",
+        status_callback: Optional[Any] = None,
+        allow_static_only: bool = False,
     ) -> Dict[str, Any]:
         """Validates, prepares, and renders Manim code.
         
@@ -122,21 +157,38 @@ class ManimGenerator:
         
         # 1. Final Stability Check
         validation = self.validator.validate(manim_code)
-        if not validation.valid:
-            logger.error(f"Post-refinement validation failed for section {section_index}")
-            raise RefinementError(f"Stabilized code failed final validation: {validation.get_error_summary()}")
+        if allow_static_only:
+            if not validation.static.valid:
+                logger.error(f"Syntax validation failed for section {section_index}")
+                raise RefinementError(
+                    f"Syntax validation failed: {validation.get_error_summary()}"
+                )
+            logger.warning(
+                f"Proceeding with static-only validation for section {section_index}",
+                extra={"error_reason": "fallback_syntax_valid"},
+            )
+        else:
+            if not validation.valid:
+                logger.error(f"Post-refinement validation failed for section {section_index}")
+                raise RefinementError(f"Stabilized code failed final validation: {validation.get_error_summary()}")
 
         # 2. File Preparation
         section_id = section.get("id", f"section_{section_index}").replace("-", "_").replace(" ", "_")
-        scene_name = f"Section{section_id.title().replace('_', '')}"
         code_file = Path(output_dir) / f"scene_{section_index}.py"
         
         full_code = create_scene_file(manim_code, section_id, target_duration, style)
+        scene_name = extract_scene_name(full_code) or f"Section{section_id.title().replace('_', '')}"
         
         with open(code_file, "w", encoding="utf-8") as f:
             f.write(full_code)
 
         # 3. Execution (Rendering)
+        if status_callback:
+            try:
+                status_callback("generating_video", None)
+            except Exception:
+                pass
+
         output_video = await render_scene(
             self, code_file, scene_name, output_dir,
             section_index, section=section, clean_retry=0

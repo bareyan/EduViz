@@ -4,35 +4,336 @@ Animation Processors - Hybrid Agentic Architecture.
 Pipeline:
 1. Phase 1 (Planning): Deep choreography with gemini-3-pro-preview
 2. Phase 2 (Generation): Single-shot code with gemini-3-flash-preview
-3. Phase 3 (Fixes): Agentic loop with tools and memory
+3. Phase 3 (Fixes): Agentic loop with structured JSON edits
 """
 
+import asyncio
 import json
-from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 
 from app.core import get_logger
+from app.core.llm_logger import llm_section_context
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig, CostTracker
-from app.services.infrastructure.llm.tools import create_tool_declaration
+from app.services.infrastructure.parsing import (
+    parse_json_response,
+    is_likely_truncated_json,
+    repair_json_payload,
+)
 
 from ..prompts import (
     ANIMATOR_SYSTEM,
     CHOREOGRAPHER_SYSTEM,
     CHOREOGRAPHY_USER,
+    CHOREOGRAPHY_COMPACT_USER,
+    CHOREOGRAPHY_OBJECTS_USER,
+    CHOREOGRAPHY_SEGMENTS_USER,
     FULL_IMPLEMENTATION_USER,
     SURGICAL_FIX_USER,
+    SURGICAL_FIX_SYSTEM,
     get_compact_patterns
 )
 from .core import (
     clean_code,
+    is_incomplete_code,
     ChoreographyError,
     ImplementationError,
     RefinementError,
-    ManimEditor
+    ManimEditor,
+    get_theme_palette_text
 )
-from .validation import CodeValidator, TimingAdjuster
+from .validation import CodeValidator
+from ..config import (
+    CHOREOGRAPHY_MAX_SEGMENTS_PER_CALL,
+    CHOREOGRAPHY_TEMPERATURE,
+    CHOREOGRAPHY_MAX_OUTPUT_TOKENS,
+    FIX_TEMPERATURE,
+    IMPLEMENTATION_MAX_OUTPUT_TOKENS,
+)
 
 logger = get_logger(__name__, component="animation_processors")
+
+ALLOWED_ACTIONS = [
+    "Create",
+    "FadeIn",
+    "Transform",
+    "ReplacementTransform",
+    "Write",
+    "Wait",
+    "FadeOut",
+]
+
+ALLOWED_OBJECT_TYPES = [
+    "Text",
+    "MathTex",
+    "Rectangle",
+    "Circle",
+    "Dot",
+    "Line",
+    "Arrow",
+    "Axes",
+    "NumberPlane",
+    "Brace",
+    "VGroup",
+    "SVGMobject",
+    "ImageMobject",
+    "ThreeDAxes",
+    "Sphere",
+    "Cube",
+    "Cylinder",
+    "Cone",
+    "Torus",
+    "Surface",
+    "ParametricSurface",
+]
+
+ALLOWED_SCENE_TYPES = ["2D", "3D"]
+
+ALLOWED_POSITIONS = [
+    "center",
+    "left",
+    "right",
+    "up",
+    "down",
+    "upper_left",
+    "upper_right",
+    "lower_left",
+    "lower_right",
+    "x,y",
+]
+
+POSITION_SCHEMA = {
+    "anyOf": [
+        {"type": "string", "enum": ALLOWED_POSITIONS},
+        {"type": "string", "pattern": r"^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$"},
+    ]
+}
+
+CAMERA_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "phi": {"type": "number"},
+        "theta": {"type": "number"},
+        "distance": {"type": "number"},
+        "ambient_rotation_rate": {"type": "number"},
+    },
+    "additionalProperties": False,
+}
+
+PLAN_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "scene_type": {"type": "string", "enum": ALLOWED_SCENE_TYPES},
+        "camera": CAMERA_SCHEMA,
+        "objects": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "type": {"type": "string", "enum": ALLOWED_OBJECT_TYPES},
+                    "text": {"type": "string"},
+                    "latex": {"type": "string"},
+                    "asset_path": {"type": "string"},
+                    "appears_at": {"type": "number"},
+                    "removed_at": {"type": "number"},
+                    "notes": {"type": "string"},
+                },
+                "required": ["id", "type", "appears_at", "removed_at"],
+                "additionalProperties": False,
+            },
+        },
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "segment_index": {"type": "number"},
+                    "start_time": {"type": "number"},
+                    "end_time": {"type": "number"},
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "time": {"type": "number"},
+                                "action": {"type": "string", "enum": ALLOWED_ACTIONS},
+                                "target": {"type": "string"},
+                                "source": {"type": "string"},
+                                "position": POSITION_SCHEMA,
+                                "duration": {"type": "number"},
+                                "notes": {"type": "string"},
+                            },
+                            "required": ["time", "action", "target"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["segment_index", "start_time", "end_time", "steps"],
+                "additionalProperties": False,
+            },
+        },
+        "screen_bounds": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "array", "items": {"type": "number"}},
+                "y": {"type": "array", "items": {"type": "number"}},
+            },
+            "additionalProperties": False,
+        },
+    },
+    "required": ["objects", "segments"],
+    "additionalProperties": False,
+}
+
+COMPACT_PLAN_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "scene_type": {"type": "string", "enum": ALLOWED_SCENE_TYPES},
+        "camera": CAMERA_SCHEMA,
+        "objects": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "type": {"type": "string", "enum": ALLOWED_OBJECT_TYPES},
+                    "text": {"type": "string"},
+                    "latex": {"type": "string"},
+                    "asset_path": {"type": "string"},
+                    "appears_at": {"type": "number"},
+                    "removed_at": {"type": "number"},
+                },
+                "required": ["id", "type", "appears_at", "removed_at"],
+                "additionalProperties": False,
+            },
+        },
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "segment_index": {"type": "number"},
+                    "start_time": {"type": "number"},
+                    "end_time": {"type": "number"},
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "time": {"type": "number"},
+                                "action": {"type": "string", "enum": ALLOWED_ACTIONS},
+                                "target": {"type": "string"},
+                                "source": {"type": "string"},
+                                "position": POSITION_SCHEMA,
+                                "duration": {"type": "number"},
+                            },
+                            "required": ["time", "action", "target"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["segment_index", "start_time", "end_time", "steps"],
+                "additionalProperties": False,
+            },
+        },
+        "screen_bounds": {
+            "type": "object",
+            "properties": {
+                "x": {"type": "array", "items": {"type": "number"}},
+                "y": {"type": "array", "items": {"type": "number"}},
+            },
+            "additionalProperties": False,
+        },
+    },
+    "required": ["objects", "segments"],
+    "additionalProperties": False,
+}
+
+OBJECTS_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "scene_type": {"type": "string", "enum": ALLOWED_SCENE_TYPES},
+        "camera": CAMERA_SCHEMA,
+        "objects": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "type": {"type": "string", "enum": ALLOWED_OBJECT_TYPES},
+                    "text": {"type": "string"},
+                    "latex": {"type": "string"},
+                    "asset_path": {"type": "string"},
+                    "appears_at": {"type": "number"},
+                    "removed_at": {"type": "number"},
+                },
+                "required": ["id", "type", "appears_at", "removed_at"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["objects"],
+    "additionalProperties": False,
+}
+
+SEGMENTS_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "segment_index": {"type": "number"},
+                    "start_time": {"type": "number"},
+                    "end_time": {"type": "number"},
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "time": {"type": "number"},
+                                "action": {"type": "string", "enum": ALLOWED_ACTIONS},
+                                "target": {"type": "string"},
+                                "source": {"type": "string"},
+                                "position": POSITION_SCHEMA,
+                                "duration": {"type": "number"},
+                            },
+                            "required": ["time", "action", "target"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
+                "required": ["segment_index", "start_time", "end_time", "steps"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["segments"],
+    "additionalProperties": False,
+}
+
+FIX_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "edits": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "search_text": {"type": "string"},
+                    "replacement_text": {"type": "string"},
+                },
+                "required": ["search_text", "replacement_text"],
+                "additionalProperties": False,
+            },
+        },
+        "full_code_lines": {"type": "array", "items": {"type": "string"}},
+        "full_code": {"type": "string"},
+        "notes": {"type": "string"},
+    },
+    "additionalProperties": False,
+}
 
 
 class Animator:
@@ -41,7 +342,7 @@ class Animator:
     Uses different models for each phase:
     - Planning: gemini-3-pro-preview (deep thinking)
     - Generation: gemini-3-flash-preview (fast, accurate)
-    - Fixes: gemini-3-flash-preview (tool-based surgical edits)
+    - Fixes: gemini-3-flash-preview (structured JSON edits)
     """
     
     def __init__(
@@ -61,7 +362,6 @@ class Animator:
         """
         self.engine = engine
         self.validator = validator
-        self.timing_adjuster = TimingAdjuster()
         self.max_fix_attempts = max_fix_attempts
         self.editor = ManimEditor()
         self.cost_tracker = cost_tracker or engine.cost_tracker
@@ -72,10 +372,15 @@ class Animator:
             cost_tracker=self.cost_tracker
         )
         
-        # Fix memory for agentic loop
-        self.fix_history: List[Dict[str, str]] = []
 
-    async def animate(self, section: Dict[str, Any], duration: float) -> str:
+    async def animate(
+        self,
+        section: Dict[str, Any],
+        duration: float,
+        style: str = "3b1b",
+        code_persistor: Optional[Any] = None,
+        status_callback: Optional[Any] = None
+    ) -> tuple[str, bool]:
         """Runs the hybrid animation generation pipeline.
         
         Args:
@@ -94,28 +399,82 @@ class Animator:
         
         section_title = section.get("title", f"Section {section.get('index', '')}")
         last_error = None
+        last_code: Optional[str] = None
+        last_syntax_valid_code: Optional[str] = None
+
+        def _track_syntax_valid(code: str) -> None:
+            nonlocal last_syntax_valid_code
+            last_syntax_valid_code = code
         
         for clean_retry in range(MAX_CLEAN_RETRIES):
             if clean_retry > 0:
                 logger.warning(f"Clean retry {clean_retry}/{MAX_CLEAN_RETRIES} for '{section_title}'")
             
-            # Clear fix history for new attempt
-            self.fix_history = []
-            
             try:
                 # 1. Phase 1: Deep Choreography Planning (gemini-3-pro-preview)
-                plan = await self._generate_plan(section, duration)
+                plan = await self._generate_plan(
+                    section,
+                    duration,
+                    style=style,
+                    status_callback=status_callback,
+                )
                 logger.info(f"Choreography plan finalized for '{section_title}'")
                 
                 # 2. Phase 2: Full Implementation (gemini-3-flash-preview, single-shot)
-                code = await self._generate_full_code(section, plan, duration)
+                code = await self._generate_full_code(section, plan, duration, style=style)
+                if is_incomplete_code(code):
+                    logger.warning(
+                        "Implementation appears truncated; regenerating full code",
+                        extra={"error_reason": "implementation_truncated"},
+                    )
+                    if status_callback:
+                        try:
+                            status_callback(
+                                "fixing_manim",
+                                "Implementation truncated; regenerating full code",
+                            )
+                        except Exception:
+                            pass
+                    strict_suffix = (
+                        "\n\nIMPORTANT:\n"
+                        "- Return the FULL file only (no partials)\n"
+                        "- Ensure all parentheses, brackets, and strings are closed\n"
+                    )
+                    code = await self._generate_full_code(
+                        section,
+                        plan,
+                        duration,
+                        style=style,
+                        prompt_suffix=strict_suffix,
+                        temperature=FIX_TEMPERATURE,
+                    )
+                    if is_incomplete_code(code):
+                        logger.error(
+                            "Implementation regeneration still truncated",
+                            extra={"error_reason": "implementation_truncated"},
+                        )
+                        raise ImplementationError("Implementation output truncated")
+                else:
+                    static_check = self.validator.static_validator.validate(code)
+                    if static_check.valid:
+                        _track_syntax_valid(code)
                 logger.info(f"Initial code generated for '{section_title}'")
+                last_code = code
+                self._persist_code(code, code_persistor, stage="initial")
                 
                 # 3. Phase 3: Agentic Fix Loop (with memory)
-                code, is_valid = await self._agentic_fix_loop(code, section_title, duration)
+                code, is_valid = await self._agentic_fix_loop(
+                    code,
+                    section_title,
+                    duration,
+                    code_persistor=code_persistor,
+                    status_callback=status_callback,
+                    syntax_ok_callback=_track_syntax_valid
+                )
+                last_code = code
                 
                 if is_valid:
-                    return code
+                    return code, False
                 else:
                     # Fix loop failed, try clean regeneration
                     last_error = "Surgical fixes could not stabilize code"
@@ -125,48 +484,29 @@ class Animator:
                 last_error = str(e)
                 continue
         
-        # All retries exhausted - return last code anyway to attempt render
-        logger.warning(f"All {MAX_CLEAN_RETRIES} clean retries exhausted. Returning last code.")
-        return code
-    
-    
-    def _format_visual_context(self, validation) -> str:
-        """Format screenshot information for surgical fix prompt."""
-        spatial_result = validation.spatial
-        if not spatial_result.frame_captures:
-            return ""
-        
-        # Group issues by frame
-        frame_info = []
-        for fc in spatial_result.frame_captures:
-            issues_at_frame = [
-                issue for issue in (
-                    spatial_result.errors + 
-                    spatial_result.warnings + 
-                    spatial_result.info
-                )
-                if issue.frame_id == fc.screenshot_path
-            ]
-            
-            if issues_at_frame:
-                frame_info.append(
-                    f"**Frame at t={fc.timestamp}s** (screenshot attached):\n" +
-                    "\n".join(f"  - {issue.message}" for issue in issues_at_frame)
-                )
-        
-        if frame_info:
-            return (
-                "\n## VISUAL CONTEXT\n"
-                "Screenshots are attached showing the exact layout issues:\n\n" +
-                "\n\n".join(frame_info) +
-                "\n\nLook at the attached images to understand the spatial problems before applying fixes.\n"
+        # All retries exhausted - use last syntax-valid code if available
+        logger.warning(f"All {MAX_CLEAN_RETRIES} clean retries exhausted.")
+        if last_syntax_valid_code is not None:
+            logger.warning(
+                "Returning last syntax-valid code after retries",
+                extra={"error_reason": "fallback_syntax_valid"},
             )
-        
-        return ""
-
-
-    async def _agentic_fix_loop(self, code: str, section_title: str, target_duration: float) -> tuple[str, bool]:
-        """Agentic fix loop with memory and tool use.
+            return last_syntax_valid_code, True
+        if last_code is None:
+            raise RefinementError(last_error or "Failed to generate animation code")
+        return last_code, False
+    
+    
+    async def _agentic_fix_loop(
+        self,
+        code: str,
+        section_title: str,
+        target_duration: float,
+        code_persistor: Optional[Any] = None,
+        status_callback: Optional[Any] = None,
+        syntax_ok_callback: Optional[Callable[[str], None]] = None,
+    ) -> tuple[str, bool]:
+        """Agentic fix loop with structured JSON edits.
         
         This loop:
         1. Corrects timing programmatically
@@ -183,99 +523,415 @@ class Animator:
         - warnings: Include in summary but don't block
         - info: Not sent to LLM, doesn't block
         """
+        last_validated_code: Optional[str] = None
+        last_validation = None
+        total_edits_applied = 0
+
         for attempt in range(1, self.max_fix_attempts + 1):
-            # Deterministic timing fix (Post-processor)
-            code = self.timing_adjuster.adjust(code, target_duration)
-            
-            validation = self.validator.validate(code)
+            # Timing adjuster disabled; keep generated timing as-is.
+
+            if last_validated_code == code and last_validation is not None:
+                validation = last_validation
+            else:
+                validation = self.validator.validate(code)
+                last_validated_code = code
+                last_validation = validation
+
+            if validation.static.valid and syntax_ok_callback:
+                try:
+                    syntax_ok_callback(code)
+                except Exception:
+                    pass
+
+            if not validation.static.valid:
+                static_errors = " ".join(validation.static.errors).lower()
+                if (
+                    "syntax error" in static_errors
+                    or "define at least one class" in static_errors
+                    or "missing the 'construct(self)'" in static_errors
+                ):
+                    logger.warning(
+                        "Structural validation failed; forcing clean regeneration",
+                        extra={"error_reason": "implementation_truncated"},
+                    )
+                    return code, False
             
             # Only errors block the loop - warnings and info don't
-            has_errors = (not validation.static.valid) or (len(validation.spatial.errors) > 0)
+            has_errors = (
+                (not validation.static.valid)
+                or (not validation.runtime.valid)
+                or (len(validation.spatial.errors) > 0)
+            )
             
             if not has_errors:
                 if validation.spatial.warnings:
                     logger.info(f"Animation validated with {len(validation.spatial.warnings)} warnings (non-blocking)")
                 else:
                     logger.info(f"Animation code validated successfully on attempt {attempt}")
+                logger.info(
+                    "Accepted Manim code after fixes",
+                    extra={
+                        "fix_attempts_used": max(0, attempt - 1),
+                        "edits_applied_total": total_edits_applied,
+                    },
+                )
                 return code, True
             
             error_summary = validation.get_error_summary()
             logger.warning(f"Validation failed (Attempt {attempt}): {error_summary[:100]}...")
+
+            if status_callback:
+                try:
+                    status_callback("fixing_manim", error_summary)
+                except Exception:
+                    pass
             
-            # Record in fix history
-            self.fix_history.append({
-                "attempt": attempt,
-                "error": error_summary[:200]
-            })
-            
-            # Apply surgical fix with context (includes visual context)
-            code = await self._apply_surgical_fix(code, error_summary, validation)
+            # Apply surgical fix
+            new_code, edits_applied = await self._apply_surgical_fix(
+                code, error_summary, validation, attempt=attempt, status_callback=status_callback
+            )
+            if edits_applied:
+                total_edits_applied += edits_applied
+            code = new_code
+            self._persist_code(code, code_persistor, stage=f"fix_{attempt}")
             
             # Clean up screenshots after fix attempt
             validation.spatial.cleanup_screenshots()
         
-        # Final timing check and validation
-        code = self.timing_adjuster.adjust(code, target_duration)
-        final_validation = self.validator.validate(code)
-        has_final_errors = (not final_validation.static.valid) or (len(final_validation.spatial.errors) > 0)
-        
-        # Clean up final validation screenshots
-        final_validation.spatial.cleanup_screenshots()
-        
-        if not has_final_errors:
-            return code, True
-        
         # Return code but indicate it's not fully valid
+        remaining_summary = last_validation.get_error_summary() if last_validation else "No validation run"
         logger.warning(
             f"Could not fully stabilize animation after {self.max_fix_attempts} attempts. "
-            f"Remaining issues: {final_validation.get_error_summary()[:100]}..."
+            f"Remaining issues: {remaining_summary[:100]}..."
         )
         return code, False
 
+    def _persist_code(self, code: str, persistor: Optional[Any], stage: str) -> None:
+        if not persistor:
+            return
+        try:
+            persistor(code, stage)
+        except Exception as e:
+            logger.warning(f"Failed to persist code at stage {stage}: {e}")
 
-    async def _generate_plan(self, section: Dict[str, Any], duration: float) -> str:
+
+    async def _generate_plan(
+        self,
+        section: Dict[str, Any],
+        duration: float,
+        style: str,
+        status_callback: Optional[Any] = None,
+    ) -> str:
         """Generates a visual choreography plan using deep thinking model."""
+        visual_description = section.get("visual_description") or ""
+        visual_hints_lines: List[str] = []
+        if visual_description:
+            visual_hints_lines.append(f"- Section: {visual_description}")
+        for i, seg in enumerate(section.get("narration_segments", []) or []):
+            hint = seg.get("visual_description") or seg.get("visual_hint") or ""
+            if hint:
+                seg_idx = seg.get("segment_index", i)
+                visual_hints_lines.append(f"- Segment {seg_idx}: {hint}")
+        visual_hints = "\n".join(visual_hints_lines) if visual_hints_lines else "None"
+
+        theme_info = get_theme_palette_text(style)
         prompt = CHOREOGRAPHY_USER.format(
             title=section.get("title", "Untitled"),
             narration=section.get("narration", ""),
             timing_info=self._format_timing_info(section),
-            target_duration=duration
+            target_duration=duration,
+            visual_hints=visual_hints,
+            theme_info=theme_info,
         )
         
-        config = PromptConfig(enable_thinking=True, timeout=300.0)
-        result = await self.choreography_engine.generate(
-            prompt=prompt,
-            system_prompt=CHOREOGRAPHER_SYSTEM.template,
-            config=config
+        config = PromptConfig(
+            enable_thinking=True,
+            timeout=300.0,
+            response_format="json",
+            response_schema=PLAN_RESPONSE_SCHEMA,
         )
-        
-        if not result.get("success") or not result.get("response"):
-            raise ChoreographyError(
-                f"Failed to generate animation plan: {result.get('error', 'Empty response')}"
+        config.temperature = CHOREOGRAPHY_TEMPERATURE
+        config.max_output_tokens = CHOREOGRAPHY_MAX_OUTPUT_TOKENS
+        strict_suffix = (
+            "\n\nSTRICT JSON RULES:\n"
+            "- No line breaks inside strings\n"
+            "- Notes must be 12 words or fewer\n"
+            "- Max 20 objects total\n"
+            "- Max 6 steps per segment\n"
+            "- Use position tokens only: center, left, right, up, down, upper_left, upper_right, lower_left, lower_right, x,y\n"
+            "- Use direction constants: UP, DOWN, LEFT, RIGHT, UL, UR, DL, DR, IN, OUT, ORIGIN\n"
+            "- Do NOT use TOP or BOTTOM\n"
+        )
+
+        def _parse_json_result(result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            parsed = result.get("parsed_json")
+            if not parsed and result.get("response"):
+                sentinel = object()
+                repaired = repair_json_payload(result.get("response", ""))
+                if repaired:
+                    parsed = parse_json_response(repaired, default=sentinel)
+                else:
+                    parsed = parse_json_response(result.get("response"), default=sentinel)
+                if parsed is sentinel:
+                    parsed = None
+            return parsed
+
+        def _is_valid_plan(parsed: Any) -> bool:
+            if not isinstance(parsed, dict):
+                return False
+            objects = parsed.get("objects")
+            segments = parsed.get("segments")
+            if not isinstance(objects, list) or not isinstance(segments, list):
+                return False
+            return True
+
+        def _is_valid_objects(objects: Any) -> bool:
+            if not isinstance(objects, list):
+                return False
+            for obj in objects:
+                if not isinstance(obj, dict):
+                    return False
+                for key in ("id", "type", "appears_at", "removed_at"):
+                    if key not in obj:
+                        return False
+            return True
+
+        def _is_valid_segments(segments: Any) -> bool:
+            if not isinstance(segments, list):
+                return False
+            for seg in segments:
+                if not isinstance(seg, dict):
+                    return False
+                for key in ("segment_index", "start_time", "end_time", "steps"):
+                    if key not in seg:
+                        return False
+                if not isinstance(seg.get("steps"), list):
+                    return False
+            return True
+
+        last_error = None
+        for attempt in range(2):
+            with llm_section_context({"stage": "choreography", "retry": attempt}):
+                result = await self.choreography_engine.generate(
+                    prompt=prompt,
+                    system_prompt=CHOREOGRAPHER_SYSTEM.template,
+                    config=config
+                )
+
+            parsed = _parse_json_result(result)
+            if parsed and _is_valid_plan(parsed):
+                return json.dumps(parsed, indent=2)
+
+            if parsed and not _is_valid_plan(parsed):
+                last_error = "Missing required keys in choreography plan"
+            else:
+                last_error = result.get("error", "Invalid JSON response")
+                if result.get("response") and is_likely_truncated_json(result.get("response", "")):
+                    last_error = "choreography_truncated"
+                    logger.warning(
+                        "Choreography JSON appears truncated",
+                        extra={"error_reason": "choreography_truncated"},
+                    )
+            if attempt == 0:
+                prompt = f"{prompt}{strict_suffix}"
+
+        if status_callback:
+            try:
+                status_callback(
+                    "fixing_manim",
+                    "Choreography JSON truncated; retrying with compact plan",
+                )
+            except Exception:
+                pass
+
+        compact_prompt = CHOREOGRAPHY_COMPACT_USER.format(
+            title=section.get("title", "Untitled"),
+            narration=section.get("narration", ""),
+            timing_info=self._format_timing_info(section),
+            target_duration=duration,
+            visual_hints=visual_hints,
+            theme_info=theme_info,
+        )
+        compact_config = PromptConfig(
+            enable_thinking=True,
+            timeout=300.0,
+            response_format="json",
+            response_schema=COMPACT_PLAN_RESPONSE_SCHEMA,
+        )
+        compact_config.temperature = CHOREOGRAPHY_TEMPERATURE
+        compact_config.max_output_tokens = CHOREOGRAPHY_MAX_OUTPUT_TOKENS
+        with llm_section_context({"stage": "choreography_compact"}):
+            compact_result = await self.choreography_engine.generate(
+                prompt=compact_prompt,
+                system_prompt=CHOREOGRAPHER_SYSTEM.template,
+                config=compact_config,
             )
-            
-        return result["response"]
+
+        compact_parsed = _parse_json_result(compact_result)
+        if compact_parsed and _is_valid_plan(compact_parsed):
+            return json.dumps(compact_parsed, indent=2)
+
+        if compact_parsed and not _is_valid_plan(compact_parsed):
+            compact_error = "Missing required keys in compact choreography plan"
+        else:
+            compact_error = compact_result.get("error", "Invalid JSON response")
+            if compact_result.get("response") and is_likely_truncated_json(compact_result.get("response", "")):
+                compact_error = "choreography_truncated"
+                logger.warning(
+                    "Compact choreography JSON appears truncated",
+                    extra={"error_reason": "choreography_truncated"},
+                )
+
+        if status_callback:
+            try:
+                status_callback(
+                    "fixing_manim",
+                    "Choreography JSON truncated; retrying with chunked plan",
+                )
+            except Exception:
+                pass
+
+        # Chunked fallback: objects first, then segments in small batches
+        narration_segments = section.get("narration_segments", []) or []
+        if not narration_segments:
+            raise ChoreographyError(
+                f"Failed to generate animation plan: {last_error}. "
+                f"Compact fallback failed: {compact_error}. "
+                "No narration segments available for chunked fallback."
+            )
+
+        objects_prompt = CHOREOGRAPHY_OBJECTS_USER.format(
+            title=section.get("title", "Untitled"),
+            narration=section.get("narration", ""),
+            timing_info=self._format_timing_info(section),
+            target_duration=duration,
+            visual_hints=visual_hints,
+            theme_info=theme_info,
+        )
+        objects_config = PromptConfig(
+            enable_thinking=True,
+            timeout=300.0,
+            response_format="json",
+            response_schema=OBJECTS_RESPONSE_SCHEMA,
+        )
+        objects_config.temperature = CHOREOGRAPHY_TEMPERATURE
+        objects_config.max_output_tokens = CHOREOGRAPHY_MAX_OUTPUT_TOKENS
+        with llm_section_context({"stage": "choreography_objects"}):
+            objects_result = await self.choreography_engine.generate(
+                prompt=objects_prompt,
+                system_prompt=CHOREOGRAPHER_SYSTEM.template,
+                config=objects_config,
+            )
+
+        objects_parsed = _parse_json_result(objects_result)
+        if not isinstance(objects_parsed, dict):
+            objects_parsed = {}
+        objects = objects_parsed.get("objects")
+        if not _is_valid_objects(objects):
+            objects_error = objects_result.get("error", "Invalid objects JSON response")
+            raise ChoreographyError(
+                f"Failed to generate animation plan: {last_error}. "
+                f"Compact fallback failed: {compact_error}. "
+                f"Objects chunk failed: {objects_error}"
+            )
+
+        scene_type = objects_parsed.get("scene_type")
+        camera = objects_parsed.get("camera")
+
+        object_catalog = [
+            {"id": obj.get("id"), "type": obj.get("type")}
+            for obj in objects
+        ]
+
+        all_segments: List[Dict[str, Any]] = []
+        for chunk_index in range(0, len(narration_segments), CHOREOGRAPHY_MAX_SEGMENTS_PER_CALL):
+            chunk = narration_segments[chunk_index:chunk_index + CHOREOGRAPHY_MAX_SEGMENTS_PER_CALL]
+            start_idx = chunk[0].get("segment_index", chunk_index)
+            end_idx = chunk[-1].get("segment_index", chunk_index + len(chunk) - 1)
+            segment_prompt = CHOREOGRAPHY_SEGMENTS_USER.format(
+                title=section.get("title", "Untitled"),
+                target_duration=duration,
+                segment_range=f"{start_idx}..{end_idx}",
+                segment_chunk=json.dumps(chunk, indent=2),
+                object_catalog=json.dumps(object_catalog, indent=2),
+            )
+            segment_config = PromptConfig(
+                enable_thinking=True,
+                timeout=300.0,
+                response_format="json",
+                response_schema=SEGMENTS_RESPONSE_SCHEMA,
+            )
+            segment_config.temperature = CHOREOGRAPHY_TEMPERATURE
+            segment_config.max_output_tokens = CHOREOGRAPHY_MAX_OUTPUT_TOKENS
+            with llm_section_context(
+                {"stage": "choreography_segments", "chunk": f"{start_idx}-{end_idx}"}
+            ):
+                segment_result = await self.choreography_engine.generate(
+                    prompt=segment_prompt,
+                    system_prompt=CHOREOGRAPHER_SYSTEM.template,
+                    config=segment_config,
+                )
+
+            segment_parsed = _parse_json_result(segment_result)
+            if not isinstance(segment_parsed, dict):
+                segment_parsed = {}
+            segments = segment_parsed.get("segments")
+            if not _is_valid_segments(segments):
+                segment_error = segment_result.get("error", "Invalid segments JSON response")
+                raise ChoreographyError(
+                    f"Failed to generate animation plan: {last_error}. "
+                    f"Compact fallback failed: {compact_error}. "
+                    f"Segments chunk {start_idx}-{end_idx} failed: {segment_error}"
+                )
+            all_segments.extend(segments)
+
+        all_segments.sort(key=lambda s: s.get("segment_index", 0))
+        chunked_plan = {
+            "scene_type": scene_type,
+            "camera": camera,
+            "objects": objects,
+            "segments": all_segments,
+            "screen_bounds": {"x": [-5.5, 5.5], "y": [-3.0, 3.0]},
+        }
+        return json.dumps(chunked_plan, indent=2)
 
 
-    async def _generate_full_code(self, section: Dict[str, Any], plan: str, duration: float) -> str:
+    async def _generate_full_code(
+        self,
+        section: Dict[str, Any],
+        plan: str,
+        duration: float,
+        style: str,
+        prompt_suffix: Optional[str] = None,
+        temperature: Optional[float] = None,
+    ) -> str:
         """Generates the full Manim code in one shot."""
         segment_timings = self._format_segment_timings(section)
         section_id_title = self._get_section_class_name(section)
         
+        theme_info = get_theme_palette_text(style)
         prompt = FULL_IMPLEMENTATION_USER.format(
             plan=plan,
             segment_timings=segment_timings,
             total_duration=duration,
             section_id_title=section_id_title,
-            patterns=get_compact_patterns()
+            patterns=get_compact_patterns(),
+            theme_info=theme_info,
         )
+
+        if prompt_suffix:
+            prompt = f"{prompt}\n{prompt_suffix}"
         
         config = PromptConfig(enable_thinking=True, timeout=300.0)
-        result = await self.engine.generate(
-            prompt=prompt,
-            system_prompt=ANIMATOR_SYSTEM.template,
-            config=config
-        )
+        if temperature is not None:
+            config.temperature = temperature
+        config.max_output_tokens = IMPLEMENTATION_MAX_OUTPUT_TOKENS
+        with llm_section_context({"stage": "implementation"}):
+            result = await self.engine.generate(
+                prompt=prompt,
+                system_prompt=ANIMATOR_SYSTEM.template,
+                config=config
+            )
         
         if not result.get("success") or not result.get("response"):
             raise ImplementationError(
@@ -285,105 +941,125 @@ class Animator:
         return clean_code(result["response"])
 
 
-    async def _apply_surgical_fix(self, code: str, errors: str, validation=None) -> str:
-        """Applies a surgical fix using tool calls with optional history context and visual context."""
-        # Build prompt with optional history context
-        history_context = ""
-        if len(self.fix_history) > 1:
-            recent = self.fix_history[-2:]  # Last 2 attempts
-            history_context = "\n\nPREVIOUS FIX ATTEMPTS:\n" + "\n".join([
-                f"- Attempt {h['attempt']}: {h['error'][:100]}..."
-                for h in recent
-            ])
-        
-        # Add visual context from screenshots
-        visual_context = self._format_visual_context(validation) if validation else ""
-        
+    async def _apply_surgical_fix(
+        self,
+        code: str,
+        errors: str,
+        validation=None,
+        attempt: Optional[int] = None,
+        status_callback: Optional[Any] = None,
+    ) -> tuple[str, int]:
+        """Applies a surgical fix using structured JSON edits."""
+        original_code = code
         prompt_text = SURGICAL_FIX_USER.format(
-            code=code, 
-            errors=errors,
-            visual_context=visual_context
-        ) + history_context
-        
-        tool_declarations = [create_tool_declaration(self.editor, self.engine.types)]
-        config = PromptConfig(timeout=120.0)
-        
-        # Build multimodal content if screenshots exist
-        if validation and validation.spatial.frame_captures:
-            contents = [prompt_text]
-            
-            # Add screenshots as image parts
-            for fc in validation.spatial.frame_captures:
-                if Path(fc.screenshot_path).exists():
-                    try:
-                        image_data = Path(fc.screenshot_path).read_bytes()
-                        # Try Vertex AI method first, fallback to Gemini API method
-                        try:
-                            image_part = self.engine.types.Part.from_data(
-                                data=image_data,
-                                mime_type="image/png"
-                            )
-                        except (AttributeError, TypeError):
-                            # Fallback for Gemini API
-                            image_part = self.engine.types.Part.from_bytes(
-                                data=image_data,
-                                mime_type="image/png"
-                            )
-                        contents.append(image_part)
-                    except Exception as e:
-                        logger.warning(f"Failed to read screenshot {fc.screenshot_path}: {e}")
-            
-            # Use multimodal generate
-            result = await self.engine.generate(
-                prompt="",  # Empty because content is in contents
-                system_prompt=ANIMATOR_SYSTEM.template,
-                tools=tool_declarations,
-                config=config,
-                contents=contents
-            )
-        else:
-            # No screenshots - use standard text-only prompt
-            result = await self.engine.generate(
-                prompt=prompt_text,
-                system_prompt=ANIMATOR_SYSTEM.template,
-                tools=tool_declarations,
-                config=config
-            )
-        
-        if not result.get("success"):
-            logger.error(f"Surgical fix call failed: {result.get('error')}")
-            return code
-            
-        # Apply tool calls
-        code = self._process_tool_calls(code, result)
-        
-        return code
+            code=code,
+            errors=errors or "Unknown error",
+            visual_context=""
+        )
 
+        config = PromptConfig(
+            timeout=120.0,
+            response_format="json",
+            response_schema=FIX_RESPONSE_SCHEMA,
+        )
+        config.temperature = FIX_TEMPERATURE
 
-    def _process_tool_calls(self, code: str, result: Dict[str, Any]) -> str:
-        """Process tool calls from the LLM result."""
-        tool_applied = False
-        
-        if result.get("function_calls"):
-            for fc in result["function_calls"]:
-                if fc["name"] == "apply_surgical_edit":
+        def _is_transient_error(message: str) -> bool:
+            msg = (message or "").lower()
+            return (
+                "503" in msg
+                or "429" in msg
+                or "timeout" in msg
+                or "timed out" in msg
+                or "unavailable" in msg
+                or "overloaded" in msg
+                or "rate limit" in msg
+            )
+
+        result = None
+        transient_attempts = 3
+        for retry in range(transient_attempts):
+            with llm_section_context({"stage": "surgical_fix", "attempt": attempt}):
+                result = await self.engine.generate(
+                    prompt=prompt_text,
+                    system_prompt=SURGICAL_FIX_SYSTEM.template,
+                    config=config
+                )
+
+            if result.get("success"):
+                break
+
+            error_msg = result.get("error", "")
+            if _is_transient_error(error_msg) and retry < transient_attempts - 1:
+                logger.warning(
+                    f"Surgical fix LLM transient failure: {error_msg}",
+                    extra={"error_reason": "fix_llm_overloaded"},
+                )
+                if status_callback:
                     try:
-                        fc["args"]["code"] = code
-                        code = self.editor.execute(**fc["args"])
-                        tool_applied = True
-                        logger.info("Surgical edit applied successfully")
-                    except Exception as e:
-                        logger.warning(f"Surgical tool execution failed: {str(e)}")
+                        status_callback("fixing_manim", "LLM overloaded; retrying fix request")
+                    except Exception:
+                        pass
+                await asyncio.sleep(2 ** retry)
+                continue
+
+            logger.error(f"Surgical fix call failed: {error_msg}")
+            return code, 0
         
-        # Fallback: if no tool applied, check for code block in response
-        if not tool_applied:
-            raw_response = result.get("response")
-            fallback_code = clean_code(raw_response) if raw_response else ""
-            if fallback_code and len(fallback_code) > len(code) * 0.7:
-                logger.info("Using fallback response code")
-                return fallback_code
-            
-        return code
+        if not result or not result.get("success"):
+            logger.error("Surgical fix call failed: empty result")
+            return code, 0
+
+        payload = result.get("parsed_json")
+        if payload is None and result.get("response"):
+            repaired = repair_json_payload(result.get("response", ""))
+            if repaired:
+                sentinel = object()
+                payload = parse_json_response(repaired, default=sentinel)
+                if payload is sentinel:
+                    payload = None
+        if payload is None:
+            logger.warning("Surgical fix returned no parsed_json payload")
+            return code, 0
+
+        payload = payload or {}
+        edits = payload.get("edits") or []
+        applied = 0
+
+        for edit in edits:
+            search_text = (edit or {}).get("search_text") or ""
+            replacement_text = (edit or {}).get("replacement_text") or ""
+            if not search_text:
+                continue
+            try:
+                code = self.editor.execute(
+                    code=code,
+                    search_text=search_text,
+                    replacement_text=replacement_text
+                )
+                applied += 1
+            except Exception as e:
+                logger.warning(f"Surgical edit failed: {str(e)}")
+
+        if applied:
+            return code, applied
+
+        full_code_lines = payload.get("full_code_lines") or []
+        if isinstance(full_code_lines, list) and full_code_lines:
+            joined = "\n".join(full_code_lines)
+            cleaned = clean_code(joined)
+            if cleaned:
+                logger.info("Using full_code_lines fallback from JSON fix response")
+                return cleaned, 1
+
+        full_code = payload.get("full_code")
+        if full_code:
+            cleaned = clean_code(full_code)
+            if cleaned:
+                logger.info("Using full_code fallback from JSON fix response")
+                return cleaned, 1
+
+        return code, 0
 
 
     def _format_timing_info(self, section: Dict[str, Any]) -> str:
@@ -395,12 +1071,16 @@ class Animator:
     def _format_segment_timings(self, section: Dict[str, Any]) -> str:
         """Format segment timings as readable text."""
         segments = section.get("narration_segments", [])
-        return "\n".join([
-            f"- Segment {i+1} ({s.get('start_time', 0):.1f}s - "
-            f"{s.get('start_time', 0) + s.get('duration', 5):.1f}s): "
-            f"{s.get('text', '')[:60]}..."
-            for i, s in enumerate(segments)
-        ])
+        lines: List[str] = []
+        for i, s in enumerate(segments):
+            text = s.get("text") or ""
+            start_time = s.get("start_time", 0) or 0
+            duration = s.get("duration", 5) or 5
+            lines.append(
+                f"- Segment {i+1} ({start_time:.1f}s - {start_time + duration:.1f}s): "
+                f"{text[:60]}..."
+            )
+        return "\n".join(lines)
 
 
     def _get_section_class_name(self, section: Dict[str, Any]) -> str:

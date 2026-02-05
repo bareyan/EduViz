@@ -18,6 +18,8 @@ from .sections import (
 )
 from .progress import ProgressTracker
 from app.core import get_logger, LogTimer
+from app.core.llm_logger import set_llm_section_log, clear_llm_section_log
+from app.core.logging import job_id_var
 
 logger = get_logger(__name__, component="section_orchestrator")
 
@@ -59,7 +61,7 @@ class SectionOrchestrator:
         manim_generator: ManimGenerator,
         tts_engine: TTSEngine,
         progress_tracker: ProgressTracker,
-        max_concurrent: int = 3
+        max_concurrent: int = 8
     ):
         """
         Initialize section orchestrator
@@ -141,7 +143,7 @@ class SectionOrchestrator:
                         language=language,
                         resume=resume,
                         completed_count=completed_count,
-                        total_sections=total_sections
+                        total_sections=total_sections,
                     )
 
             # Create tasks for all sections
@@ -198,7 +200,7 @@ class SectionOrchestrator:
         language: str,
         resume: bool,
         completed_count: List[int],
-        total_sections: int
+        total_sections: int,
     ) -> SectionResult:
         """
         Process a single section (internal method)
@@ -212,53 +214,65 @@ class SectionOrchestrator:
         section_dir = sections_dir / str(section_index)
         section_dir.mkdir(parents=True, exist_ok=True)
 
-        # Build initial result
-        result = SectionResult(
-            index=section_index,
-            video_path=None,
-            audio_path=None,
-            duration=section.get("duration_seconds", 30),
-            title=section.get("title", f"Section {section_index + 1}")
-        )
-
-        # Check for existing completed section
-        merged_path = sections_dir / f"merged_{section_index}.mp4"
-        final_section_path = section_dir / "final_section.mp4"
-
-        existing_video_path = None
-        if merged_path.exists():
-            existing_video_path = str(merged_path)
-        elif final_section_path.exists():
-            existing_video_path = str(final_section_path)
-
-        # Resume logic: skip if already completed
-        if resume and self.progress_tracker.is_section_complete(section_index) and existing_video_path:
-            logger.info(f"[Resume] Skipping section {section_index + 1}/{total_sections} (cached)", extra={
-                "section_index": section_index,
-                "total_sections": total_sections
-            })
-
-            result.video_path = existing_video_path
-            section_audio_path = section_dir / "section_audio.mp3"
-            if section_audio_path.exists():
-                result.audio_path = str(section_audio_path)
-
-            completed_count[0] += 1
-            self.progress_tracker.report_section_progress(
-                completed_count=completed_count[0],
-                total_count=total_sections,
-                is_cached=True
-            )
-            return result
-
-        # Process section
-        logger.info(f"[Parallel] Starting section {section_index + 1}/{total_sections}: {result.title}", extra={
+        section_id = section.get("id", f"section_{section_index}")
+        section_title = section.get("title", f"Section {section_index + 1}")
+        section_log_path = section_dir / "llm_calls.jsonl"
+        section_context = {
             "section_index": section_index,
-            "total_sections": total_sections,
-            "title": result.title
-        })
+            "section_id": section_id,
+            "title": section_title,
+            "job_id": job_id_var.get(),
+        }
+
+        set_llm_section_log(section_log_path, section_context)
 
         try:
+            # Build initial result
+            result = SectionResult(
+                index=section_index,
+                video_path=None,
+                audio_path=None,
+                duration=section.get("duration_seconds", 30),
+                title=section_title
+            )
+
+            # Check for existing completed section
+            merged_path = sections_dir / f"merged_{section_index}.mp4"
+            final_section_path = section_dir / "final_section.mp4"
+
+            existing_video_path = None
+            if merged_path.exists():
+                existing_video_path = str(merged_path)
+            elif final_section_path.exists():
+                existing_video_path = str(final_section_path)
+
+            # Resume logic: skip if already completed
+            if resume and self.progress_tracker.is_section_complete(section_index) and existing_video_path:
+                logger.info(f"[Resume] Skipping section {section_index + 1}/{total_sections} (cached)", extra={
+                    "section_index": section_index,
+                    "total_sections": total_sections
+                })
+
+                result.video_path = existing_video_path
+                section_audio_path = section_dir / "section_audio.mp3"
+                if section_audio_path.exists():
+                    result.audio_path = str(section_audio_path)
+
+                completed_count[0] += 1
+                self.progress_tracker.report_section_progress(
+                    completed_count=completed_count[0],
+                    total_count=total_sections,
+                    is_cached=True
+                )
+                return result
+
+            # Process section
+            logger.info(f"[Parallel] Starting section {section_index + 1}/{total_sections}: {result.title}", extra={
+                "section_index": section_index,
+                "total_sections": total_sections,
+                "title": result.title
+            })
+
             narration_segments = section.get("narration_segments", [])
 
             if not narration_segments:
@@ -286,6 +300,8 @@ class SectionOrchestrator:
                 result.video_path = subsection_results.get("video_path")
                 result.audio_path = subsection_results.get("audio_path")
                 result.duration = subsection_results.get("duration", 30)
+                if subsection_results.get("error"):
+                    result.error = subsection_results.get("error")
                 if subsection_results.get("manim_code_path"):
                     result.manim_code_path = subsection_results["manim_code_path"]
                     section["manim_code_path"] = subsection_results["manim_code_path"]
@@ -314,15 +330,21 @@ class SectionOrchestrator:
                 result.video_path = segment_result.get("video_path")
                 result.audio_path = segment_result.get("audio_path")
                 result.duration = segment_result.get("duration", 30)
+                if segment_result.get("error"):
+                    result.error = segment_result.get("error")
                 if segment_result.get("manim_code_path"):
                     result.manim_code_path = segment_result["manim_code_path"]
                     section["manim_code_path"] = segment_result["manim_code_path"]
                 if segment_result.get("manim_code"):
                     result.manim_code = segment_result["manim_code"]
 
-            # Mark as complete and report progress
-            self.progress_tracker.mark_section_complete(section_index)
-            completed_count[0] += 1
+            # Mark as complete/failed and report progress
+            if result.video_path and not result.error:
+                self.progress_tracker.mark_section_complete(section_index)
+                completed_count[0] += 1
+            else:
+                self.progress_tracker.mark_section_failed(section_index)
+
             self.progress_tracker.report_section_progress(
                 completed_count=completed_count[0],
                 total_count=total_sections,
@@ -344,7 +366,15 @@ class SectionOrchestrator:
                 "error": str(e)
             }, exc_info=True)
             result.error = str(e)
+            self.progress_tracker.mark_section_failed(section_index)
+            self.progress_tracker.report_section_progress(
+                completed_count=completed_count[0],
+                total_count=total_sections,
+                is_cached=False
+            )
             return result
+        finally:
+            clear_llm_section_log()
 
     def aggregate_results(
         self,

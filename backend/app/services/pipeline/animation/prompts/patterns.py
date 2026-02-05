@@ -250,8 +250,8 @@ COMMON_MISTAKES = '''
 
 6. **Missing imports** - Always start with `from manim import *`
 
-7. **Forgetting background** - Always set dark background
-   - [CORRECT] `self.camera.background_color = "#171717"`
+7. **Overriding theme background** - Do not set background manually
+   - [CORRECT] Leave background to theme enforcement
 
 8. **Animating lists** - `Animation` only works on Mobjects, not lists
    - [WRONG] `self.play(FadeOut(self.mobjects))` (Crash! list not Mobject)
@@ -395,6 +395,20 @@ DO NOT use: ease_in, ease_out, exponential, ease_in_expo (these don't exist)
 '''
 
 # =============================================================================
+# DIRECTION CONSTANTS
+# =============================================================================
+
+DIRECTION_CONSTANTS = '''
+## Direction Constants (USE ONLY THESE)
+
+- `UP`, `DOWN`, `LEFT`, `RIGHT`
+- `UL`, `UR`, `DL`, `DR`
+- `IN`, `OUT`, `ORIGIN`
+
+DO NOT use: `TOP`, `BOTTOM`, `UPPER`, `LOWER`
+'''
+
+# =============================================================================
 # FULL PATTERNS PROMPT INJECTION
 # =============================================================================
 
@@ -417,6 +431,8 @@ These are production-tested patterns. Use them as reference:
 {COMMON_MISTAKES}
 
 {AVAILABLE_RATE_FUNCS}
+
+{DIRECTION_CONSTANTS}
 """
 
 
@@ -433,8 +449,10 @@ def get_compact_patterns() -> str:
 
 {AVAILABLE_RATE_FUNCS}
 
+{DIRECTION_CONSTANTS}
+
 ### Key Patterns
-- Background: `self.camera.background_color = "#171717"`
+- Background: set by theme (do not override)
 - Counter: Use `ValueTracker` with `always_redraw` and `tracker.get_value()`
 - Axes: `Axes(x_range=[...], y_range=[...], axis_config={{"include_tip": True}})`
 - Network: Create nodes as `VGroup` of `Circle`, connections as `Line` objects

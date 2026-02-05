@@ -5,7 +5,8 @@ Translates raw events into actionable SpatialIssue objects.
 
 from typing import Any, List, Optional
 from .models import SpatialIssue
-from .constants import TEXT_TYPES
+from .constants import TEXT_TYPES, TEXT_SHAPE_LABEL_CONTAINMENT
+from .utils import is_connector_type_name
 
 
 class IssueReporter:
@@ -41,7 +42,10 @@ class IssueReporter:
             elif ev.event_type == "boundary":
                 fix = self._get_boundary_fix(ev.details)
                 msg = f"{ev.m1_name} out of bounds" + (" (PERSISTS)" if ev.persists_to_end else "") + f" - {ev.details}"
-                errors.append(SpatialIssue(ev.start_line, "error", msg, snippet, suggested_fix=fix, frame_id=frame_id))
+                if is_connector_type_name(ev.m1_type):
+                    warnings.append(SpatialIssue(ev.start_line, "warning", msg, snippet, suggested_fix=fix, frame_id=frame_id))
+                else:
+                    errors.append(SpatialIssue(ev.start_line, "error", msg, snippet, suggested_fix=fix, frame_id=frame_id))
             elif ev.event_type == "font_size":
                 warnings.append(SpatialIssue(
                     ev.start_line, "warning",
@@ -59,10 +63,12 @@ class IssueReporter:
 
     def _handle_overlap_event(self, ev: Any, snippet: str, errors: List[SpatialIssue], info: List[SpatialIssue], frame_id: Optional[str]) -> None:
         """Determines if an overlap is an error (collision) or info (intentional label)."""
+        snippet = self._sanitize_overlap_snippet(ev, snippet)
+        line_number = ev.start_line if snippet else 0
         if ev.m1_type in TEXT_TYPES and ev.m2_type in TEXT_TYPES:
             fix = "Separate with .shift(UP * 0.5) or use .next_to() positioning"
             errors.append(SpatialIssue(
-                ev.start_line, "error",
+                line_number, "error",
                 f"{ev.m1_name} overlaps {ev.m2_name} (text/text) - {ev.details}",
                 snippet, suggested_fix=fix, frame_id=frame_id
             ))
@@ -72,15 +78,15 @@ class IssueReporter:
                              (ev.m2_type in TEXT_TYPES and ev.m1_type in shape_types)
             
             if is_text_shape:
-                self._handle_text_shape_overlap(ev, snippet, errors, info, frame_id)
+                self._handle_text_shape_overlap(ev, snippet, errors, info, frame_id, line_number)
             else:
                 info.append(SpatialIssue(
-                    ev.start_line, "info",
+                    line_number, "info",
                     f"{ev.m1_name} overlaps {ev.m2_name} - {ev.details}",
                     snippet, suggested_fix="Consider using .shift() or .move_to() to separate objects", frame_id=frame_id
                 ))
 
-    def _handle_text_shape_overlap(self, ev: Any, snippet: str, errors: List[SpatialIssue], info: List[SpatialIssue], frame_id: Optional[str]) -> None:
+    def _handle_text_shape_overlap(self, ev: Any, snippet: str, errors: List[SpatialIssue], info: List[SpatialIssue], frame_id: Optional[str], line_number: int) -> None:
         """Special handling for text on shapes (potential labels)."""
         containment_ratio = 0.0
         if "[Containment: " in ev.details:
@@ -90,18 +96,27 @@ class IssueReporter:
             except (IndexError, ValueError):
                 pass
         
-        if containment_ratio > 0.9:
+        if containment_ratio >= TEXT_SHAPE_LABEL_CONTAINMENT:
             info.append(SpatialIssue(
-                ev.start_line, "info",
+                line_number, "info",
                 f"{ev.m1_name} overlaps {ev.m2_name} (label, {containment_ratio:.0%} contained) - {ev.details}",
                 snippet, suggested_fix="If unintentional, use .shift() to reposition", frame_id=frame_id
             ))
         else:
             errors.append(SpatialIssue(
-                ev.start_line, "error",
+                line_number, "error",
                 f"{ev.m1_name} overlaps {ev.m2_name} (crosses boundary, {containment_ratio:.0%} contained) - {ev.details}",
                 snippet, suggested_fix="Reposition text outside shape with .shift() or .next_to()", frame_id=frame_id
             ))
+
+    def _sanitize_overlap_snippet(self, ev: Any, snippet: str) -> str:
+        """Drop snippets that clearly don't reference the overlapping object types."""
+        if not snippet:
+            return ""
+        type_hints = {ev.m1_type, ev.m2_type}
+        if any(t and t in snippet for t in type_hints):
+            return snippet
+        return ""
 
     def _get_boundary_fix(self, details: str) -> str:
         """Provides direction-specific fix suggestions for boundary violations."""
