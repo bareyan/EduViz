@@ -10,7 +10,7 @@ from app.services.infrastructure.llm.prompting_engine.prompts.base import Prompt
 INITIAL_RETRY_NOTE = PromptTemplate(
     template="""CRITICAL: Keep response SHORT and FOCUSED:
 - analysis: max 2 sentences
-- edits: 1-2 edits maximum
+- edits: 1-10 edits
 - search_text: 5-10 lines context
 - replacement_text: only changed lines
 This prevents JSON truncation issues.""",

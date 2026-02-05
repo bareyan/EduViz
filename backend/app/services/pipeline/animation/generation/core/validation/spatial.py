@@ -5,6 +5,7 @@ Injects AST-based checks into Manim Scene code to enforce safety and spatial con
 import ast
 import textwrap
 import logging
+import copy
 from app.core import get_logger
 
 logger = get_logger(__name__, component="spatial_injector")
@@ -13,10 +14,6 @@ logger = get_logger(__name__, component="spatial_injector")
 # This method runs continuously via monkey-patching
 INJECTED_METHOD = """
 def _perform_spatial_checks(self):
-    \"\"\"
-    Injected safety check for visual constraints.
-    Raises specific exceptions if constraints are violated.
-    \"\"\"
     import sys
     
     # 1. SETUP: CHECK_INTERVAL
@@ -149,7 +146,7 @@ def _perform_spatial_checks(self):
                     try:
                         o_center = o.get_center()
                         o_pos = f"at ({o_center[0]:.1f}, {o_center[1]:.1f})"
-                        o_size = f"{o.width:.1f}×{o.height:.1f}"
+                        o_size = f"{o.width:.1f}x{o.height:.1f}"
                     except:
                         o_pos = "position unknown"
                         o_size = "size unknown"
@@ -173,17 +170,17 @@ def _perform_spatial_checks(self):
 
     # Report
     if spatial_errors:
-             unique_errors = sorted(list(set(spatial_errors)))
-             error_count = len(unique_errors)
-             # Format with line breaks for readability if multiple errors
-             if error_count == 1:
-                 joined_errors = unique_errors[0]
-             else:
-                 joined_errors = "\n  • " + "\n  • ".join(unique_errors)
-             # Truncate if too long
-             if len(joined_errors) > 800: 
-                 joined_errors = joined_errors[:800] + "\n  ..."
-             sys.exit(f"Spatial validation failed ({error_count} issues):{joined_errors}")
+        unique_errors = sorted(list(set(spatial_errors)))
+        error_count = len(unique_errors)
+        # Format with line breaks for readability if multiple errors
+        if error_count == 1:
+            joined_errors = unique_errors[0]
+        else:
+            joined_errors = "\n  - " + "\n  - ".join(unique_errors)
+        # Truncate if too long
+        if len(joined_errors) > 800:
+            joined_errors = joined_errors[:800] + "\n  ..."
+        sys.exit(f"Spatial validation failed ({error_count} issues):{joined_errors}")
 """
 
 INJECTED_SETUP = """
@@ -207,13 +204,35 @@ self.wait = _monitored_wait
 # ---------------------------------------------
 """
 
+_INJECTED_METHOD_NODE = None
+_INJECTED_SETUP_NODES = None
+
+try:
+    _method_tree = ast.parse(textwrap.dedent(INJECTED_METHOD))
+    if _method_tree.body and isinstance(_method_tree.body[0], ast.FunctionDef):
+        _INJECTED_METHOD_NODE = _method_tree.body[0]
+except SyntaxError as e:
+    logger.warning(f"Invalid injected method template: {e}")
+
+try:
+    _setup_tree = ast.parse(textwrap.dedent(INJECTED_SETUP))
+    _INJECTED_SETUP_NODES = _setup_tree.body
+except SyntaxError as e:
+    logger.warning(f"Invalid injected setup template: {e}")
+
 class SpatialCheckInjector:
     """
     Injects spatial checks into Manim code using AST.
     """
     def inject(self, code: str) -> str:
         try:
-            tree = ast.parse(code)
+            try:
+                tree = ast.parse(code)
+            except SyntaxError as e:
+                logger.warning(
+                    f"Skipping spatial checks due to syntax error in input code: {e}"
+                )
+                return code
             
             # Find the Scene class
             scene_class = None
@@ -235,9 +254,10 @@ class SpatialCheckInjector:
                     return code # No classes at all
 
             # 1. Add _perform_spatial_checks method to class
-            method_tree = ast.parse(textwrap.dedent(INJECTED_METHOD))
-            check_func = method_tree.body[0]
-            scene_class.body.append(check_func)
+            if _INJECTED_METHOD_NODE is None:
+                logger.warning("Skipping spatial checks: injected method template is invalid")
+                return code
+            scene_class.body.append(copy.deepcopy(_INJECTED_METHOD_NODE))
             
             # 2. Add setup logic to start of construct()
             construct_method = None
@@ -247,7 +267,9 @@ class SpatialCheckInjector:
                     break
                     
             if construct_method:
-                setup_tree = ast.parse(textwrap.dedent(INJECTED_SETUP))
+                if not _INJECTED_SETUP_NODES:
+                    logger.warning("Skipping spatial checks: injected setup template is invalid")
+                    return code
                 
                 # Insert at logical beginning (skipping docstring)
                 insert_idx = 0
@@ -258,7 +280,9 @@ class SpatialCheckInjector:
                     insert_idx = 1
                 
                 # Prepend setup statements
-                construct_method.body[insert_idx:insert_idx] = setup_tree.body
+                construct_method.body[insert_idx:insert_idx] = [
+                    copy.deepcopy(n) for n in _INJECTED_SETUP_NODES
+                ]
                 
                 # 3. Append call to End of construct (to catch static setup)
                 check_call = ast.Expr(

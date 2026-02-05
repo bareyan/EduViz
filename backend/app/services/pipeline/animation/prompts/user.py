@@ -49,6 +49,12 @@ Create a structured plan with:
 - Keep the scene visually stable; avoid clearing the whole scene unless narratively needed
 - Introduce new elements only when they support narration; avoid clutter
 - Make transitions explicit: add FadeOut/Transform steps when elements are no longer needed
+- **SPATIAL RELATIONSHIPS**: Define relative positioning to prevent overlaps:
+  - Use "relative_to" + "relation" fields to position objects relative to each other
+  - Examples: title "above" equation, note_box "right_of" diagram, label "below" graph
+  - "spacing" controls distance (0.3-1.0 recommended, larger for separation)
+  - First/anchor objects use "relative_to": null and absolute "position"
+  - This ensures implementation stage maintains proper spacing automatically
 
 ## CONSTRAINTS (STRICT)
 - Max 20 objects total
@@ -85,7 +91,10 @@ Return a single JSON object with this schema:
       "asset_path": "string",
       "appears_at": 0.0,
       "removed_at": 5.0,
-      "notes": "string"
+      "notes": "string",
+      "relative_to": "object_id|null",
+      "relation": "above|below|left_of|right_of|null",
+      "spacing": 0.5
     }}
   ],
   "segments": [
@@ -167,7 +176,10 @@ Return a single JSON object with this schema:
       "latex": "string",
       "asset_path": "string",
       "appears_at": 0.0,
-      "removed_at": 5.0
+      "removed_at": 5.0,
+      "relative_to": "object_id|null",
+      "relation": "above|below|left_of|right_of|null",
+      "spacing": 0.5
     }}
   ],
   "segments": [

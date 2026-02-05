@@ -9,7 +9,7 @@ Centralized configuration for animation generation constants and settings.
 # =============================================================================
 
 # Maximum iterations for surgical fixes
-MAX_SURGICAL_FIX_ATTEMPTS = 3
+MAX_SURGICAL_FIX_ATTEMPTS = 5
 
 # Timeout for correction requests (seconds)
 CORRECTION_TIMEOUT = 90  # 1.5 minutes

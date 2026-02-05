@@ -16,6 +16,7 @@ from ...config import (
     DURATION_PADDING_PERCENTAGE,
     THEME_SETUP_CODES
 )
+from .validation.timing import TimingValidator
 
 def get_theme_setup_code(style: str = "3b1b") -> str:
     """Returns the Manim setup code for a specific visual style.
@@ -80,6 +81,7 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
     ensures basic requirements are met:
     1. Theme setup is consistent
     2. Final duration padding is added if missing
+    3. TIMING IS VALIDATED AND ADJUSTED TO MATCH AUDIO
     """
     # Fix any translated common issues
     code = fix_translated_code(code)
@@ -104,21 +106,9 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
                 
             code = code[:insertion_point] + "\n" + indent + theme_setup.strip() + "\n" + code[insertion_point:]
 
-    # Add final padding wait if it seems missing
-    # We look for self.wait( at the end of the file
-    if "self.wait(" not in code[-200:]:
-        padding_wait = max(MIN_DURATION_PADDING, duration * DURATION_PADDING_PERCENTAGE)
-        # Find indentation of the last line to match it
-        lines = code.strip().split("\n")
-        last_indent = ""
-        for line in reversed(lines):
-            if line.strip():
-                last_indent = re.match(r"^\s*", line).group(0)
-                break
-        if not last_indent:
-            last_indent = " " * CONSTRUCT_INDENT_SPACES
-            
-        code = code.strip() + f"\n\n{last_indent}# Final padding to ensure video >= audio duration\n{last_indent}self.wait({padding_wait:.1f})\n"
+    # CRITICAL: Validate and adjust timing to match audio duration
+    timing_validator = TimingValidator()
+    code = timing_validator.validate_and_fix(code, duration)
 
     return code
 

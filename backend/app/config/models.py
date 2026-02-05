@@ -113,7 +113,7 @@ class PipelineModels:
     # Step 5: Animation Pipeline (New)
     # Stage 5.1: Choreography Planning
     animation_choreography: ModelConfig = field(default_factory=lambda: ModelConfig(
-        model_name="gemini-2.5-flash",
+        model_name="gemini-3-pro-preview",
         thinking_level=ThinkingLevel.HIGH,
         description="Plan visual movements and timing"
     ))

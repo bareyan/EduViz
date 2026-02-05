@@ -13,7 +13,11 @@ from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig
 
 from ...config import BASE_GENERATION_TEMPERATURE
-from ...prompts import CHOREOGRAPHER_SYSTEM, CHOREOGRAPHY_USER
+from ...prompts import (
+    CHOREOGRAPHER_SYSTEM,
+    CHOREOGRAPHY_USER,
+    CHOREOGRAPHY_SCHEMA
+)
 from ..core import ChoreographyError
 
 
@@ -63,7 +67,8 @@ class Choreographer:
             config=PromptConfig(
                 enable_thinking=True,
                 timeout=300.0,
-                temperature=BASE_GENERATION_TEMPERATURE
+                temperature=BASE_GENERATION_TEMPERATURE,
+                response_schema=CHOREOGRAPHY_SCHEMA
             ),
             context=dict(context or {}, stage="choreography")
         )

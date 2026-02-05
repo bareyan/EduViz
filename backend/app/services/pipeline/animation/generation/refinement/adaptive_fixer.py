@@ -23,7 +23,7 @@ from ...config import (
     MAX_REFINEMENT_OUTPUT_TOKENS,
 )
 from ...prompts import FIXER_SYSTEM
-from ...prompts.structured_edit_schema import CODE_EDIT_SCHEMA
+from ...prompts import CODE_EDIT_SCHEMA
 from .edit_applier import apply_edits_atomically
 from .strategies import StrategySelector
 from .context import FixerContextManager

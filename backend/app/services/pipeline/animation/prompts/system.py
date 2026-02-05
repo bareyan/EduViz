@@ -151,8 +151,6 @@ EDIT RULES
 ────────────────────────
 
 - Return ONLY JSON
-- Max 2 edits
-- Prefer 1 edit
 - search_text MUST appear verbatim
 - Replace only necessary lines
 - Do NOT change formatting or unrelated code
