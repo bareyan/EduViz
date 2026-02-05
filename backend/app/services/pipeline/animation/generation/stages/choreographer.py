@@ -12,7 +12,7 @@ from typing import Dict, Any, Optional
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig
 
-from ...config import BASE_GENERATION_TEMPERATURE
+from ...config import BASE_GENERATION_TEMPERATURE, CHOREOGRAPHY_MAX_OUTPUT_TOKENS
 from ...prompts import (
     CHOREOGRAPHER_SYSTEM,
     CHOREOGRAPHY_USER,
@@ -68,7 +68,8 @@ class Choreographer:
                 enable_thinking=True,
                 timeout=300.0,
                 temperature=BASE_GENERATION_TEMPERATURE,
-                response_schema=CHOREOGRAPHY_SCHEMA
+                response_schema=CHOREOGRAPHY_SCHEMA,
+                max_output_tokens=CHOREOGRAPHY_MAX_OUTPUT_TOKENS
             ),
             context=dict(context or {}, stage="choreography")
         )

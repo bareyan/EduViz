@@ -11,7 +11,7 @@ from typing import Dict, Any, Optional
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig
 
-from ...config import BASE_GENERATION_TEMPERATURE
+from ...config import BASE_GENERATION_TEMPERATURE, IMPLEMENTATION_MAX_OUTPUT_TOKENS
 from ...prompts import IMPLEMENTER_SYSTEM, FULL_IMPLEMENTATION_USER
 from ..core import clean_code, ImplementationError
 from ..formatters import CodeFormatter
@@ -65,7 +65,8 @@ class Implementer:
         config = PromptConfig(
             enable_thinking=True,
             timeout=300.0,
-            temperature=temperature or BASE_GENERATION_TEMPERATURE
+            temperature=temperature or BASE_GENERATION_TEMPERATURE,
+            max_output_tokens=IMPLEMENTATION_MAX_OUTPUT_TOKENS
         )
         
         result = await self.engine.generate(
