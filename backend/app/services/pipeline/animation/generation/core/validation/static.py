@@ -12,22 +12,49 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from app.core import get_logger
+from .models import IssueCategory, IssueConfidence, IssueSeverity, ValidationIssue
 
 logger = get_logger(__name__, component="static_validator")
 
+
 @dataclass
 class ValidationResult:
-    """Outcome of a static validation run."""
-    valid: bool
-    errors: List[str] = field(default_factory=list)
+    """Outcome of a validation run.
+
+    Uses only structured ``ValidationIssue`` objects.
+    ``valid`` is False when any CRITICAL issue exists.
+    """
+
+    valid: bool = True
+    issues: List[ValidationIssue] = field(default_factory=list)
     raw_data: Dict[str, Any] = field(default_factory=dict)
 
-    def add_error(self, tool: str, message: str, line: Optional[int] = None):
-        """Helper to format error messages consistently."""
-        prefix = f"[{tool}]"
-        location = f" (Line {line})" if line else ""
-        self.errors.append(f"{prefix} {message}{location}")
-        self.valid = False
+    def add_issue(self, issue: ValidationIssue) -> None:
+        """Add a structured ValidationIssue."""
+        self.issues.append(issue)
+        if issue.severity == IssueSeverity.CRITICAL:
+            self.valid = False
+
+    @property
+    def critical_issues(self) -> List[ValidationIssue]:
+        """All CRITICAL-severity issues."""
+        return [i for i in self.issues if i.severity == IssueSeverity.CRITICAL]
+
+    @property
+    def spatial_issues(self) -> List[ValidationIssue]:
+        """All spatial/visual issues."""
+        return [i for i in self.issues if i.is_spatial]
+
+    @property
+    def non_spatial_issues(self) -> List[ValidationIssue]:
+        """All non-spatial issues (syntax, runtime, security, lint)."""
+        return [i for i in self.issues if not i.is_spatial]
+
+    def error_summary(self) -> str:
+        """Human-readable summary of all issues for LLM context."""
+        if not self.issues:
+            return ""
+        return "\n".join(issue.to_fixer_context() for issue in self.issues)
 
 class StaticValidator:
     """
@@ -94,18 +121,41 @@ class StaticValidator:
                         
                         for name in names:
                             if name.split('.')[0] in ['os', 'subprocess', 'sys', 'shutil']:
-                                result.add_error("Security", f"Forbidden import: {name}", line=node.lineno)
+                                result.add_issue(ValidationIssue(
+                                    severity=IssueSeverity.CRITICAL,
+                                    confidence=IssueConfidence.HIGH,
+                                    category=IssueCategory.SECURITY,
+                                    message=f"Forbidden import: {name}",
+                                    line=node.lineno,
+                                ))
                     
                     # Check builtins
                     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
                         if node.func.id in ['exec', 'eval', 'open', '__import__']:
-                            result.add_error("Security", f"Forbidden builtin: {node.func.id}", line=node.lineno)
+                            result.add_issue(ValidationIssue(
+                                severity=IssueSeverity.CRITICAL,
+                                confidence=IssueConfidence.HIGH,
+                                category=IssueCategory.SECURITY,
+                                message=f"Forbidden builtin: {node.func.id}",
+                                line=node.lineno,
+                            ))
 
             except SyntaxError as e:
-                result.add_error("Syntax", f"{e.msg}", line=e.lineno)
+                result.add_issue(ValidationIssue(
+                    severity=IssueSeverity.CRITICAL,
+                    confidence=IssueConfidence.HIGH,
+                    category=IssueCategory.SYNTAX,
+                    message=f"{e.msg}",
+                    line=e.lineno,
+                ))
                 return result # Stop here if syntax is bad
             except Exception as e:
-                result.add_error("System", f"AST analysis failed: {e}")
+                result.add_issue(ValidationIssue(
+                    severity=IssueSeverity.CRITICAL,
+                    confidence=IssueConfidence.HIGH,
+                    category=IssueCategory.SYSTEM,
+                    message=f"AST analysis failed: {e}",
+                ))
 
             # 2. Run Ruff for critical errors
             if self.ruff_available:
@@ -114,11 +164,16 @@ class StaticValidator:
                 # Process Ruff Results
                 if ruff_res:
                     for check in ruff_res:
-                        # Ruff JSON schema: { "code": "F401", "message": "...", "location": {"row": 1, ...} }
                         msg = check.get("message", "Unknown error")
                         code_id = check.get("code", "UNK")
                         row = check.get("location", {}).get("row")
-                        result.add_error("Ruff", f"{code_id}: {msg}", line=row)
+                        result.add_issue(ValidationIssue(
+                            severity=IssueSeverity.CRITICAL,
+                            confidence=IssueConfidence.HIGH,
+                            category=IssueCategory.LINT,
+                            message=f"{code_id}: {msg}",
+                            line=row,
+                        ))
                     
                 result.raw_data = {"ruff": ruff_res}
             
@@ -126,7 +181,12 @@ class StaticValidator:
 
         except Exception as e:
             logger.error(f"Validation failed with internal error: {e}")
-            result.add_error("System", f"Internal validation error: {str(e)}")
+            result.add_issue(ValidationIssue(
+                severity=IssueSeverity.CRITICAL,
+                confidence=IssueConfidence.HIGH,
+                category=IssueCategory.SYSTEM,
+                message=f"Internal validation error: {str(e)}",
+            ))
             return result
             
         finally:

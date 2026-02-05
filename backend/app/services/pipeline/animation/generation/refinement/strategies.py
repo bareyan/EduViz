@@ -98,6 +98,13 @@ class StrategySelector:
         
         if "runtime" in error_lower or "exception" in error_lower:
             return self.strategies["runtime_error"]
+
+        # Check for spatial issues
+        if any(term in errors for term in [
+            "Spatial", "out of bounds", "overlap", "covers text",
+            "text_overlap", "out_of_bounds", "occlusion",
+        ]):
+            return self.strategies["spatial_error"]
         
         # Check for Manim-specific keywords
         if any(term in errors for term in [

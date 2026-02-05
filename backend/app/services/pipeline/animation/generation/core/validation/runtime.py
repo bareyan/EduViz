@@ -1,8 +1,14 @@
 """
 Runtime Validator - Executes Manim code in dry-run mode to catch runtime errors.
+
+Responsibilities:
+- Execute Manim dry-run with optional spatial check injection
+- Parse both standard Python tracebacks and structured spatial JSON
+- Convert structured spatial output into typed ValidationIssue objects
 """
 
 import asyncio
+import json
 import os
 import re
 import sys
@@ -10,10 +16,35 @@ import subprocess
 import tempfile
 import shutil
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from app.core import get_logger
+from .models import (
+    IssueCategory,
+    IssueConfidence,
+    IssueSeverity,
+    ValidationIssue,
+)
+from .spatial import SPATIAL_JSON_MARKER
 from .static import ValidationResult
+
+# Category map for the spatial JSON parser
+_CATEGORY_MAP = {
+    "out_of_bounds": IssueCategory.OUT_OF_BOUNDS,
+    "text_overlap": IssueCategory.TEXT_OVERLAP,
+    "object_occlusion": IssueCategory.OBJECT_OCCLUSION,
+    "visibility": IssueCategory.VISIBILITY,
+}
+_SEVERITY_MAP = {
+    "critical": IssueSeverity.CRITICAL,
+    "warning": IssueSeverity.WARNING,
+    "info": IssueSeverity.INFO,
+}
+_CONFIDENCE_MAP = {
+    "high": IssueConfidence.HIGH,
+    "medium": IssueConfidence.MEDIUM,
+    "low": IssueConfidence.LOW,
+}
 
 logger = get_logger(__name__, component="runtime_validator")
 
@@ -92,16 +123,38 @@ class RuntimeValidator:
             )
             
             if result_proc.returncode != 0:
-                error_msg = self._parse_manim_error(result_proc.stderr)
-                result.add_error("Runtime", error_msg)
+                # Check for structured spatial JSON first
+                spatial_issues = self._parse_spatial_json(result_proc.stderr)
+                if spatial_issues:
+                    for issue in spatial_issues:
+                        result.add_issue(issue)
+                else:
+                    error_msg, error_line = self._parse_manim_error(result_proc.stderr)
+                    result.add_issue(ValidationIssue(
+                        severity=IssueSeverity.CRITICAL,
+                        confidence=IssueConfidence.HIGH,
+                        category=IssueCategory.RUNTIME,
+                        message=error_msg,
+                        line=error_line,
+                    ))
                 
         except subprocess.TimeoutExpired:
-            result.add_error("Runtime", "Execution timed out after 180s - check for large loops (e.g., for _ in range(1000)) or complex operations")
+            result.add_issue(ValidationIssue(
+                severity=IssueSeverity.CRITICAL,
+                confidence=IssueConfidence.HIGH,
+                category=IssueCategory.RUNTIME,
+                message="Execution timed out after 180s - check for large loops or complex operations",
+            ))
             return result
                 
         except Exception as e:
             logger.error(f"Runtime validation failed: {e}")
-            result.add_error("System", f"Internal validation error: {str(e)}")
+            result.add_issue(ValidationIssue(
+                severity=IssueSeverity.CRITICAL,
+                confidence=IssueConfidence.HIGH,
+                category=IssueCategory.SYSTEM,
+                message=f"Internal validation error: {str(e)}",
+            ))
             
         finally:
             # Cleanup source file
@@ -120,54 +173,96 @@ class RuntimeValidator:
                     
         return result
 
-    def _parse_manim_error(self, stderr: str) -> str:
-        """Extracts the meaningful error message from Manim traceback."""
-        # Manim tracebacks are standard Python tracebacks.
-        # We want the exception type + message and the context around it.
-        
+    def _parse_spatial_json(self, stderr: str) -> List[ValidationIssue]:
+        """Extract structured spatial issues from stderr.
+
+        The injected spatial validator outputs a JSON payload prefixed with
+        SPATIAL_ISSUES_JSON: when critical issues are found.  This method
+        parses that payload into typed ValidationIssue objects.
+
+        Returns:
+            List of ValidationIssue objects, or empty list if no marker found.
+        """
+        marker_pos = stderr.find(SPATIAL_JSON_MARKER)
+        if marker_pos == -1:
+            return []
+
+        json_str = stderr[marker_pos + len(SPATIAL_JSON_MARKER):].strip()
+        # The JSON may be followed by additional stderr lines; take first line
+        first_newline = json_str.find("\n")
+        if first_newline != -1:
+            json_str = json_str[:first_newline]
+
+        try:
+            raw_issues = json.loads(json_str)
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning(f"Failed to parse spatial JSON: {exc}")
+            return []
+
+        if not isinstance(raw_issues, list):
+            return []
+
+        issues: List[ValidationIssue] = []
+        for raw in raw_issues:
+            try:
+                issues.append(self._raw_to_validation_issue(raw))
+            except (KeyError, ValueError) as exc:
+                logger.debug(f"Skipping malformed spatial issue: {exc}")
+        return issues
+
+    @staticmethod
+    def _raw_to_validation_issue(raw: dict) -> ValidationIssue:
+        """Convert a raw dict from the injected code into a ValidationIssue."""
+        return ValidationIssue(
+            severity=_SEVERITY_MAP[raw["severity"]],
+            confidence=_CONFIDENCE_MAP[raw["confidence"]],
+            category=_CATEGORY_MAP[raw["category"]],
+            message=raw["message"],
+            auto_fixable=raw.get("auto_fixable", False),
+            fix_hint=raw.get("fix_hint"),
+            details=raw.get("details", {}),
+        )
+
+    def _parse_manim_error(self, stderr: str) -> tuple[str, Optional[int]]:
+        """Extract the meaningful error message and line from Manim traceback.
+
+        Returns:
+            Tuple of (error_message, line_number_or_None).
+        """
         lines = stderr.splitlines()
         if not lines:
-            return "Unknown runtime error (no stderr output)"
-        
-        # Also log the full stderr for debugging - do this first
+            return "Unknown runtime error (no stderr output)", None
+
         logger.debug(f"Full Manim stderr (first 2000 chars):\n{stderr[:2000]}")
-        
-        # Strategy 1: Look for standard Python exception pattern: "ExceptionType: message"
+
+        # Strategy 1: Standard Python exception pattern
         exception_line = None
         for line in reversed(lines):
             stripped = line.strip()
-            # Look for lines with exception pattern (colon after word)
             if re.match(r'^[A-Z][a-zA-Z]*Error:', stripped) or re.match(r'^[A-Z][a-zA-Z]*:', stripped):
                 exception_line = stripped
-                logger.debug(f"Found exception line via pattern: {exception_line}")
                 break
-        
-        # Strategy 2: If no exception pattern found, look for last meaningful non-empty line
+
+        # Strategy 2: Last meaningful non-empty line
         if not exception_line:
             for line in reversed(lines):
                 stripped = line.strip()
                 if stripped and not stripped.startswith('During handling of'):
                     exception_line = stripped
-                    logger.debug(f"Found fallback line (last meaningful): {exception_line}")
                     break
-        
+
         if not exception_line:
             exception_line = "Unknown error"
-        
-        # Look for the file reference in the traceback to get line number
-        # File "...", line X, in construct
-        line_num = None
+
+        # Extract line number from traceback
+        line_num: Optional[int] = None
         for line in reversed(lines):
             match = re.search(r'File ".*\.py", line (\d+),', line)
             if match:
-                line_num = match.group(1)
+                line_num = int(match.group(1))
                 break
-        
-        # Truncate if too long but preserve the key info
-        # Most exceptions are short, but we allow up to 300 chars for detailed messages
+
         if len(exception_line) > 300:
             exception_line = exception_line[:300] + "..."
-        
-        prefix = f" (Line {line_num})" if line_num else ""
-        
-        return f"{exception_line}{prefix}"
+
+        return exception_line, line_num

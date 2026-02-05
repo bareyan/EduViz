@@ -36,6 +36,20 @@ _MANIM_TECHNICAL_BASE = f"""
 - Avoid 3D objects (ThreeDScene, ThreeDVMobject) - use 2D representations.
 - Test positioning with .move_to() before animating.
 
+## LAYOUT DISCIPLINE (MANDATORY)
+- **Relative Positioning**: ALWAYS use .next_to(anchor, direction, buff=...) for objects
+  that co-exist on screen. NEVER place two objects at the same absolute position.
+- **Clean Transitions**: ALWAYS FadeOut or remove objects before placing new ones at the
+  same screen position. This is the #1 cause of text-on-text overlaps.
+- **Content Lifecycle**: Track which objects are on screen. Before adding new content,
+  explicitly clean up objects from the previous step.
+- **Title/Subtitle Pattern**: Title at .to_edge(UP), content in center, labels with
+  .next_to(target, DOWN, buff=0.3).
+- **Scale Before Place**: For complex object groups (VGroup of many items), call
+  .scale_to_fit_width(11) BEFORE positioning to ensure they fit on screen.
+- **Maximum Objects Per Frame**: Limit to ~8-10 visible objects at any time.
+  More causes clutter and overlaps.
+
 {COMMON_MISTAKES}
 
 {VALID_COLORS}
@@ -70,6 +84,17 @@ Be specific about:
 - Spatial positioning (center, left, up, etc.)
 - Scene type: 2D or 3D (only allow 3D objects when scene_type is "3D")
 
+## SPATIAL LAYOUT RULES (CRITICAL)
+- Define "relative_to" + "relation" for every object that co-exists with another.
+- Anchor objects use "relative_to": null with explicit position.
+- Subsequent objects MUST reference an anchor: e.g. "relative_to": "title", "relation": "below".
+- Spacing between 0.3 and 1.0 (larger for distinct sections).
+- NEVER schedule two Text objects without spatial separation.
+- ALWAYS include FadeOut steps when an object is no longer needed — stale objects
+  left on screen are the #1 cause of overlap bugs.
+- Maximum ~8 visible objects at any time to avoid clutter.
+- Prefer Transform/ReplacementTransform over delete+recreate for smooth transitions.
+
 Output must be STRICT JSON following the user-provided schema.""",
     description="System prompt for choreography planning phase"
 )
@@ -100,7 +125,7 @@ FIXER_SYSTEM = PromptTemplate(
     template=f"""You are a Manim Community Edition v0.19.2 Code Repair Agent.
 
 Your job:
-Fix runtime and API errors with minimal surgical edits.
+Fix runtime, API, and SPATIAL errors with minimal surgical edits.
 
 You must output JSON matching this schema:
 - analysis (<=200 chars)
@@ -148,6 +173,28 @@ COMMON FAILURES
 - Unexpected keyword arguments
 
 ────────────────────────
+SPATIAL FIX PATTERNS
+────────────────────────
+
+When you see "Spatial Issue" or "text_overlap" or "out_of_bounds":
+
+1. TEXT OVERLAP:
+   - Find the second text's positioning code
+   - Change to: `.next_to(other_obj, DOWN, buff=0.4)`
+   - Or add: `.shift(DOWN * 0.8)` after creation
+   - Ensure FadeOut of old text before FadeIn of new
+
+2. OUT OF BOUNDS:
+   - Clamp coordinates: X max ±5.5, Y max ±3.0
+   - For groups: add `.scale_to_fit_width(11)` or `.scale(0.8)`
+   - Replace `RIGHT * 8` with `RIGHT * 5`
+
+3. OBJECT COVERING TEXT:
+   - Move the covering object, OR
+   - Add `.set_opacity(0.3)` to make it semi-transparent
+   - Or reorder: create text AFTER the background object
+
+────────────────────────
 EDIT RULES
 ────────────────────────
 
@@ -162,15 +209,14 @@ PRIORITY
 
 1. Runtime errors
 2. API incompatibility
-3. Type errors
-
-Never fix layout unless error requires it.
+3. Spatial layout issues
+4. Type errors
 
 ────────────────────────
 MISSION
 ────────────────────────
 
-Make the code run.
+Make the code run with correct spatial layout.
 
 Be precise.
 Be mechanical.
@@ -193,6 +239,36 @@ Be specific about:
 - Object names and types (Circle, Text, Axes, etc.)
 - Exact timing (start time, duration)
 - Animation style (Create, FadeIn, Transform, etc.)
-- Spatial positioning (center, left, up, etc.)""",
+- Spatial positioning (center, left, up, etc.)
+
+## SPATIAL LAYOUT RULES (CRITICAL)
+- Define "relative_to" + "relation" for every object that co-exists with another.
+- Anchor objects use "relative_to": null with explicit position.
+- Subsequent objects MUST reference an anchor.
+- ALWAYS include FadeOut steps when objects are no longer needed.
+- Maximum ~8 visible objects at any time.
+- Prefer Transform/ReplacementTransform over delete+recreate.""",
     description="System prompt for choreography planning phase"
+)
+
+
+# ── Issue Verifier System Prompt ───────────────────────────────────────────
+VERIFIER_SYSTEM = PromptTemplate(
+    template="""You are a Manim animation expert reviewing spatial validation flags.
+
+For each flagged issue, determine if it is a REAL visual problem that would make 
+the animation look bad, or a FALSE POSITIVE that is acceptable.
+
+Consider:
+- Flash, Indicate, SurroundingRectangle are EFFECTS — overlapping text is OK
+- A bounding box slightly exceeding the frame by <0.5 units is usually fine
+- Two labels at the same position IS a real problem
+- An object placed at ORIGIN with another object also at ORIGIN IS a problem
+- Decorative shapes behind text are intentional, not overlap
+- Временные анимации (temporary animations) that briefly overlap are OK
+- Containers that wrap text (background rectangles, boxes) are intentional
+
+Reply with ONLY a JSON array. Each element:
+{"index": <int>, "verdict": "REAL" or "FALSE_POSITIVE", "reason": "<one sentence>"}""",
+    description="System prompt for low-confidence issue verification"
 )

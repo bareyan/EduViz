@@ -100,5 +100,24 @@ STRATEGY_CONFIGS: Dict[str, FixStrategyConfig] = {
             "Check recent changes if in iteration"
         ],
         focus_areas=["Error line context", "Minimal edits", "Logic verification"]
-    )
+    ),
+
+    "spatial_error": FixStrategyConfig(
+        name="spatial_error",
+        description="Fix spatial layout issues (overlaps, out-of-bounds)",
+        hints=[
+            "Use .next_to(other_obj, direction, buff=0.3) for relative positioning",
+            "Use .shift(direction * amount) to move objects apart",
+            "Scale with .scale(0.8) or .scale_to_fit_width(11) if too large",
+            "Safe zone: X in [-5.5, 5.5], Y in [-3.0, 3.0]",
+            "Always FadeOut old objects before placing new ones at the same position",
+            "Use .move_to(ORIGIN) then .shift() for precise placement",
+        ],
+        focus_areas=[
+            "Object positioning calls (.move_to, .shift, .next_to, .to_edge)",
+            "Object creation with coordinates",
+            "FadeOut before replacement",
+            "Scale adjustments for large groups",
+        ]
+    ),
 }

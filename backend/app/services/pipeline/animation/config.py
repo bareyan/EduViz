@@ -95,6 +95,18 @@ CONSTRUCT_INDENT_SPACES = 8
 # Master switch to enable/disable refinement cycle validation
 ENABLE_REFINEMENT_CYCLE = True
 
+# Spatial validation frame limits (Manim coordinate units)
+SCREEN_X_LIMIT = 7.1  # Absolute max X coordinate before flagging
+SCREEN_Y_LIMIT = 4.0  # Absolute max Y coordinate before flagging
+SAFE_X_LIMIT = 5.5  # Recommended safe X for deterministic clamping
+SAFE_Y_LIMIT = 3.0  # Recommended safe Y for deterministic clamping
+
+# Issue verification settings
+VERIFICATION_BATCH_SIZE = 5  # Max uncertain issues per LLM verification call
+VERIFICATION_TEMPERATURE = 0.4  # Low temp for consistent verdicts
+VERIFICATION_TIMEOUT = 30.0  # Seconds per verification batch
+VERIFICATION_MAX_RETRIES = 1  # Don't waste tokens retrying
+
 # Theme setup code blocks for code injection
 THEME_SETUP_CODES = {
     "light": '        self.camera.background_color = "#FFFFFF"\n',

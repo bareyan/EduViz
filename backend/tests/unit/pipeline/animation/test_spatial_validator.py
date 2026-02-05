@@ -3,6 +3,7 @@ Unit Tests for Spatial Validation (via Runtime Injection)
 """
 import pytest
 from app.services.pipeline.animation.generation.core.validation.runtime import RuntimeValidator
+from app.services.pipeline.animation.generation.core.validation.models import IssueCategory
 
 # Sample valid spatial code
 VALID_SPATIAL_CODE = """
@@ -44,29 +45,31 @@ class TestSpatialValidator:
         validator = RuntimeValidator()
         result = await validator.validate(VALID_SPATIAL_CODE, enable_spatial_checks=True)
         assert result.valid
-        assert not result.errors
+        assert not result.issues
 
     async def test_spatial_out_of_bounds(self):
         validator = RuntimeValidator()
         result = await validator.validate(OUT_OF_BOUNDS_CODE, enable_spatial_checks=True)
         assert not result.valid
-        # We expect "Spatial Error" and "out of bounds"
-        assert any("Spatial Error" in e and "out of bounds" in e for e in result.errors)
+        assert any(
+            i.category == IssueCategory.OUT_OF_BOUNDS and "out of bounds" in i.message.lower()
+            for i in result.issues
+        )
 
     async def test_spatial_text_overlap(self):
         validator = RuntimeValidator()
         result = await validator.validate(TEXT_OVERLAP_CODE, enable_spatial_checks=True)
         assert not result.valid
-        # We expect "Spatial Error" and "Text overlap"
-        assert any("Spatial Error" in e and "Text overlap" in e for e in result.errors)
+        assert any(
+            i.category == IssueCategory.TEXT_OVERLAP and "overlap" in i.message.lower()
+            for i in result.issues
+        )
 
     async def test_spatial_edge_case_vgroup(self):
-        # Edge case: VGroup where content is strictly out of bounds
         code = """
 from manim import *
 class TestScene(Scene):
     def construct(self):
-        # Center is at 6.0 (safe), but radius is 2.0 -> Right edge at 8.0 (FAIL)
         c = Circle(radius=2.0).move_to(RIGHT * 6.0)
         g = VGroup(c)
         self.add(g)
@@ -74,21 +77,23 @@ class TestScene(Scene):
         validator = RuntimeValidator()
         result = await validator.validate(code, enable_spatial_checks=True)
         assert not result.valid
-        assert any("out of bounds" in e for e in result.errors)
+        assert any(
+            i.category == IssueCategory.OUT_OF_BOUNDS
+            for i in result.issues
+        )
 
     async def test_spatial_exact_boundary(self):
-        # Edge case: Object exactly at limit (should fail if center + extent > limit)
-        # Limit 7.1. Center 7.0. Width 0.2 -> Right edge 7.1. (PASS)
-        # Center 7.01. Width 0.2 -> Right edge 7.11 (FAIL)
         code = """
 from manim import *
 class TestScene(Scene):
     def construct(self):
-        # Center 7.05, Radius 0.1 -> Edge 7.15 (Limit 7.1)
         c = Circle(radius=0.1).move_to(RIGHT * 7.05)
         self.add(c)
 """
         validator = RuntimeValidator()
         result = await validator.validate(code, enable_spatial_checks=True)
         assert not result.valid
-        assert any("out of bounds" in e for e in result.errors)
+        assert any(
+            i.category == IssueCategory.OUT_OF_BOUNDS
+            for i in result.issues
+        )

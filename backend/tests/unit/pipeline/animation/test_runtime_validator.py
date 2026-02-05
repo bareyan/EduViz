@@ -3,6 +3,7 @@ Unit Tests for RuntimeValidator
 """
 import pytest
 from app.services.pipeline.animation.generation.core.validation.runtime import RuntimeValidator
+from app.services.pipeline.animation.generation.core.validation.models import IssueCategory
 
 # Sample valid code
 VALID_CODE = """
@@ -41,17 +42,18 @@ class TestRuntimeValidator:
         validator = RuntimeValidator()
         result = await validator.validate(VALID_CODE)
         assert result.valid
-        assert not result.errors
+        assert not result.issues
 
     async def test_runtime_crash_division(self):
         validator = RuntimeValidator()
         result = await validator.validate(RUNTIME_CRASH_CODE)
         assert not result.valid
-        assert any("ZeroDivisionError" in e for e in result.errors)
+        assert any(
+            i.category == IssueCategory.RUNTIME and "ZeroDivisionError" in i.message
+            for i in result.issues
+        )
 
     async def test_manim_logic_error(self):
-        # Note: Depending on Manim version, Text(123) might work (str conv) or fail.
-        # Let's use something definitely wrong, like a non-existent method
         bad_code = """
 from manim import *
 class TestScene(Scene):
@@ -62,20 +64,23 @@ class TestScene(Scene):
         validator = RuntimeValidator()
         result = await validator.validate(bad_code)
         assert not result.valid
-        assert any("AttributeError" in e for e in result.errors)
+        assert any(
+            i.category == IssueCategory.RUNTIME and "AttributeError" in i.message
+            for i in result.issues
+        )
 
     async def test_latex_error(self):
-        # Edge case: Invalid LaTeX usually causes a RuntimeError in Manim
         bad_code = r"""
 from manim import *
 class TestScene(Scene):
     def construct(self):
-        # Invalid LaTeX command should fail compilation
         t = MathTex(r"\badcommand") 
         self.add(t)
 """
         validator = RuntimeValidator()
         result = await validator.validate(bad_code)
         assert not result.valid
-        # Manim usually reports LaTeX errors as Exception/RuntimeError
-        assert any("latex" in e.lower() or "error" in e.lower() for e in result.errors)
+        assert any(
+            "latex" in i.message.lower() or "error" in i.message.lower()
+            for i in result.issues
+        )

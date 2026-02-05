@@ -187,61 +187,8 @@ class AdaptiveFixerAgent:
             if edit_summary["successful"] == 0:
                 failure_reason = edit_summary.get("primary_failure_reason", "no_edits_applied")
                 logger.warning(f"⚠️ Edits failed to apply: {failure_reason}")
-                
-                # Critical: We must tell the LLM that its edits failed in the NEXT user prompt
-                # But for now, we just loop around. The next 'errors' argument passed to this function
-                # won't catch this execution error unless we return. 
-                # Wait, `run_turn` is ONE validation cycle.
-                # If we fail to apply edits, we can't really validate.
-                # We should probably retry *within* the agent if application fails?
-                # For now, adhering to the previous interface: if application fails, we loop.
-                # But we need to update `errors` to reflect the application failure? 
-                # The prompt builder takes `errors`. 
-                # A simple hack: Append application failure to errors for next turn?
-                # Actually, strictly, `run_turn` returns `new_code`. The Caller (Refiner) validates it.
-                # If we return successfully applied edits, the Refiner will validate.
-                
-                # If application FAILED, we haven't fixed anything. We should probably RETRY with the LLM
-                # saying "Hey, your edits didn't apply because X".
-                # But the current architecture separates "Fixer Turn" from "Validation".
-                # `run_turn` implies ONE generic attempt?
-                # No, `Refiner` calls `run_turn` once per validation failure.
-                # INSIDE `run_turn`, we have `max_turn_retries`.
-                
-                # So if edits FAIL to apply, we loop internally.
-                # We need to update `errors` to be the Application Error.
                 errors = f"Application Error: {failure_reason}. Please check the search_text exact match."
                 continue
-            
-            # Edits Applied Successfully!
-            # We accept this as the candidate fix.
-            # The REFINER will validate it.
-            # We return the new code.
-            # NOTE: We do NOT create a new User message here. The Refiner will call us again
-            # if validation fails, but with a NEW `run_turn` call.
-            # Wait, if `Refiner` calls `run_turn` again, we RESET the history because `run_turn`
-            # re-initializes `_chat_history = [...]` on attempt 1?
-            # AH! The Refiner calls `run_turn`. `run_turn` loop is for retrying FAILED LLM CALLS or UNSUCCESSFUL EDITS.
-            # It does NOT handle the "Validation Failed -> Try Again" loop. That's `Refiner`.
-            
-            # To be truly conversational across validation failures, we need `Refiner` to hold the agent instance
-            # and `AdaptiveFixerAgent` must PERSIST `_chat_history` across `run_turn` calls!
-            
-            # My logic above: `if attempt == 1: self._chat_history = ...` resets it every time `run_turn` is called.
-            # `Refiner` creates `AdaptiveFixerAgent` once.
-            # `Refiner.refine` calls `run_turn` in a loop.
-            # So `run_turn` is called multiple times.
-            
-            # CHANGE:
-            # We should NOT reset history if `_chat_history` is already populated and this is a follow-up.
-            # How do we know if it's a follow-up for the SAME section vs a new section?
-            # `Refiner` creates a new Fixer? No.
-            # `Animator` holds `Refiner` who holds `Fixer`.
-            # `Fixer.reset()` exists. `Refiner` should call `reset()` at start of refinement?
-            # Checking `Refiner.refine`:
-            # It calls `run_turn`.
-            # We need to leverage `reset()`
-            
             self._consecutive_failures = 0
             meta["status"] = "applied"
             meta["edits"] = edit_summary["successful"]

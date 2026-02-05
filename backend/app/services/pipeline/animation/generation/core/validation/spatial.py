@@ -1,191 +1,323 @@
 """
 Spatial Check Injector
-Injects AST-based checks into Manim Scene code to enforce safety and spatial constraints.
+
+Injects AST-based spatial validation into Manim Scene code.
+
+Key improvements over v1:
+- Confidence-based classification (CRITICAL / WARNING / INFO)
+- Overlap-ratio computation instead of binary AABB
+- Effect & container suppression (Flash, SurroundingRectangle, etc.)
+- Structured JSON output for smart triage downstream
+- Accumulates ALL issues across play/wait calls, deduplicates at end
+
+The injected code runs inside the Manim subprocess and outputs structured
+JSON via sys.exit() for the RuntimeValidator to parse.
 """
+
 import ast
-import textwrap
-import logging
 import copy
+import textwrap
+
 from app.core import get_logger
 
 logger = get_logger(__name__, component="spatial_injector")
 
-# The code string to inject into the Scene class
-# This method runs continuously via monkey-patching
-INJECTED_METHOD = """
+# ── Marker the RuntimeValidator scans for in stderr/exit message ─────────────
+SPATIAL_JSON_MARKER = "SPATIAL_ISSUES_JSON:"
+
+# ── Injected into the Scene class as _perform_spatial_checks() ───────────────
+#
+# Self-contained: no imports from our codebase.  Runs inside Manim subprocess.
+# Classifies issues by severity/confidence and stores them for a final report.
+INJECTED_METHOD = '''
 def _perform_spatial_checks(self):
-    import sys
-    
-    # 1. SETUP: CHECK_INTERVAL
-    SCREEN_X_LIMIT = 7.1
-    SCREEN_Y_LIMIT = 4.0
-    
-    # Error accumulator
-    spatial_errors = []
+    """Injected spatial validator - runs at every play()/wait() boundary."""
+    import json as _json
 
-    # Helper: Flatten mobjects in draw order
-    def get_flat_mobjects(mobjects):
-        flat = []
+    # ── Screen limits ──
+    SCREEN_X = 7.1
+    SCREEN_Y = 4.0
+    SAFE_X = 5.5
+    SAFE_Y = 3.0
+
+    # ── Types we expect to overlap (not bugs) ──
+    EFFECT_TYPES = frozenset({
+        "Flash", "Indicate", "Circumscribe", "ShowPassingFlash",
+        "ApplyWave", "Wiggle", "AnimationGroup", "FadeOut", "FadeIn",
+        "ShowCreation", "Uncreate", "GrowFromCenter", "SpinInFromNothing",
+        "ShrinkToCenter", "ShowIncreasingSubsets", "ShowSubmobjectsOneByOne",
+    })
+    CONTAINER_TYPES = frozenset({
+        "SurroundingRectangle", "BackgroundRectangle",
+        "Underline", "Brace", "BraceBetweenPoints", "Cross",
+    })
+
+    # ── Lazy-init accumulator on scene instance ──
+    if not hasattr(self, "_spatial_issues"):
+        self._spatial_issues = []
+
+    # ── Helper: flatten scene graph ──
+    def _flat(mobjects):
+        out = []
         for m in mobjects:
-            if m is None: continue
-            # Add self
-            flat.append(m)
-            # Recurse if group (Manim's submobjects are usually drawing order)
-            if hasattr(m, 'submobjects') and m.submobjects:
-                flat.extend(get_flat_mobjects(m.submobjects))
-        return flat
+            if m is None:
+                continue
+            out.append(m)
+            if hasattr(m, "submobjects") and m.submobjects:
+                out.extend(_flat(m.submobjects))
+        return out
 
-    # Helper for visibility
-    def is_effectively_visible(m):
+    # ── Helper: effective visibility ──
+    def _visible(m):
         try:
-            # Check opacity
-            if hasattr(m, 'get_fill_opacity'):
-                val = m.get_fill_opacity()
-                if val is not None and val == 0:
-                    if hasattr(m, 'get_stroke_opacity'):
-                        s_val = m.get_stroke_opacity()
-                        if s_val is not None and s_val > 0:
+            if hasattr(m, "get_fill_opacity"):
+                fo = m.get_fill_opacity()
+                if fo is not None and fo == 0:
+                    if hasattr(m, "get_stroke_opacity"):
+                        so = m.get_stroke_opacity()
+                        if so is not None and so > 0:
                             return True
-                    return False 
+                    return False
             return True
-        except:
+        except Exception:
             return True
 
-    # Helper for overlap (AABB)
-    def is_overlapping(m1, m2):
+    # ── Helper: intersection-over-smaller-area ratio ──
+    def _overlap_ratio(m1, m2):
         try:
-            c1 = m1.get_center(); w1, h1 = m1.width, m1.height
-            c2 = m2.get_center(); w2, h2 = m2.width, m2.height
-            return (abs(c1[0] - c2[0]) * 2 < (w1 + w2)) and (abs(c1[1] - c2[1]) * 2 < (h1 + h2))
-        except: return False
+            c1, c2 = m1.get_center(), m2.get_center()
+            w1, h1 = m1.width, m1.height
+            w2, h2 = m2.width, m2.height
+            ix = max(0, min(c1[0] + w1 / 2, c2[0] + w2 / 2) - max(c1[0] - w1 / 2, c2[0] - w2 / 2))
+            iy = max(0, min(c1[1] + h1 / 2, c2[1] + h2 / 2) - max(c1[1] - h1 / 2, c2[1] - h2 / 2))
+            inter = ix * iy
+            smaller = min(w1 * h1, w2 * h2)
+            if smaller < 0.01:
+                return 0.0
+            return inter / smaller
+        except Exception:
+            return 0.0
 
-    # 1. FLATTEN SCENE
-    # Limit total objects checked to prevent performance kill on massive networks
-    # We only check first ~500 objects if scene is huge
-    all_ordered = get_flat_mobjects(self.mobjects)
-    if len(all_ordered) > 500:
-        # Heuristic: Check specifically Texts and bigger objects, skip tiny dots?
-        # For now, just slice (risky but necessary for performance)
-        # Or randomly sample?
-        # Let's keep it simple: Validate all for correctness, user complains if slow.
-        pass
+    # ── Helper: family-tree relationship ──
+    def _is_family(a, b):
+        try:
+            if hasattr(b, "get_family") and a in b.get_family():
+                return True
+            if hasattr(a, "get_family") and b in a.get_family():
+                return True
+        except Exception:
+            pass
+        return False
 
-    # 2. BOUNDS CHECK
+    def _trunc(s, n=50):
+        return s[:n] if len(s) > n else s
+
+    def _issue(severity, confidence, category, message, auto_fixable=False, fix_hint=None, **details):
+        return {
+            "severity": severity,
+            "confidence": confidence,
+            "category": category,
+            "message": message,
+            "auto_fixable": auto_fixable,
+            "fix_hint": fix_hint,
+            "details": details,
+        }
+
+    # ── Flatten scene graph ──
+    all_ordered = _flat(self.mobjects)
+    new_issues = []
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 1. BOUNDS CHECK
+    # ═══════════════════════════════════════════════════════════════════
     for m in all_ordered:
-        # Only check "leaf" or substantial objects, not groups themselves if they are just containers
-        # But groups have bounding boxes too.
-        # Bounds check is cheap.
-        if not hasattr(m, 'get_center') or not hasattr(m, 'width'): continue
-        if not is_effectively_visible(m): continue
-        
-        if m.width > 0.1 and m.height > 0.1: 
-            x, y, z = m.get_center()
-            w, h = m.width, m.height
-            left, right = x - w/2, x + w/2
-            top, bottom = y + h/2, y - h/2
-            
-            if (left < -SCREEN_X_LIMIT or right > SCREEN_X_LIMIT or 
-                bottom < -SCREEN_Y_LIMIT or top > SCREEN_Y_LIMIT):
-                spatial_errors.append(f"Spatial Error: Object '{type(m).__name__}' is out of bounds (X/Y limits). Center: ({x:.2f}, {y:.2f}).")
+        if not hasattr(m, "get_center") or not hasattr(m, "width"):
+            continue
+        if not _visible(m):
+            continue
+        if m.width < 0.1 and m.height < 0.1:
+            continue
 
-    # 3. OVERLAP CHECKS
-    # Filter texts and objects from flat list (preserving order)
-    texts_with_idx = []
-    objects_with_idx = []
-    
+        try:
+            x, y, _ = m.get_center()
+            w, h = m.width, m.height
+        except Exception:
+            continue
+
+        left, right = x - w / 2, x + w / 2
+        top, bottom = y + h / 2, y - h / 2
+
+        overshoot_x = max(0, -left - SCREEN_X, right - SCREEN_X)
+        overshoot_y = max(0, -bottom - SCREEN_Y, top - SCREEN_Y)
+        overshoot = max(overshoot_x, overshoot_y)
+
+        if overshoot <= 0:
+            continue
+
+        obj_type = type(m).__name__
+        msg = (
+            f"Object '{obj_type}' out of bounds at "
+            f"({x:.1f}, {y:.1f}), size {w:.1f}x{h:.1f}, "
+            f"overshoot {overshoot:.1f}"
+        )
+
+        if overshoot > 1.0:
+            new_issues.append(_issue(
+                "critical", "high", "out_of_bounds", msg,
+                auto_fixable=True,
+                fix_hint=f"Shift or scale to bring within +/-{SAFE_X} x +/-{SAFE_Y}",
+                object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
+                width=round(w, 2), height=round(h, 2), overshoot=round(overshoot, 2),
+            ))
+        elif overshoot > 0.3:
+            new_issues.append(_issue(
+                "warning", "medium", "out_of_bounds", msg,
+                auto_fixable=True,
+                fix_hint=f"Minor adjustment needed (~{overshoot:.1f} units)",
+                object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
+                overshoot=round(overshoot, 2),
+            ))
+        # overshoot <= 0.3 -> sub-pixel, ignore
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 2. TEXT-ON-TEXT OVERLAP
+    # ═══════════════════════════════════════════════════════════════════
+    texts = []
+    objects = []
     for idx, m in enumerate(all_ordered):
-        if not hasattr(m, 'get_center'): continue
-        if not is_effectively_visible(m): continue
-        
+        if not hasattr(m, "get_center"):
+            continue
+        if not _visible(m):
+            continue
         is_text = "Text" in type(m).__name__ or hasattr(m, "text")
         if is_text:
-            texts_with_idx.append((idx, m))
-        elif isinstance(m, VMobject):
-            objects_with_idx.append((idx, m))
+            texts.append((idx, m))
+        elif hasattr(m, "width"):
+            objects.append((idx, m))
 
-    # A. Text on Text
-    for i, (idx1, t1) in enumerate(texts_with_idx):
-        for (idx2, t2) in texts_with_idx[i+1:]:
-            if t1 is t2: continue
-            if is_overlapping(t1, t2):
-                txt1 = getattr(t1, 'text', str(t1))
-                txt2 = getattr(t2, 'text', str(t2))
-                # Truncate to 50 chars for readability
-                txt1_display = txt1[:50] if len(txt1) > 50 else txt1
-                txt2_display = txt2[:50] if len(txt2) > 50 else txt2
-                spatial_errors.append(f"Text overlap: '{txt1_display}' overlaps '{txt2_display}'")
+    for i, (idx1, t1) in enumerate(texts):
+        for idx2, t2 in texts[i + 1:]:
+            if t1 is t2:
+                continue
+            if _is_family(t1, t2):
+                continue
 
-    # B. Object on Text (Z-Order Aware)
-    # Only error if Object is drew AFTER Text (Higher Index) AND overlaps
-    for (t_idx, t) in texts_with_idx:
-        for (o_idx, o) in objects_with_idx:
-            # Semantic check:
-            # If Object is ON TOP (o_idx > t_idx) -> Potential obscuration
-            if o_idx > t_idx:
-                if is_overlapping(t, o):
-                    # Filter out tiny overlaps or specific shapes?
-                    if o.width > SCREEN_X_LIMIT: continue # Background rect
-                    
-                    # CRITICAL: Ignore if object is part of the text (e.g. a letter)
-                    # or if text is part of the object (e.g. label on button)
-                    is_related = False
-                    try:
-                        # Check if o is in t's family (common for Text -> VMobjectFromSVGPath)
-                        if hasattr(t, 'submobjects') and o in t.get_family(): is_related = True
-                        # Check if t is in o's family (Text on ButtonGroup)
-                        elif hasattr(o, 'submobjects') and t in o.get_family(): is_related = True
-                    except: pass
-                    
-                    if is_related: continue
+            ratio = _overlap_ratio(t1, t2)
+            if ratio < 0.05:
+                continue
 
-                    txt = getattr(t, 'text', str(t))
-                    txt_display = txt[:50] if len(txt) > 50 else txt
-                    obj_name = type(o).__name__
-                    
-                    # Get object details for context
-                    try:
-                        o_center = o.get_center()
-                        o_pos = f"at ({o_center[0]:.1f}, {o_center[1]:.1f})"
-                        o_size = f"{o.width:.1f}x{o.height:.1f}"
-                    except:
-                        o_pos = "position unknown"
-                        o_size = "size unknown"
-                    
-                    # Try to get color for additional context
-                    color_info = ""
-                    try:
-                        if hasattr(o, 'get_color'):
-                            color = o.get_color()
-                            if color: color_info = f", color={color}"
-                        elif hasattr(o, 'get_fill_color'):
-                            color = o.get_fill_color()
-                            if color: color_info = f", color={color}"
-                    except: pass
-                    
-                    # Simplify common verbose names
-                    if obj_name == "VMobjectFromSVGPath":
-                        obj_name = "SVGShape"
-                    
-                    spatial_errors.append(f"{obj_name} ({o_size} {o_pos}{color_info}) covers text '{txt_display}'")
+            txt1 = _trunc(getattr(t1, "text", repr(t1)))
+            txt2 = _trunc(getattr(t2, "text", repr(t2)))
+            msg = f"Text overlap ({ratio:.0%}): '{txt1}' overlaps '{txt2}'"
 
-    # Report
-    if spatial_errors:
-        unique_errors = sorted(list(set(spatial_errors)))
-        error_count = len(unique_errors)
-        # Format with line breaks for readability if multiple errors
-        if error_count == 1:
-            joined_errors = unique_errors[0]
-        else:
-            joined_errors = "\\n  - " + "\\n  - ".join(unique_errors)
-        # Truncate if too long
-        if len(joined_errors) > 800:
-            joined_errors = joined_errors[:800] + "\\n  ..."
-        sys.exit(f"Spatial validation failed ({error_count} issues):{joined_errors}")
-"""
+            if ratio > 0.4:
+                new_issues.append(_issue(
+                    "critical", "high", "text_overlap", msg,
+                    auto_fixable=True,
+                    fix_hint="Separate texts with .next_to() or .shift()",
+                    text1=txt1, text2=txt2, overlap_ratio=round(ratio, 2),
+                ))
+            elif ratio > 0.15:
+                new_issues.append(_issue(
+                    "warning", "medium", "text_overlap", msg,
+                    text1=txt1, text2=txt2, overlap_ratio=round(ratio, 2),
+                ))
+            # < 0.15 -> marginal, skip
 
+    # ═══════════════════════════════════════════════════════════════════
+    # 3. OBJECT-ON-TEXT OCCLUSION (z-order aware)
+    # ═══════════════════════════════════════════════════════════════════
+    for t_idx, t in texts:
+        for o_idx, o in objects:
+            if o_idx <= t_idx:
+                continue
+
+            obj_type = type(o).__name__
+
+            # ── False-positive suppression ──
+            if obj_type in EFFECT_TYPES:
+                continue
+            if obj_type in CONTAINER_TYPES:
+                continue
+            if _is_family(t, o):
+                continue
+            try:
+                if o.width > SCREEN_X:
+                    continue
+            except Exception:
+                pass
+            try:
+                if hasattr(o, "get_fill_opacity") and o.get_fill_opacity() < 0.15:
+                    continue
+            except Exception:
+                pass
+
+            ratio = _overlap_ratio(t, o)
+            if ratio < 0.1:
+                continue
+
+            txt = _trunc(getattr(t, "text", repr(t)))
+            try:
+                oc = o.get_center()
+                pos_info = f"at ({oc[0]:.1f}, {oc[1]:.1f})"
+                size_info = f"{o.width:.1f}x{o.height:.1f}"
+            except Exception:
+                pos_info = ""
+                size_info = ""
+
+            msg = (
+                f"{obj_type} ({size_info} {pos_info}) "
+                f"covers text '{txt}' ({ratio:.0%} overlap)"
+            )
+
+            if ratio > 0.6:
+                new_issues.append(_issue(
+                    "warning", "medium", "object_occlusion", msg,
+                    fix_hint="Reposition object or add transparency",
+                    object_type=obj_type, text=txt,
+                    overlap_ratio=round(ratio, 2),
+                ))
+            else:
+                new_issues.append(_issue(
+                    "info", "low", "object_occlusion", msg,
+                    object_type=obj_type, text=txt,
+                    overlap_ratio=round(ratio, 2),
+                ))
+
+    self._spatial_issues.extend(new_issues)
+'''
+
+# ── Injected at end of construct() to emit the final JSON report ─────────────
+INJECTED_FINAL_REPORT = '''
+# ── Spatial Validation: Final Report ──
+if hasattr(self, '_spatial_issues') and self._spatial_issues:
+    import json as _json_report
+    import sys as _sys_report
+
+    _seen = set()
+    _unique = []
+    for _iss in self._spatial_issues:
+        _key = _iss['message']
+        if _key not in _seen:
+            _seen.add(_key)
+            _unique.append(_iss)
+
+    _has_critical = any(_i['severity'] == 'critical' for _i in _unique)
+
+    if _has_critical:
+        _sys_report.exit("SPATIAL_ISSUES_JSON:" + _json_report.dumps(_unique))
+    else:
+        for _i in _unique:
+            print(
+                "SPATIAL_WARNING: " + _i['message'],
+                file=_sys_report.stderr,
+            )
+'''
+
+# ── Monkey-patch setup injected at start of construct() ──────────────────────
 INJECTED_SETUP = """
-# --- INJECTED SETUP: Continuous Validation ---
-# Monkey-patch play and wait to run checks
+# ── Spatial Validation: Continuous Monitoring ──
+self._spatial_issues = []
 self._original_play = self.play
 self._original_wait = self.wait
 
@@ -193,117 +325,157 @@ def _monitored_play(*args, **kwargs):
     self._perform_spatial_checks()
     self._original_play(*args, **kwargs)
     self._perform_spatial_checks()
-    
+
 def _monitored_wait(*args, **kwargs):
     self._perform_spatial_checks()
     self._original_wait(*args, **kwargs)
-    self._perform_spatial_checks()
-    
+
 self.play = _monitored_play
 self.wait = _monitored_wait
-# ---------------------------------------------
 """
 
+# ── Pre-parse templates at module load ───────────────────────────────────────
 _INJECTED_METHOD_NODE = None
 _INJECTED_SETUP_NODES = None
+_INJECTED_FINAL_NODES = None
 
 try:
-    _method_tree = ast.parse(textwrap.dedent(INJECTED_METHOD))
-    if _method_tree.body and isinstance(_method_tree.body[0], ast.FunctionDef):
-        _INJECTED_METHOD_NODE = _method_tree.body[0]
-except SyntaxError as e:
-    logger.warning(f"Invalid injected method template: {e}")
+    _tree = ast.parse(textwrap.dedent(INJECTED_METHOD))
+    if _tree.body and isinstance(_tree.body[0], ast.FunctionDef):
+        _INJECTED_METHOD_NODE = _tree.body[0]
+except SyntaxError as exc:
+    logger.warning(f"Invalid injected method template: {exc}")
 
 try:
-    _setup_tree = ast.parse(textwrap.dedent(INJECTED_SETUP))
-    _INJECTED_SETUP_NODES = _setup_tree.body
-except SyntaxError as e:
-    logger.warning(f"Invalid injected setup template: {e}")
+    _INJECTED_SETUP_NODES = ast.parse(textwrap.dedent(INJECTED_SETUP)).body
+except SyntaxError as exc:
+    logger.warning(f"Invalid injected setup template: {exc}")
+
+try:
+    _INJECTED_FINAL_NODES = ast.parse(textwrap.dedent(INJECTED_FINAL_REPORT)).body
+except SyntaxError as exc:
+    logger.warning(f"Invalid injected final-report template: {exc}")
+
 
 class SpatialCheckInjector:
     """
-    Injects spatial checks into Manim code using AST.
+    Injects confidence-based spatial validation into Manim code via AST.
+
+    Workflow:
+    1. Adds ``_perform_spatial_checks()`` to the Scene class.
+    2. Monkey-patches ``play()`` / ``wait()`` at start of ``construct()``.
+    3. Appends a final JSON report block at end of ``construct()``.
+
+    Output:
+    When critical issues exist the process exits with a structured JSON
+    payload prefixed by SPATIAL_ISSUES_JSON:.  The RuntimeValidator parses
+    this into typed ``ValidationIssue`` objects for smart triage.
     """
+
     def inject(self, code: str) -> str:
+        """Inject spatial checks into Manim code.
+
+        Args:
+            code: Raw Manim Python source.
+
+        Returns:
+            Modified source with spatial checks injected, or the
+            original source if injection fails gracefully.
+        """
         try:
-            try:
-                tree = ast.parse(code)
-            except SyntaxError as e:
-                logger.warning(
-                    f"Skipping spatial checks due to syntax error in input code: {e}"
-                )
+            tree = self._parse(code)
+            if tree is None:
                 return code
-            
-            # Find the Scene class
-            scene_class = None
-            for node in tree.body:
-                if isinstance(node, ast.ClassDef):
-                    # Check if inherits from "Scene"
-                    # We look for a base class named 'Scene'
-                    is_scene = any(base.id == 'Scene' for base in node.bases if isinstance(base, ast.Name))
-                    if is_scene:
-                        scene_class = node
-                        break
-            
-            if not scene_class:
-                # Fallback: Just pick the first class if no "Scene" detected (e.g. specialized subclass)
-                first_class = next((n for n in tree.body if isinstance(n, ast.ClassDef)), None)
-                if first_class:
-                    scene_class = first_class
-                else:
-                    return code # No classes at all
 
-            # 1. Add _perform_spatial_checks method to class
-            if _INJECTED_METHOD_NODE is None:
-                logger.warning("Skipping spatial checks: injected method template is invalid")
+            scene_class = self._find_scene_class(tree)
+            if scene_class is None:
                 return code
-            scene_class.body.append(copy.deepcopy(_INJECTED_METHOD_NODE))
-            
-            # 2. Add setup logic to start of construct()
-            construct_method = None
-            for node in scene_class.body:
-                if isinstance(node, ast.FunctionDef) and node.name == 'construct':
-                    construct_method = node
-                    break
-                    
-            if construct_method:
-                if not _INJECTED_SETUP_NODES:
-                    logger.warning("Skipping spatial checks: injected setup template is invalid")
-                    return code
-                
-                # Insert at logical beginning (skipping docstring)
-                insert_idx = 0
-                if (construct_method.body and 
-                    isinstance(construct_method.body[0], ast.Expr) and 
-                    isinstance(construct_method.body[0].value, ast.Constant) and 
-                    isinstance(construct_method.body[0].value.value, str)):
-                    insert_idx = 1
-                
-                # Prepend setup statements
-                construct_method.body[insert_idx:insert_idx] = [
-                    copy.deepcopy(n) for n in _INJECTED_SETUP_NODES
-                ]
-                
-                # 3. Append call to End of construct (to catch static setup)
-                check_call = ast.Expr(
-                    value=ast.Call(
-                        func=ast.Attribute(
-                            value=ast.Name(id='self', ctx=ast.Load()),
-                            attr='_perform_spatial_checks',
-                            ctx=ast.Load()
-                        ),
-                        args=[],
-                        keywords=[]
-                    )
-                )
-                construct_method.body.append(check_call)
-            
-            # Unparse back to string
-            if hasattr(ast, 'unparse'):
-                return ast.unparse(tree)
-            else:
-                return code # Fallback
 
-        except Exception as e:
-            logger.error(f"Failed to inject spatial checks: {e}")
+            if not self._inject_method(scene_class):
+                return code
+
+            construct = self._find_construct(scene_class)
+            if construct is None:
+                return code
+
+            self._inject_setup(construct)
+            self._inject_final_report(construct)
+
+            return ast.unparse(tree) if hasattr(ast, "unparse") else code
+
+        except Exception as exc:
+            logger.error(f"Spatial injection failed: {exc}")
             return code
+
+    # ── Private helpers ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse(code: str):
+        try:
+            return ast.parse(code)
+        except SyntaxError as exc:
+            logger.warning(
+                f"Skipping spatial injection — syntax error: {exc}"
+            )
+            return None
+
+    @staticmethod
+    def _find_scene_class(tree: ast.Module):
+        """Find the Scene subclass (or first class as fallback)."""
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                is_scene = any(
+                    isinstance(base, ast.Name) and base.id == "Scene"
+                    for base in node.bases
+                )
+                if is_scene:
+                    return node
+
+        # Fallback: first class (e.g. ThreeDScene, MovingCameraScene)
+        return next(
+            (n for n in tree.body if isinstance(n, ast.ClassDef)), None
+        )
+
+    @staticmethod
+    def _find_construct(scene_class: ast.ClassDef):
+        return next(
+            (
+                n
+                for n in scene_class.body
+                if isinstance(n, ast.FunctionDef) and n.name == "construct"
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _inject_method(scene_class: ast.ClassDef) -> bool:
+        if _INJECTED_METHOD_NODE is None:
+            logger.warning("Spatial method template invalid — skipping")
+            return False
+        scene_class.body.append(copy.deepcopy(_INJECTED_METHOD_NODE))
+        return True
+
+    @staticmethod
+    def _inject_setup(construct: ast.FunctionDef) -> None:
+        if not _INJECTED_SETUP_NODES:
+            logger.warning("Spatial setup template invalid — skipping")
+            return
+        # Insert after docstring if present
+        insert_idx = 0
+        if (
+            construct.body
+            and isinstance(construct.body[0], ast.Expr)
+            and isinstance(construct.body[0].value, ast.Constant)
+            and isinstance(construct.body[0].value.value, str)
+        ):
+            insert_idx = 1
+        construct.body[insert_idx:insert_idx] = [
+            copy.deepcopy(n) for n in _INJECTED_SETUP_NODES
+        ]
+
+    @staticmethod
+    def _inject_final_report(construct: ast.FunctionDef) -> None:
+        if not _INJECTED_FINAL_NODES:
+            logger.warning("Spatial final-report template invalid — skipping")
+            return
+        construct.body.extend(copy.deepcopy(n) for n in _INJECTED_FINAL_NODES)

@@ -4,6 +4,7 @@ Checking if errors that occur mid-scene are caught even if cleaned up at the end
 """
 import pytest
 from app.services.pipeline.animation.generation.core.validation.runtime import RuntimeValidator
+from app.services.pipeline.animation.generation.core.validation.models import IssueCategory
 
 # Logic:
 # 1. Add object at X=10 (Violation)
@@ -32,7 +33,10 @@ async def test_mid_scene_violation():
     validator = RuntimeValidator()
     result = await validator.validate(MID_SCENE_VIOLATION_CODE, enable_spatial_checks=True)
     
-    # This assertion expects the validator to be smart enough to verify MID-SCENE.
-    # Currently it fails (valid=True) because checks obey the "end-state-only" flaw.
+    # The spatial validator checks at every play/wait call, so
+    # mid-scene violations are caught even if cleaned up later.
     assert not result.valid
-    assert any("out of bounds" in e for e in result.errors)
+    assert any(
+        i.category == IssueCategory.OUT_OF_BOUNDS
+        for i in result.issues
+    )
