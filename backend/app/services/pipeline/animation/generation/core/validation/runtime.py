@@ -88,7 +88,7 @@ class RuntimeValidator:
                 capture_output=True,
                 text=True,
                 env=env,
-                timeout=90.0  # 90s timeout - dry-run can be slow with complex loops
+                timeout=180.0  # 180s timeout - dry-run can be slow with complex loops
             )
             
             if result_proc.returncode != 0:
@@ -96,7 +96,7 @@ class RuntimeValidator:
                 result.add_error("Runtime", error_msg)
                 
         except subprocess.TimeoutExpired:
-            result.add_error("Runtime", "Execution timed out after 90s - check for large loops (e.g., for _ in range(1000)) or complex operations")
+            result.add_error("Runtime", "Execution timed out after 180s - check for large loops (e.g., for _ in range(1000)) or complex operations")
             return result
                 
         except Exception as e:
