@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from .base import BaseScriptGenerator
+from .schema_filter import filter_section
 
 
 class SectionGenerator:
@@ -251,6 +252,7 @@ class SectionGenerator:
                         if source_pdf_path:
                             section["source_pdf_path"] = source_pdf_path
                         
+                        section = filter_section(section)
                         generated_sections.append(section)
                         print(f"[SectionGen] OK Section {section_idx + 1} generated successfully")
                         success = True
@@ -328,6 +330,8 @@ CONTEXT & INSTRUCTIONS:
 - For worked examples: narrate EVERY step and include ALL intermediate values
 - If you reference a table or matrix, summarize key rows/columns in narration (do not read every value)
 - Avoid placeholder phrasing like "we fill the table" without specifying what the table contains
+- The outline is STRUCTURAL. Do not repeat it verbatim in narration.
+- Put full data and calculations ONLY in supporting_data (no truncation).
 
 LECTURE OUTLINE:
 {outline_text}
@@ -379,6 +383,8 @@ SECTION REQUIREMENTS:
 - For worked examples: narrate EVERY step and include ALL intermediate values.
 - If you reference a table or matrix, summarize key rows/columns in narration (do not read every value).
 - Avoid placeholder phrasing like "we fill the table" without specifying what the table contains.
+- The outline is STRUCTURAL. Do not repeat it verbatim in narration.
+- Put full data and calculations ONLY in supporting_data (no truncation).
 
 {page_note}
 ═══════════════════════════════════════════════════════════════════════════════

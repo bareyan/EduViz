@@ -6,6 +6,7 @@ from typing import Dict, Any, Optional, List, Tuple
 
 from app.core import get_logger
 from app.services.infrastructure.parsing.json_parser import is_likely_truncated_json
+from .schema_filter import filter_outline
 
 from .base import BaseScriptGenerator
 
@@ -82,13 +83,6 @@ class OutlineBuilder:
                 "document_analysis": {
                     "type": "object",
                     "properties": {
-                        "content_type": {"type": "string"},
-                        "content_context": {"type": "string"},
-                        "total_theorems": {"type": "integer"},
-                        "total_proofs": {"type": "integer"},
-                        "total_definitions": {"type": "integer"},
-                        "total_examples": {"type": "integer"},
-                        "complexity_level": {"type": "string"},
                         "gaps_to_fill": {"type": "array", "items": {"type": "string"}}
                     }
                 },
@@ -96,8 +90,6 @@ class OutlineBuilder:
                 "subject_area": {"type": "string"},
                 "overview": {"type": "string"},
                 "learning_objectives": {"type": "array", "items": {"type": "string"}},
-                "prerequisites": {"type": "array", "items": {"type": "string"}},
-                "total_duration_minutes": {"type": "integer"},
                 "sections_outline": {
                     "type": "array",
                     "items": {
@@ -107,14 +99,6 @@ class OutlineBuilder:
                             "title": {"type": "string"},
                             "section_type": {"type": "string"},
                             "content_to_cover": {"type": "string"},
-                            "depth_elements": {
-                                "type": "object",
-                                "properties": {
-                                    "motivation": {"type": "string"},
-                                    "intuition": {"type": "string"},
-                                    "connections": {"type": "string"}
-                                }
-                            },
                             "key_points": {"type": "array", "items": {"type": "string"}},
                             "visual_type": {"type": "string"},
                             "estimated_duration_seconds": {"type": "integer"},
@@ -129,8 +113,6 @@ class OutlineBuilder:
                             "key_points",
                             "visual_type",
                             "estimated_duration_seconds",
-                            "page_start",
-                            "page_end",
                         ]
                     }
                 }
@@ -189,6 +171,7 @@ class OutlineBuilder:
                     continue
 
                 outline = self.base.parse_json(response_text)
+                outline = filter_outline(outline)
                 is_valid, issues = self._validate_outline(outline)
 
                 if not is_valid:
@@ -405,6 +388,9 @@ IMPORTANT: If the source material is terse or assumes background knowledge,
 ADD explanatory sections to fill gaps and provide context.
 
 DETAIL LEVEL REQUIREMENTS:
+- This outline is STRUCTURAL, not exhaustive.
+- Do NOT include full derivations, full tables, datasets, or long explanations here.
+- Full data and calculations will be generated in the SECTION stage.
 - Prefer more, smaller sections over broad summaries.
 - Each section should focus on a single concept or a single step in a worked example.
 - If a table, matrix, or dataset is referenced, outline where its full values will appear.

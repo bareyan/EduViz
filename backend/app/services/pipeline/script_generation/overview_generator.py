@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Optional
 
 from app.services.infrastructure.parsing import parse_json_response
 from .base import BaseScriptGenerator
+from .schema_filter import filter_section
 
 
 class OverviewGenerator:
@@ -180,9 +181,8 @@ Generate a COMPLETE video script with 3-5 sections. For each section, include:
 - A clear title
 - Engaging narration (spoken text for the video)
 - TTS-ready narration (spell out math symbols, format for text-to-speech)
-- Supporting data list (CRITICAL — be exhaustive: include full table data, matrices,
-  formulas with parameters, datasets, charts/axes values, constants, thresholds,
-  and any quantitative details useful for visuals)
+- Supporting data list (include ONLY data needed for visuals; for any data included,
+  provide full values with no truncation)
 
 Respond with ONLY valid JSON matching the required schema."""
 
@@ -228,15 +228,6 @@ Respond with ONLY valid JSON matching the required schema."""
                             "tts_narration": {
                                 "type": "string",
                                 "description": "TTS-ready narration with math spelled out"
-                            },
-                            "key_points": {
-                                "type": "array",
-                                "items": {"type": "string"},
-                                "description": "2-3 key points covered in this section"
-                            },
-                            "visual_type": {
-                                "type": "string",
-                                "description": "Type of visual (animated, static, diagram, graph)"
                             },
                             "supporting_data": {
                                 "type": "array",
@@ -294,14 +285,10 @@ Respond with ONLY valid JSON matching the required schema."""
             if not section.get("tts_narration"):
                 section["tts_narration"] = section["narration"]
             
-            if not section.get("key_points"):
-                section["key_points"] = [section["title"]]
-            
-            if not section.get("visual_type"):
-                section["visual_type"] = "animated"
-
             if not section.get("supporting_data"):
                 section["supporting_data"] = []
+
+            sections[i] = filter_section(section)
         
         script["sections"] = sections
         return script
