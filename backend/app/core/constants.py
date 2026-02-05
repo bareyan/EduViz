@@ -20,6 +20,7 @@ LANGUAGE_NAMES: Dict[str, str] = {
     "ko": "Korean",
     "ar": "Arabic",
     "ru": "Russian",
+    "ua": "Ukrainian",
     "hy": "Armenian",
     "hi": "Hindi",
     "tr": "Turkish",

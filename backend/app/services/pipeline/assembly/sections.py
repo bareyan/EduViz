@@ -176,8 +176,8 @@ async def process_single_subsection(
         write_status(section_dir, "fixing_error", str(e))
         audio_path = None
 
-    # Status: generating video
-    write_status(section_dir, "generating_video")
+    # Status: generating manim (code generation + refinement)
+    write_status(section_dir, "generating_manim")
 
     try:
         # Using the NEW Animation Pipeline (Choreograph -> Implement -> Refine)
@@ -350,8 +350,8 @@ async def process_segments_audio_first(
 
     logger.info(f"Section {section_index}: Generating unified video using NEW Pipeline ({total_duration:.1f}s total)")
 
-    # Status: generating video
-    write_status(section_dir, "generating_video")
+    # Status: generating manim (code generation + refinement)
+    write_status(section_dir, "generating_manim")
 
     video_path = None
     manim_code = None

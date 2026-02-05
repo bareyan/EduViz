@@ -241,7 +241,7 @@ class TranslationService:
 
     # Non-Latin scripts that can't mix with LaTeX in Tex()
     NON_LATIN_LANGUAGES = {
-        'hy', 'ar', 'he', 'zh', 'ja', 'ko', 'ru', 'el', 'th',
+        'hy', 'ar', 'he', 'zh', 'ja', 'ko', 'ru', 'ua', 'el', 'th',
         'hi', 'bn', 'ta', 'te', 'ml', 'kn', 'gu', 'pa', 'mr',
         'fa', 'ur', 'am', 'ka', 'my', 'km', 'lo', 'si', 'ne'
     }
@@ -252,10 +252,10 @@ class TranslationService:
         target_language: str,
         source_language: str = "en"
     ) -> str:
-        """Translate Text() strings in Manim code to target language.
+        """Translate text-containing objects in Manim code to target language.
         
-        This extracts only the text content from Text("...") calls,
-        translates them in batch with context, and replaces them back.
+        This extracts text content from Text(), MarkupText(), Paragraph(), and Title()
+        calls, translates them in batch with context, and replaces them back.
         The code structure is preserved exactly.
         
         For non-Latin languages, Tex() with mixed text/math is converted to
@@ -267,7 +267,7 @@ class TranslationService:
             source_language: Source language code
         
         Returns:
-            Manim code with translated Text() strings
+            Manim code with translated text objects
         """
         self.logger.info("translate_manim_code called", extra={
             "source_language": source_language,
@@ -292,15 +292,15 @@ class TranslationService:
             })
             manim_code = await self._convert_tex_for_non_latin(manim_code, target_language, source_language)
 
-        # Extract all Text("...") strings with their positions
-        # Match Text("string") or Text('string') with various arguments after
-        text_pattern = r'(Text)\s*\(\s*(["\'])((?:(?!\2)[^\\]|\\.)*)\2'
+        # Extract all text-containing Manim objects with their positions
+        # Match Text(), MarkupText(), Paragraph(), Title() with string arguments
+        text_pattern = r'(Text|MarkupText|Paragraph|Title)\s*\(\s*(["\'])((?:(?!\2)[^\\]|\\.)*)\2'
 
         matches = list(re.finditer(text_pattern, manim_code))
-        self.logger.info("Found Text() matches", extra={"match_count": len(matches)})
+        self.logger.info("Found text object matches", extra={"match_count": len(matches)})
 
         if not matches:
-            self.logger.info("No Text() strings found in Manim code")
+            self.logger.info("No text objects found in Manim code")
             return manim_code
 
         # Extract the text content (group 3 is the string content)
@@ -308,7 +308,7 @@ class TranslationService:
         match_info = []  # Store (match_object, func_name, quote_char, original_text)
 
         for match in matches:
-            func_name = match.group(1)  # Text
+            func_name = match.group(1)  # Text, MarkupText, Paragraph, or Title
             quote_char = match.group(2)  # ' or "
             text_content = match.group(3)  # The actual string content
 
@@ -320,10 +320,10 @@ class TranslationService:
             match_info.append((match, func_name, quote_char, text_content))
 
         if not texts_to_translate:
-            self.logger.info("No translatable Text() strings found")
+            self.logger.info("No translatable text objects found")
             return manim_code
 
-        self.logger.info("Found Text() strings to translate", extra={
+        self.logger.info("Found text objects to translate", extra={
             "text_count": len(texts_to_translate)
         })
 
@@ -433,9 +433,10 @@ class TranslationService:
         source_language: str,
         target_language: str
     ) -> List[str]:
-        """Translate Text() string contents for Manim code.
+        """Translate text object contents for Manim code.
         
-        These are display texts that appear in the video, not narration.
+        These are display texts from Text(), MarkupText(), Paragraph(), Title() 
+        that appear in the video, not narration.
         """
         if not texts:
             return []

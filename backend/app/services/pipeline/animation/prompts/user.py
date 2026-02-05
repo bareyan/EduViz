@@ -18,6 +18,7 @@ CHOREOGRAPHY_USER = PromptTemplate(
 **Title**: {title}
 **Duration**: {target_duration}s
 **Theme**: {theme_info}
+**Language**: {language_name}
 
 **Narration**:
 {narration}
@@ -42,6 +43,12 @@ Create a structured plan with:
    - Exact start time and duration
 3. **Spatial Layout**: Where objects are positioned
 4. **Scene Type**: Choose `"2D"` or `"3D"` (default: "2D")
+
+## LANGUAGE REQUIREMENT (CRITICAL)
+- ALL text labels, titles, and non-mathematical text MUST be in **{language_name}**
+- Match the language of the narration exactly
+- Mathematical notation (MathTex, formulas) should remain in standard math notation
+- Example: For Russian narration, use Russian text like "Введение" instead of "Introduction"
 
 ## QUALITY GUIDANCE
 - Reuse objects across segments; prefer Transform/ReplacementTransform over delete+recreate
@@ -136,6 +143,7 @@ CHOREOGRAPHY_COMPACT_USER = PromptTemplate(
 **Title**: {title}
 **Duration**: {target_duration}s
 **Theme**: {theme_info}
+**Language**: {language_name}
 
 **Narration**:
 {narration}
@@ -145,6 +153,10 @@ CHOREOGRAPHY_COMPACT_USER = PromptTemplate(
 
 **Visual Hints**:
 {visual_hints}
+
+## LANGUAGE REQUIREMENT (CRITICAL)
+- ALL text labels and titles MUST be in **{language_name}**
+- Mathematical notation should remain in standard math notation
 
 ## REQUIREMENTS (STRICT)
 - Max 10 objects total
@@ -220,6 +232,7 @@ CHOREOGRAPHY_OBJECTS_USER = PromptTemplate(
 **Title**: {title}
 **Duration**: {target_duration}s
 **Theme**: {theme_info}
+**Language**: {language_name}
 
 **Narration**:
 {narration}
@@ -229,6 +242,10 @@ CHOREOGRAPHY_OBJECTS_USER = PromptTemplate(
 
 **Visual Hints**:
 {visual_hints}
+
+## LANGUAGE REQUIREMENT (CRITICAL)
+- ALL text labels and titles MUST be in **{language_name}**
+- Mathematical notation should remain in standard math notation
 
 ## REQUIREMENTS (STRICT)
 - Max 10 objects total
@@ -338,7 +355,15 @@ FULL_IMPLEMENTATION_USER = PromptTemplate(
 - **Total Duration**: {total_duration}s (must match exactly)
 - **Class Name**: Scene{section_id_title}
 - **Theme**: {theme_info}
+- **Language**: {language_name}
 - If scene_type is missing, assume 2D
+
+## LANGUAGE REQUIREMENT (CRITICAL)
+- ALL text labels, titles, and non-mathematical text MUST be in **{language_name}**
+- Match the language used in the choreography plan
+- Mathematical notation (MathTex, formulas) should remain in standard math notation
+- Example: For Russian, use `Text("Введение")` instead of `Text("Introduction")`
+- Example: For Ukrainian, use `Text("Вступ")` instead of `Text("Introduction")`
 
 ## CODE REQUIREMENTS
 1. Start with `from manim import *  # type: ignore`
@@ -373,6 +398,7 @@ FULL_IMPLEMENTATION_USER = PromptTemplate(
 - **Spatial Check**: Is any object moving beyond X: 5.5 or Y: 3.0?
 - **Overlap Check**: Did I FadeOut the previous text before FadingIn the new text?
 - **Color Check**: Am I using only official Manim colors (e.g., `BLUE_C` NOT `CYAN`)?
+- **Language Check**: Are all Text() strings in {language_name}?
 
 ## OUTPUT
 Return the complete, runnable Python file in a code block.
@@ -385,7 +411,8 @@ Return the complete, runnable Python file in a code block.
 - No `self.wait(0)` or `self.wait(x if condition else 0)` - these CRASH
 - No `ValueTracker.number`
 - Only allowed rate functions
-- All objects within bounds""",
+- All objects within bounds
+- All Text() strings are in {language_name}""",
     description="Single-shot full file implementation prompt"
 )
 

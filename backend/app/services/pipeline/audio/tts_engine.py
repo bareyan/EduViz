@@ -32,6 +32,22 @@ class TTSEngine:
             },
             "default": "fr-CH-FabriceNeural"
         },
+        "ru": {
+            "name": "Russian",
+            "voices": {
+                "ru-RU-DmitryNeural": {"name": "Dmitry (Russia)", "gender": "male"},
+                "ru-RU-SvetlanaNeural": {"name": "Svetlana (Russia)", "gender": "female"},
+            },
+            "default": "ru-RU-DmitryNeural"
+        },
+        "ua": {
+            "name": "Ukrainian",
+            "voices": {
+                "uk-UA-OstapNeural": {"name": "Ostap (Ukraine)", "gender": "male"},
+                "uk-UA-PolinaNeural": {"name": "Polina (Ukraine)", "gender": "female"},
+            },
+            "default": "uk-UA-OstapNeural"
+        },
         # Armenian - Using multilingual voices
         "hy": {
             "name": "Armenian",

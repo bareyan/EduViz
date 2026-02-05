@@ -58,7 +58,7 @@ class OverviewGenerator:
             from app.services.infrastructure.llm import PromptConfig
             config = PromptConfig(
                 temperature=0.7,
-                max_output_tokens=8192,
+                max_output_tokens=32768,
                 timeout=120,
                 response_format="json"
             )

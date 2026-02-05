@@ -13,7 +13,7 @@ Orchestrates the validate → triage → fix cycle with four tiers:
 Every issue is a typed ``ValidationIssue``. No legacy string errors.
 """
 
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Callable
 
 from app.core import get_logger
 
@@ -53,6 +53,7 @@ class Refiner:
         code: str,
         section_title: str,
         context: Optional[Dict[str, Any]] = None,
+        status_callback: Optional[Callable[[str], None]] = None,
     ) -> Tuple[str, bool]:
         """Execute the full refinement cycle with smart triage.
 
@@ -105,6 +106,7 @@ class Refiner:
                 stats["static_failures"] += 1
                 self._log_issues("static", turn_idx, static_result.issues, section_title)
                 error_context = static_result.error_summary()
+                self._report_status(status_callback, "fixing_manim", section_title, turn_idx)
                 current_code = await self._apply_llm_fix(
                     current_code, error_context, turn_idx, context
                 )
@@ -139,7 +141,12 @@ class Refiner:
             )
 
             current_code, triage_stats = await self._triage_issues(
-                current_code, runtime_result.issues, turn_idx, context
+                current_code,
+                runtime_result.issues,
+                turn_idx,
+                section_title,
+                context,
+                status_callback=status_callback,
             )
             stats["deterministic_fixes"] += triage_stats["deterministic"]
             stats["llm_fixes"] += triage_stats["llm"]
@@ -177,7 +184,9 @@ class Refiner:
         code: str,
         issues: List[ValidationIssue],
         turn_idx: int,
+        section_title: str,
         context: Optional[Dict[str, Any]],
+        status_callback: Optional[Callable[[str], None]] = None,
     ) -> Tuple[str, Dict[str, int]]:
         """Route issues through the four fix tiers.
 
@@ -241,6 +250,7 @@ class Refiner:
             error_context = "\n".join(
                 issue.to_fixer_context() for issue in llm_needed
             )
+            self._report_status(status_callback, "fixing_manim", section_title, turn_idx)
             code = await self._apply_llm_fix(
                 code, error_context, turn_idx, context
             )
@@ -312,3 +322,21 @@ class Refiner:
             )
         if len(issues) > 5:
             logger.warning(f"  ... and {len(issues) - 5} more issues")
+
+    def _report_status(
+        self,
+        status_callback: Optional[Callable[[str], None]],
+        status: str,
+        section_title: str,
+        turn_idx: int,
+    ) -> None:
+        """Safely report status updates to the caller."""
+        if not status_callback:
+            return
+        try:
+            status_callback(status)
+        except Exception as e:
+            logger.warning(
+                f"Failed to report status '{status}' for '{section_title}': {e}",
+                extra={"section_title": section_title, "turn": turn_idx, "status": status},
+            )

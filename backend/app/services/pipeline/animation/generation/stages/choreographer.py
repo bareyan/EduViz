@@ -54,11 +54,22 @@ class Choreographer:
         Raises:
             ChoreographyError: If planning fails
         """
+        # Get language from section (defaults to English)
+        language = section.get("language", "en")
+        language_name = self._get_language_name(language)
+        
         prompt = CHOREOGRAPHY_USER.format(
             title=section.get("title", "Untitled"),
             narration=section.get("narration", ""),
             timing_info=json.dumps(section.get("narration_segments", []), indent=2),
-            target_duration=duration
+            target_duration=duration,
+            theme_info=section.get("style", "3b1b"),
+            visual_hints=section.get("visual_description", ""),
+            section_data=json.dumps({
+                "key_concepts": section.get("key_concepts", []),
+                "animation_type": section.get("animation_type", "mixed")
+            }),
+            language_name=language_name
         )
         
         result = await self.engine.generate(
@@ -83,3 +94,23 @@ class Choreographer:
         logger.info(f"Generated choreography plan ({len(plan)} chars)")
         
         return plan
+
+    @staticmethod
+    def _get_language_name(language_code: str) -> str:
+        """Get language name from code."""
+        LANGUAGE_NAMES = {
+            "en": "English",
+            "fr": "French",
+            "es": "Spanish",
+            "de": "German",
+            "it": "Italian",
+            "pt": "Portuguese",
+            "zh": "Chinese",
+            "ja": "Japanese",
+            "ko": "Korean",
+            "ar": "Arabic",
+            "ru": "Russian",
+            "ua": "Ukrainian",
+            "hy": "Armenian",
+        }
+        return LANGUAGE_NAMES.get(language_code, "English")

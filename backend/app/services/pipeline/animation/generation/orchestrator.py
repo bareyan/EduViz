@@ -12,7 +12,7 @@ This is the new entry point, replacing the monolithic Animator class.
 """
 
 import asyncio
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, CostTracker
@@ -76,7 +76,9 @@ class AnimationOrchestrator:
         self,
         section: Dict[str, Any],
         duration: float,
-        context: Optional[Dict[str, Any]] = None
+        context: Optional[Dict[str, Any]] = None,
+        on_raw_code: Optional[Callable[[str, int], None]] = None,
+        status_callback: Optional[Callable[[str], None]] = None
     ) -> str:
         """Generate animation code for a section.
         
@@ -121,7 +123,9 @@ class AnimationOrchestrator:
                     duration,
                     section_title,
                     attempt_idx,
-                    retry_context
+                    retry_context,
+                    on_raw_code=on_raw_code,
+                    status_callback=status_callback
                 )
                 
                 return code
@@ -155,7 +159,9 @@ class AnimationOrchestrator:
         duration: float,
         section_title: str,
         attempt_idx: int,
-        context: Dict[str, Any]
+        context: Dict[str, Any],
+        on_raw_code: Optional[Callable[[str, int], None]] = None,
+        status_callback: Optional[Callable[[str], None]] = None
     ) -> str:
         """Execute the three-stage pipeline.
         
@@ -183,13 +189,23 @@ class AnimationOrchestrator:
             context,
             temperature=retry_temperature
         )
+
+        if on_raw_code:
+            try:
+                on_raw_code(code, attempt_idx)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to persist raw code for '{section_title}': {e}",
+                    extra={"section_title": section_title, "attempt": attempt_idx + 1}
+                )
         
         # Stage 3: Refinement (validation + fixing)
         logger.info(f"Stage 3: Refinement for '{section_title}'")
         code, stabilized = await self.refiner.refine(
             code,
             section_title,
-            context
+            context,
+            status_callback=status_callback
         )
         
         if not stabilized:

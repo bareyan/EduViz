@@ -341,6 +341,7 @@ export const AVAILABLE_LANGUAGES = [
   { code: 'ko', name: 'Korean' },
   { code: 'ar', name: 'Arabic' },
   { code: 'ru', name: 'Russian' },
+  { code: 'ua', name: 'Ukrainian' },
   { code: 'hy', name: 'Armenian' },
   { code: 'hi', name: 'Hindi' },
   { code: 'tr', name: 'Turkish' },

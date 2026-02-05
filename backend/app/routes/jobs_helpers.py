@@ -10,7 +10,7 @@ from typing import Optional, Dict, Any, List
 from app.config import OUTPUT_DIR
 from app.models import SectionProgress
 from app.core import load_script
-from app.utils.section_status import read_status as _read_section_status
+from app.utils.section_status import read_status_details as _read_section_status
 
 
 def get_stage_from_status(status: str) -> str:
@@ -76,10 +76,19 @@ def build_section_progress(
     has_code = len(code_files) > 0
 
     # First, check live status from status.json (most up-to-date)
-    live_status = _read_section_status(section_dir)
+    live_status_details = _read_section_status(section_dir)
+    live_status = live_status_details.get("status") if live_status_details else None
+    live_error = live_status_details.get("error") if live_status_details else None
     
     # Map live status to display status
-    if live_status in ("generating_audio", "generating_video", "fixing_error", "completed"):
+    if live_status in (
+        "generating_audio",
+        "generating_manim",
+        "fixing_manim",
+        "generating_video",
+        "fixing_error",
+        "completed",
+    ):
         status = live_status
     # Fall back to file-based detection
     elif merged_path.exists() or final_section_path.exists():
@@ -113,7 +122,7 @@ def build_section_progress(
         has_video=has_video,
         has_audio=has_audio,
         has_code=has_code,
-        error=None,
+        error=live_error,
         fix_attempts=0,
         qc_iterations=0
     )

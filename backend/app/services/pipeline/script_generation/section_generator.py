@@ -74,7 +74,11 @@ class SectionGenerator:
         for section_idx, section_outline in enumerate(sections_outline):
             # Determine section position and context
             if section_idx == 0:
-                position_note = "FIRST SECTION: Start with engaging hook, may greet viewer."
+                position_note = (
+                    "FIRST SECTION: Hook-first (3Blue1Brown-style). "
+                    "Open with a visual/puzzle or surprising question. "
+                    "No greetings. No agenda listing."
+                )
                 previous_context = ""
             elif section_idx == total_sections - 1:
                 position_note = "FINAL SECTION: Summarize key insights, provide memorable conclusion."
@@ -82,6 +86,15 @@ class SectionGenerator:
             else:
                 position_note = f"MIDDLE SECTION {section_idx + 1}/{total_sections}: Continue naturally, no greetings, reference earlier content."
                 previous_context = self._build_compressed_previous_context(generated_sections)
+            
+            target_seconds = section_outline.get("estimated_duration_seconds")
+            if not target_seconds:
+                if section_idx == 0:
+                    target_seconds = 210
+                elif section_idx == total_sections - 1:
+                    target_seconds = 150
+                else:
+                    target_seconds = 180
 
             # Get relevant content excerpt for this section
             supplemental_content = ""
@@ -105,6 +118,7 @@ class SectionGenerator:
                 position_note=position_note,
                 supplemental_content=supplemental_content,
                 language_instruction=language_instruction,
+                target_seconds=target_seconds,
             )
 
             # Generate this section with retries
@@ -134,7 +148,7 @@ class SectionGenerator:
                         # Try with thinking config first
                         config = PromptConfig(
                             temperature=0.7,
-                            max_output_tokens=16536,
+                            max_output_tokens=32768,
                             timeout=150,
                             response_format="json",
                             enable_thinking=True
@@ -150,7 +164,7 @@ class SectionGenerator:
                             print("[SectionGen] Model doesn't support thinking_config, retrying without it...")
                             config = PromptConfig(
                                 temperature=0.7,
-                                max_output_tokens=8192,
+                                max_output_tokens=32768,
                                 timeout=120,
                                 response_format="json",
                                 enable_thinking=False
@@ -213,9 +227,13 @@ class SectionGenerator:
         position_note: str,
         supplemental_content: str,
         language_instruction: str,
+        target_seconds: int,
     ) -> str:
         """Build a comprehensive prompt for sequential section generation."""
-        
+        target_words = max(120, int(target_seconds * 2.2))
+        min_words = int(target_words * 0.85)
+        max_words = int(target_words * 1.15)
+
         if section_idx == 0:
             # First section: Include full context
             return f"""You are an expert university professor creating a COMPREHENSIVE lecture video script.
@@ -227,8 +245,9 @@ CONTEXT & INSTRUCTIONS:
 - Explain the WHY, not just the WHAT
 - For definitions: motivation → intuition → formal statement → example
 - For theorems: importance → statement → proof strategy → steps → reinforcement  
-- Be thorough - no length limits for comprehensive mode
+- Be thorough and lecture-level in depth (like a university lecture, not a short explainer)
 - Make content engaging and educational
+- Length target: ~{target_seconds} seconds (~{min_words}–{max_words} words). Stay close.
 
 LECTURE OUTLINE:
 {outline_text}
@@ -261,6 +280,10 @@ LECTURE OUTLINE:
 
 PREVIOUS SECTIONS CONTEXT:
 {previous_context}
+
+DEPTH & LENGTH TARGETS:
+- Maintain university-lecture depth (full motivation, intuition, formalism, and careful explanation)
+- Aim for ~{target_seconds} seconds of narration (~{min_words}–{max_words} words)
 
 ═══════════════════════════════════════════════════════════════════════════════
 REQUEST: Generate narration for SECTION {section_idx + 1}

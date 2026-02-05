@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional
 
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, CostTracker
+from app.utils.section_status import write_status
 
 from .orchestrator import AnimationOrchestrator
 from .core import (
@@ -101,7 +102,26 @@ class ManimGenerator:
         }
 
         # Modular Pipeline Flow (Choreograph -> Implement -> Refine)
-        final_manim_code = await self.orchestrator.generate(section, audio_duration, context)
+        section_dir = Path(output_dir)
+        write_status(section_dir, "generating_manim")
+
+        def on_raw_code(code: str, attempt_idx: int) -> None:
+            self.file_manager.prepare_scene_file(
+                output_dir=output_dir,
+                section_index=section_index,
+                code_content=code
+            )
+
+        def status_callback(status: str) -> None:
+            write_status(section_dir, status)
+
+        final_manim_code = await self.orchestrator.generate(
+            section,
+            audio_duration,
+            context,
+            on_raw_code=on_raw_code,
+            status_callback=status_callback
+        )
         
         # Check if generation succeeded
         if not final_manim_code or not final_manim_code.strip():
@@ -161,6 +181,7 @@ class ManimGenerator:
         )
 
         # 3. Execution (Rendering)
+        write_status(Path(output_dir), "generating_video")
         output_video = await render_scene(
             self, 
             code_file, 

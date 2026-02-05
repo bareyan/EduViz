@@ -55,11 +55,19 @@ class Implementer:
         Raises:
             ImplementationError: If code generation fails
         """
+        # Get language from section (defaults to English)
+        language = section.get("language", "en")
+        language_name = self._get_language_name(language)
+        
         prompt = FULL_IMPLEMENTATION_USER.format(
             plan=plan,
             segment_timings=self.formatter.summarize_segments(section),
             total_duration=duration,
-            section_id_title=self.formatter.derive_class_name(section)
+            section_id_title=self.formatter.derive_class_name(section),
+            theme_info=section.get("style", "3b1b"),
+            section_data=f"Key concepts: {section.get('key_concepts', [])}",
+            patterns=self._get_patterns(),
+            language_name=language_name
         )
         
         config = PromptConfig(
@@ -85,3 +93,29 @@ class Implementer:
         logger.info(f"Generated implementation ({len(code)} chars)")
         
         return code
+
+    @staticmethod
+    def _get_language_name(language_code: str) -> str:
+        """Get language name from code."""
+        LANGUAGE_NAMES = {
+            "en": "English",
+            "fr": "French",
+            "es": "Spanish",
+            "de": "German",
+            "it": "Italian",
+            "pt": "Portuguese",
+            "zh": "Chinese",
+            "ja": "Japanese",
+            "ko": "Korean",
+            "ar": "Arabic",
+            "ru": "Russian",
+            "ua": "Ukrainian",
+            "hy": "Armenian",
+        }
+        return LANGUAGE_NAMES.get(language_code, "English")
+
+    @staticmethod
+    def _get_patterns() -> str:
+        """Get Manim patterns for the prompt."""
+        from ...prompts import get_compact_patterns
+        return get_compact_patterns()

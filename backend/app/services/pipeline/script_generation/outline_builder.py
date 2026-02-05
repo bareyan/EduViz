@@ -22,6 +22,7 @@ class OutlineBuilder:
         "ko": "Korean",
         "ar": "Arabic",
         "ru": "Russian",
+        "ua": "Ukrainian",
         "hy": "Armenian",
     }
 
@@ -118,7 +119,7 @@ class OutlineBuilder:
             from app.services.infrastructure.llm import PromptConfig
             config = PromptConfig(
                 temperature=0.7,
-                max_output_tokens=4096*6,
+                max_output_tokens=32768,
                 timeout=300,
                 response_format="json"
             )
@@ -270,7 +271,17 @@ Create an outline with sections for:
 - Connections and context (how concepts relate to each other)
 - Conclusion (big picture, recap, what comes next)
 
-IMPORTANT: If the source material is terse or assumes background knowledge, 
+OUTLINE LENGTH TARGET (COMPREHENSIVE): 10–20 sections total.
+- Sections should be substantial and lecture-like (avoid tiny fragments).
+- Introduction should be slightly longer and hook-driven (3Blue1Brown style): open with a visual/puzzle or surprising question.
+- Do NOT use greetings or agenda listing (no "Hello everyone, today we'll cover...").
+
+SECTION DURATION GUIDANCE (COMPREHENSIVE):
+- Introduction: ~180–240 seconds
+- Middle sections: ~150–210 seconds (2.5–3.5 minutes)
+- Conclusion: ~120–180 seconds
+
+IMPORTANT: If the source material is terse or assumes background knowledge,
 ADD explanatory sections to fill gaps and provide context.
 
 Respond with ONLY valid JSON:
@@ -304,7 +315,7 @@ Respond with ONLY valid JSON:
             }},
             "key_points": ["Point 1", "Point 2", "Point 3", "Point 4"],
             "visual_type": "[animated|static|mixed|diagram|graph]",
-            "estimated_duration_seconds": [60-300]
+            "estimated_duration_seconds": [120-240]
         }}
     ]
 }}"""
