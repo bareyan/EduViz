@@ -31,6 +31,7 @@ _MANIM_TECHNICAL_BASE = f"""
 - **SAFE ZONE**: Best practice is to keep content within X [-5.5, 5.5], Y [-3.0, 3.0].
 - **OVERLAPS**: Do NOT overlap Text/Tex objects. This is a CRITICAL ERROR.
 - **VISIBILITY**: Do NOT set object color to background color (#171717). This is a CRITICAL ERROR.
+- **OUTLINES/CONTAINERS**: If using boxes, rounded rectangles, highlights, or frames, ensure the text/element is fully inside with padding. Use .next_to(..., buff=...) or .scale_to_fit_width/height and avoid clipping.
 - Use .scale() to ensure objects fit within bounds.
 - Avoid 3D objects (ThreeDScene, ThreeDVMobject) - use 2D representations.
 - Test positioning with .move_to() before animating.

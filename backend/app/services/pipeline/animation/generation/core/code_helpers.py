@@ -16,7 +16,6 @@ from ...config import (
     DURATION_PADDING_PERCENTAGE,
     THEME_SETUP_CODES
 )
-from .validation.timing import TimingValidator
 
 def get_theme_setup_code(style: str = "3b1b") -> str:
     """Returns the Manim setup code for a specific visual style.
@@ -105,10 +104,6 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
                 indent = " " * CONSTRUCT_INDENT_SPACES
                 
             code = code[:insertion_point] + "\n" + indent + theme_setup.strip() + "\n" + code[insertion_point:]
-
-    # CRITICAL: Validate and adjust timing to match audio duration
-    timing_validator = TimingValidator()
-    code = timing_validator.validate_and_fix(code, duration)
 
     return code
 
