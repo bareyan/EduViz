@@ -103,6 +103,13 @@ WHITE, BLACK, RED, GREEN, BLUE, YELLOW, ORANGE, PINK, PURPLE, TEAL, GOLD, GRAY, 
 
 ### Special Colors
 MAROON, LIGHT_GRAY, DARK_GRAY, DARK_BLUE, LIGHT_PINK, DARK_BROWN
+
+### COLORS THAT DO NOT EXIST (will crash!)
+[WRONG] CYAN - Use TEAL instead
+[WRONG] MAGENTA - Use PINK or PURPLE instead  
+[WRONG] LIGHT_BLUE - Use BLUE_A or BLUE_B instead
+[WRONG] DARK_RED - Use RED_E or MAROON instead
+[WRONG] AQUA - Use TEAL instead
 '''
 
 VALID_ANIMATIONS = '''
@@ -122,6 +129,7 @@ VALID_ANIMATIONS = '''
 - `ReplacementTransform(source, target)` - Transform and replace
 - `TransformMatchingTex(source, target)` - Transform matching LaTeX parts
 - `TransformMatchingShapes(source, target)` - Transform matching shapes
+- `MoveToTarget(mobject)` - Move to mobject.target (set with .generate_target())
 
 ### Movement Animations
 - `Rotate(mobject, angle)` - Rotate by angle in radians
@@ -135,6 +143,20 @@ VALID_ANIMATIONS = '''
 - `LaggedStart(*animations, lag_ratio=0.1)` - Stagger animations
 - `AnimationGroup(*animations)` - Play animations together
 - `Succession(*animations)` - Play animations in sequence
+
+### ANIMATIONS THAT DO NOT EXIST (will crash!)
+[WRONG] Shake - Use Wiggle instead
+[WRONG] Pulse - Use Indicate instead
+[WRONG] Blink - Use Flash instead
+[WRONG] Appear - Use FadeIn instead
+[WRONG] Disappear - Use FadeOut instead
+[WRONG] Morph - Use Transform instead
+[WRONG] Slide - Use mobject.animate.shift() instead
+
+### API Gotchas
+- `Create(mobject)` - Takes ONLY the mobject, no other positional args
+- `Write(text)` - Takes ONLY the text object
+- Use `run_time=X` as keyword arg: `self.play(Create(obj), run_time=2)`
 '''
 
 AVAILABLE_RATE_FUNCS = '''
@@ -148,4 +170,16 @@ Use ONLY these rate functions:
 - `there_and_back` - Goes forward then returns
 - `double_smooth` - Extra smooth transitions
 - `lingering` - Slows down at the end
+
+DO NOT use: ease_in, ease_out, exponential, ease_in_expo (these don't exist)
+'''
+
+DIRECTION_CONSTANTS = '''
+## Direction Constants (USE ONLY THESE)
+
+- `UP`, `DOWN`, `LEFT`, `RIGHT`
+- `UL`, `UR`, `DL`, `DR`
+- `IN`, `OUT`, `ORIGIN`
+
+DO NOT use: `TOP`, `BOTTOM`, `UPPER`, `LOWER`
 '''

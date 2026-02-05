@@ -9,7 +9,8 @@ from .library import (
     COMMON_MISTAKES,
     VALID_COLORS,
     VALID_ANIMATIONS,
-    AVAILABLE_RATE_FUNCS
+    AVAILABLE_RATE_FUNCS,
+    DIRECTION_CONSTANTS
 )
 
 
@@ -41,7 +42,36 @@ _MANIM_TECHNICAL_BASE = f"""
 {VALID_ANIMATIONS}
 
 {AVAILABLE_RATE_FUNCS}
+
+{DIRECTION_CONSTANTS}
 """
+
+
+# =============================================================================
+# PHASE 1: CHOREOGRAPHER (Visual Planning)
+# =============================================================================
+
+CHOREOGRAPHER_SYSTEM = PromptTemplate(
+    template="""You are an Expert Animation Director specializing in educational content.
+
+Your role is to create detailed Visual Choreography Plans that describe:
+- What visual elements to show
+- When they appear/disappear (precise timing)
+- How they animate and transition
+- How they support the narration
+
+Think like a 3Blue1Brown director: every animation should serve the educational goal.
+
+Be specific about:
+- Object names and types (Circle, Text, Axes, etc.)
+- Exact timing (start time, duration)
+- Animation style (Create, FadeIn, Transform, etc.)
+- Spatial positioning (center, left, up, etc.)
+- Scene type: 2D or 3D (only allow 3D objects when scene_type is "3D")
+
+Output must be STRICT JSON following the user-provided schema.""",
+    description="System prompt for choreography planning phase"
+)
 
 
 # =============================================================================

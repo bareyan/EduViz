@@ -57,6 +57,9 @@ class RuntimeValidator:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, dir=temp_dir, encoding='utf-8') as tmp_file:
             tmp_path = Path(tmp_file.name)
             tmp_file.write(code)
+        
+        # Initialize temp_media_dir to None
+        temp_media_dir = None
             
         try:
             # We need to find the scene name to be robust, 
@@ -81,7 +84,7 @@ class RuntimeValidator:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=30.0  # 30s timeout
+                timeout=90.0  # 90s timeout - dry-run can be slow with complex loops
             )
             
             if result_proc.returncode != 0:
@@ -89,7 +92,7 @@ class RuntimeValidator:
                 result.add_error("Runtime", error_msg)
                 
         except subprocess.TimeoutExpired:
-            result.add_error("Runtime", "Execution timed out (possible infinite loop)")
+            result.add_error("Runtime", "Execution timed out after 90s - check for large loops (e.g., for _ in range(1000)) or complex operations")
             return result
                 
         except Exception as e:
@@ -105,7 +108,7 @@ class RuntimeValidator:
                     logger.warning(f"Failed to delete temp file {tmp_path}: {e}")
             
             # Cleanup temp media dir
-            if 'temp_media_dir' in locals() and temp_media_dir.exists():
+            if temp_media_dir is not None and temp_media_dir.exists():
                 try:
                     shutil.rmtree(temp_media_dir)
                 except Exception as e:

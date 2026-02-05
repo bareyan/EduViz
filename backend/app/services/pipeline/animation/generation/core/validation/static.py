@@ -31,16 +31,13 @@ class ValidationResult:
 
 class StaticValidator:
     """
-    Validates Python code using industrial-strength static analysis tools.
+    Validates Python code using Ruff for fast static analysis.
     
-    Tools:
-    - Ruff: Fast linting (syntax, imports, basic bugs)
-    - Pyright: Type checking (arguments, attributes, existence)
+    Focus: Only check errors that prevent animation rendering.
     """
 
     def __init__(self):
-        # Resolve paths to tools (assuming they are in the same bin/Scripts dir as python)
-        # This handles venv isolation correctly
+        # Resolve paths to Ruff (assuming it's in the same bin/Scripts dir as python)
         import sys
         import shutil
         
@@ -51,25 +48,16 @@ class StaticValidator:
         if not shutil.which(self.ruff_cmd):
              self.ruff_cmd = "ruff" # Fallback to PATH
              
-        self.pyright_cmd = str(bin_dir / "pyright")
-        if not shutil.which(self.pyright_cmd):
-             self.pyright_cmd = "pyright" # Fallback to PATH
-             
-        # On Windows, they might have .exe extension
+        # On Windows, it might have .exe extension
         if os.name == 'nt':
             if not self.ruff_cmd.endswith('.exe') and self.ruff_cmd != "ruff":
                 self.ruff_cmd += ".exe"
-            if not self.pyright_cmd.endswith('.exe') and self.pyright_cmd != "pyright":
-                self.pyright_cmd += ".exe"
         
         # Check tool availability
         self.ruff_available = shutil.which(self.ruff_cmd) is not None
-        self.pyright_available = shutil.which(self.pyright_cmd) is not None
         
         if not self.ruff_available:
             logger.warning("Ruff not found - syntax validation will be limited")
-        if not self.pyright_available:
-            logger.warning("Pyright not found - type checking disabled (install: npm install -g pyright)")
 
     async def validate(self, code: str, temp_dir: Optional[str] = None) -> ValidationResult:
         """
@@ -119,47 +107,20 @@ class StaticValidator:
             except Exception as e:
                 result.add_error("System", f"AST analysis failed: {e}")
 
-            # 2. External Tools (Ruff/Pyright)
-            tasks = []
+            # 2. Run Ruff for critical errors
             if self.ruff_available:
-                tasks.append(self._run_ruff(tmp_path))
-            else:
-                tasks.append(asyncio.sleep(0))  # Dummy coroutine
-            
-            if self.pyright_available:
-                tasks.append(self._run_pyright(tmp_path))
-            else:
-                tasks.append(asyncio.sleep(0))  # Dummy coroutine
-            
-            results = await asyncio.gather(*tasks)
-            ruff_res = results[0] if self.ruff_available else []
-            pyright_res = results[1] if self.pyright_available and len(results) > 1 else {}
-            
-            # Process Ruff Results
-            if ruff_res:
-                for check in ruff_res:
-                    # Ruff JSON schema: { "code": "F401", "message": "...", "location": {"row": 1, ...} }
-                    # We accept some lints but fail on errors. 
-                    # For now, we trap everything that isn't ignored by configuration.
-                    msg = check.get("message", "Unknown error")
-                    code_id = check.get("code", "UNK")
-                    row = check.get("location", {}).get("row")
-                    result.add_error("Ruff", f"{code_id}: {msg}", line=row)
-
-            # Process Pyright Results
-            if pyright_res:
-                # Pyright JSON schema: { "generalDiagnostics": [ { "message": "...", "range": {...} } ] }
-                diagnostics = pyright_res.get("generalDiagnostics", [])
-                for diag in diagnostics:
-                    msg = diag.get("message", "Unknown type error")
-                    # range.start.line is 0-indexed
-                    line = diag.get("range", {}).get("start", {}).get("line", -1) + 1
-                    result.add_error("Pyright", msg, line=line)
+                ruff_res = await self._run_ruff(tmp_path)
+                
+                # Process Ruff Results
+                if ruff_res:
+                    for check in ruff_res:
+                        # Ruff JSON schema: { "code": "F401", "message": "...", "location": {"row": 1, ...} }
+                        msg = check.get("message", "Unknown error")
+                        code_id = check.get("code", "UNK")
+                        row = check.get("location", {}).get("row")
+                        result.add_error("Ruff", f"{code_id}: {msg}", line=row)
                     
-            result.raw_data = {
-                "ruff": ruff_res,
-                "pyright": pyright_res
-            }
+                result.raw_data = {"ruff": ruff_res}
             
             return result
 
@@ -179,19 +140,22 @@ class StaticValidator:
     async def _run_ruff(self, file_path: Path) -> List[Dict[str, Any]]:
         """Runs ruff and returns list of violation dicts."""
         try:
-            # Only check CRITICAL errors that break execution:
+            # Only check CRITICAL errors that BREAK RENDERING:
             # E999 = Syntax errors (missing colons, invalid syntax)
             # F821 = Undefined name (typos, missing imports)
+            # F822 = Undefined name in __all__
+            # E902 = IOError/SyntaxError (file issues)
             # 
-            # IGNORE style and non-critical issues:
+            # IGNORE everything else - we only care if the animation will render:
             # F403/F405 = Star imports (standard for Manim)
             # F841 = Unused variable (doesn't affect video output)
             # E501 = Line too long (doesn't matter for generated code)
+            # All style/formatting issues
             cmd = [
                 self.ruff_cmd, 
                 "check", 
                 "--output-format", "json",
-                "--select", "E999,F821",  # Only syntax errors and undefined names
+                "--select", "E999,F821,F822,E902",  # Only execution-blocking errors
                 str(file_path)
             ]
             
@@ -215,30 +179,3 @@ class StaticValidator:
         except Exception as e:
             logger.debug(f"Ruff execution failed: {e}")
             return []
-
-    async def _run_pyright(self, file_path: Path) -> Dict[str, Any]:
-        """Runs pyright and returns full JSON report."""
-        try:
-            # --outputjson return JSON report
-            cmd = [self.pyright_cmd, "--outputjson", str(file_path)]
-            
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await proc.communicate()
-            
-            if stdout:
-                return json.loads(stdout.decode())
-            return {}
-            
-        except FileNotFoundError:
-            logger.debug("Pyright not found in PATH")
-            return {}
-        except json.JSONDecodeError:
-            logger.error("Failed to parse Pyright JSON output")
-            return {}
-        except Exception as e:
-            logger.debug(f"Pyright execution failed: {e}")
-            return {}
