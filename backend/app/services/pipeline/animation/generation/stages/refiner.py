@@ -69,6 +69,8 @@ class Refiner:
             "static_failures": 0,
             "runtime_failures": 0
         }
+        last_failure_type: Optional[str] = None
+        last_errors: list[str] = []
         
         logger.info(
             f"Starting refinement for '{section_title}'",
@@ -88,6 +90,8 @@ class Refiner:
             if not static_result.valid:
                 stats["static_failures"] += 1
                 error_data = "\n".join(static_result.errors)
+                last_failure_type = "static"
+                last_errors = static_result.errors
                 self._log_validation_failure(
                     "static",
                     turn_idx,
@@ -121,6 +125,8 @@ class Refiner:
             # Runtime failed
             stats["runtime_failures"] += 1
             error_data = "\n".join(runtime_result.errors)
+            last_failure_type = "runtime"
+            last_errors = runtime_result.errors
             self._log_validation_failure(
                 "runtime",
                 turn_idx,
@@ -140,7 +146,20 @@ class Refiner:
             f"Refinement exhausted for '{section_title}'",
             extra={**stats, "refinement_stage": "exhausted"}
         )
+        if last_failure_type == "runtime" and self._is_spatial_only(last_errors):
+            logger.warning(
+                f"Only spatial errors remain after retries for '{section_title}'. Proceeding to render.",
+                extra={**stats, "refinement_stage": "spatial_only"}
+            )
+            return current_code, True
+
         return current_code, False
+
+    @staticmethod
+    def _is_spatial_only(errors: list[str]) -> bool:
+        if not errors:
+            return False
+        return all("Spatial validation failed" in e or "Spatial Error" in e for e in errors)
     
     async def _apply_fix(
         self,
