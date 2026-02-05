@@ -176,10 +176,10 @@ def _perform_spatial_checks(self):
         if error_count == 1:
             joined_errors = unique_errors[0]
         else:
-            joined_errors = "\n  - " + "\n  - ".join(unique_errors)
+            joined_errors = "\\n  - " + "\\n  - ".join(unique_errors)
         # Truncate if too long
         if len(joined_errors) > 800:
-            joined_errors = joined_errors[:800] + "\n  ..."
+            joined_errors = joined_errors[:800] + "\\n  ..."
         sys.exit(f"Spatial validation failed ({error_count} issues):{joined_errors}")
 """
 
