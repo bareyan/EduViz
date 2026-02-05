@@ -9,7 +9,8 @@ Also handles narration segmentation and script validation (shared by all modes).
 
 import asyncio
 import json
-from typing import Dict, Any, List
+from pathlib import Path
+from typing import Dict, Any, List, Optional
 
 from .base import BaseScriptGenerator
 
@@ -27,6 +28,9 @@ class SectionGenerator:
         language_name: str,
         language_instruction: str,
         topic: Dict[str, Any] = None,
+        pdf_path: Optional[str] = None,
+        total_pages: Optional[int] = None,
+        artifacts_dir: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Generate sections from an outline (comprehensive mode only).
         
@@ -43,6 +47,9 @@ class SectionGenerator:
             language_name=language_name,
             language_instruction=language_instruction,
             gaps_to_fill=gaps_to_fill,
+            pdf_path=pdf_path,
+            total_pages=total_pages,
+            artifacts_dir=artifacts_dir,
         )
 
     async def _generate_sections_sequentially(
@@ -53,6 +60,9 @@ class SectionGenerator:
         language_name: str,
         language_instruction: str,
         gaps_to_fill: List[str],
+        pdf_path: Optional[str],
+        total_pages: Optional[int],
+        artifacts_dir: Optional[str],
     ) -> List[Dict[str, Any]]:
         """
         Generate sections one by one using individual generate_content calls.
@@ -69,9 +79,14 @@ class SectionGenerator:
             for i, sec in enumerate(sections_outline)
         )
 
-        # For comprehensive mode, use more content initially
-        initial_content_limit = min(25000, max(15000, len(content) // 2))
-        initial_content_excerpt = content[:initial_content_limit]
+        # For comprehensive mode, use more content initially (non-PDF only)
+        initial_content_limit = min(25000, max(15000, len(content) // 2)) if content else 0
+        initial_content_excerpt = content[:initial_content_limit] if content else ""
+
+        pdf_slices_dir = None
+        if pdf_path and artifacts_dir:
+            pdf_slices_dir = Path(artifacts_dir) / "pdf_slices"
+            pdf_slices_dir.mkdir(parents=True, exist_ok=True)
 
         for section_idx, section_outline in enumerate(sections_outline):
             # Determine section position and context
@@ -85,9 +100,9 @@ class SectionGenerator:
                 position_note = f"MIDDLE SECTION {section_idx + 1}/{total_sections}: Continue naturally, no greetings, reference earlier content."
                 previous_context = self._build_compressed_previous_context(generated_sections)
 
-            # Get relevant content excerpt for this section
+            # Get relevant content excerpt for this section (non-PDF only)
             supplemental_content = ""
-            if len(content) > initial_content_limit:
+            if content and len(content) > initial_content_limit:
                 section_excerpt = self._get_relevant_content_for_section(
                     content=content,
                     section_outline=section_outline,
@@ -96,6 +111,34 @@ class SectionGenerator:
                 )
                 if section_excerpt and section_excerpt[:500] not in initial_content_excerpt[:5000]:
                     supplemental_content = f"\n\nRELEVANT SOURCE MATERIAL FOR THIS SECTION:\n{section_excerpt[:5000]}"
+
+            # Prepare PDF slice if applicable
+            pdf_part = None
+            source_pages = None
+            source_pdf_path = None
+            if pdf_path:
+                page_start = self._coerce_page(section_outline.get("page_start"))
+                page_end = self._coerce_page(section_outline.get("page_end"))
+                if page_start and page_end:
+                    source_pages = {"start": page_start, "end": page_end}
+                else:
+                    source_pages = {"start": 1, "end": total_pages} if total_pages else None
+
+                slice_path = None
+                if pdf_slices_dir and page_start and page_end:
+                    slice_filename = f"section_{section_idx + 1}_{page_start}-{page_end}.pdf"
+                    slice_path = self.base.slice_pdf_pages(
+                        source_path=pdf_path,
+                        start_page=page_start,
+                        end_page=page_end,
+                        output_path=str(pdf_slices_dir / slice_filename)
+                    )
+                if slice_path:
+                    source_pdf_path = slice_path
+                    pdf_part = self.base.build_pdf_part(slice_path)
+                else:
+                    source_pdf_path = pdf_path
+                    pdf_part = self.base.build_pdf_part(pdf_path)
 
             # Build prompt for this section
             prompt = self._build_sequential_prompt(
@@ -107,6 +150,9 @@ class SectionGenerator:
                 position_note=position_note,
                 supplemental_content=supplemental_content,
                 language_instruction=language_instruction,
+                pdf_attached=bool(pdf_part),
+                page_range=source_pages,
+                total_pages=total_pages,
             )
 
             # Generate this section with retries
@@ -124,7 +170,20 @@ class SectionGenerator:
                             "id": {"type": "string"},
                             "title": {"type": "string"},
                             "narration": {"type": "string"},
-                            "tts_narration": {"type": "string"}
+                            "tts_narration": {"type": "string"},
+                            "supporting_data": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"type": "string"},
+                                        "label": {"type": "string"},
+                                        "value": {},
+                                        "notes": {"type": "string"}
+                                    },
+                                    "required": ["type", "value"]
+                                }
+                            }
                         },
                         "required": ["id", "title", "narration", "tts_narration"]
                     }
@@ -141,10 +200,12 @@ class SectionGenerator:
                             response_format="json",
                             enable_thinking=True
                         )
+                        contents = self.base.build_prompt_contents(prompt, pdf_part)
                         response_text = await self.base.generate_with_engine(
                             prompt=prompt,
                             config=config,
-                            response_schema=response_schema
+                            response_schema=response_schema,
+                            contents=contents,
                         )
                     except Exception as e:
                         error_msg = str(e)
@@ -157,10 +218,12 @@ class SectionGenerator:
                                 response_format="json",
                                 enable_thinking=False
                             )
+                            contents = self.base.build_prompt_contents(prompt, pdf_part)
                             response_text = await self.base.generate_with_engine(
                                 prompt=prompt,
                                 config=config,
-                                response_schema=response_schema
+                                response_schema=response_schema,
+                                contents=contents,
                             )
                         else:
                             raise
@@ -177,6 +240,16 @@ class SectionGenerator:
                         # Ensure tts_narration exists
                         if not section.get("tts_narration"):
                             section["tts_narration"] = section.get("narration", "")
+
+                        # Ensure supporting_data exists
+                        if not section.get("supporting_data"):
+                            section["supporting_data"] = []
+
+                        # Store source PDF metadata
+                        if source_pages:
+                            section["source_pages"] = source_pages
+                        if source_pdf_path:
+                            section["source_pdf_path"] = source_pdf_path
                         
                         generated_sections.append(section)
                         print(f"[SectionGen] OK Section {section_idx + 1} generated successfully")
@@ -199,6 +272,9 @@ class SectionGenerator:
                         "title": section_outline.get("title", f"Part {section_idx + 1}"),
                         "narration": f"Let's explore {section_outline.get('title', 'this topic')}. (Generation failed)",
                         "tts_narration": f"Let's explore {section_outline.get('title', 'this topic')}. (Generation failed)",
+                        "supporting_data": [],
+                        **({"source_pages": source_pages} if source_pages else {}),
+                        **({"source_pdf_path": source_pdf_path} if source_pdf_path else {}),
                         "error": "Failed after max retries",
                     }
                 )
@@ -215,9 +291,26 @@ class SectionGenerator:
         position_note: str,
         supplemental_content: str,
         language_instruction: str,
+        pdf_attached: bool,
+        page_range: Optional[Dict[str, int]],
+        total_pages: Optional[int],
     ) -> str:
         """Build a comprehensive prompt for sequential section generation."""
-        
+        page_note = ""
+        if pdf_attached:
+            total_note = f"{total_pages}" if total_pages is not None else "unknown"
+            if page_range:
+                page_note = (
+                    f"\nPDF NOTE:\n- The PDF for this section is ATTACHED.\n"
+                    f"- Use pages {page_range.get('start')}–{page_range.get('end')} (1-based, inclusive) "
+                    f"out of {total_note}.\n"
+                )
+            else:
+                page_note = (
+                    f"\nPDF NOTE:\n- The PDF for this section is ATTACHED.\n"
+                    f"- Page range is unspecified; use relevant pages. Total pages: {total_note}.\n"
+                )
+
         if section_idx == 0:
             # First section: Include full context
             return f"""You are an expert university professor creating a COMPREHENSIVE lecture video script.
@@ -235,6 +328,7 @@ CONTEXT & INSTRUCTIONS:
 LECTURE OUTLINE:
 {outline_text}
 
+{page_note}
 SOURCE MATERIAL:
 {initial_content_excerpt}
 
@@ -248,11 +342,22 @@ KEY POINTS: {json.dumps(section_outline.get('key_points', []))}
 
 {position_note}
 
+SUPPORTING DATA (CRITICAL — BE EXHAUSTIVE):
+- Include a "supporting_data" array for visuals.
+- Capture ALL useful data from this section, even if not narrated:
+  full tables (all rows/columns), matrices, formulas with parameters,
+  datasets, distributions, charts/axes data, constants, thresholds,
+  algorithm inputs/outputs, categorical breakdowns, and any percentages.
+- If a table appears, include the COMPLETE table data (no summarizing).
+- Prefer structured values (arrays/objects) so visuals can be generated accurately.
+- Each item must include: type, label, value, notes (notes can be empty).
+
 OUTPUT: Valid JSON only, no markdown. Generate complete narration:
 {{"id": "{section_outline.get('id', f'section_{section_idx}')}",
 "title": "{section_outline.get('title', f'Part {section_idx + 1}')}",
 "narration": "Complete spoken narration for this section...",
-"tts_narration": "TTS-ready narration: spell out math symbols (e.g., 'theta' not 'θ', 'x squared' not 'x²') AND write letter names as phonetic transcriptions for correct TTS pronunciation in the target language (e.g., in French: 'igrec' instead of 'y', 'double-ve' instead of 'w')..."}}"""
+"tts_narration": "TTS-ready narration: spell out math symbols (e.g., 'theta' not 'θ', 'x squared' not 'x²') AND write letter names as phonetic transcriptions for correct TTS pronunciation in the target language (e.g., in French: 'igrec' instead of 'y', 'double-ve' instead of 'w')...",
+"supporting_data": [{{"type": "statistic", "label": "Example", "value": "42%", "notes": "Use in chart"}}]}}"""
         else:
             # Subsequent sections: Include previous context
             return f"""Continue generating the lecture video script.
@@ -264,6 +369,7 @@ LECTURE OUTLINE:
 PREVIOUS SECTIONS CONTEXT:
 {previous_context}
 
+{page_note}
 ═══════════════════════════════════════════════════════════════════════════════
 REQUEST: Generate narration for SECTION {section_idx + 1}
 ═══════════════════════════════════════════════════════════════════════════════
@@ -274,11 +380,31 @@ KEY POINTS: {json.dumps(section_outline.get('key_points', []))}
 
 {position_note}{supplemental_content}
 
+SUPPORTING DATA (CRITICAL — BE EXHAUSTIVE):
+- Include a "supporting_data" array for visuals.
+- Capture ALL useful data from this section, even if not narrated:
+  full tables (all rows/columns), matrices, formulas with parameters,
+  datasets, distributions, charts/axes data, constants, thresholds,
+  algorithm inputs/outputs, categorical breakdowns, and any percentages.
+- If a table appears, include the COMPLETE table data (no summarizing).
+- Prefer structured values (arrays/objects) so visuals can be generated accurately.
+- Each item must include: type, label, value, notes (notes can be empty).
+
 OUTPUT: Valid JSON only.
 {{"id": "{section_outline.get('id', f'section_{section_idx}')}",
 "title": "{section_outline.get('title', f'Part {section_idx + 1}')}",
 "narration": "Complete spoken narration...",
-"tts_narration": "TTS-ready: math symbols spelled out, letter names as phonetic transcriptions for correct pronunciation..."}}"""
+"tts_narration": "TTS-ready: math symbols spelled out, letter names as phonetic transcriptions for correct pronunciation...",
+"supporting_data": [{{"type": "statistic", "label": "Example", "value": "42%", "notes": "Use in chart"}}]}}"""
+
+    def _coerce_page(self, value: Any) -> Optional[int]:
+        try:
+            if value is None:
+                return None
+            page = int(value)
+            return page if page > 0 else None
+        except Exception:
+            return None
 
     def _build_compressed_previous_context(self, previous_sections: List[Dict[str, Any]]) -> str:
         if not previous_sections:

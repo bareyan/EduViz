@@ -2,7 +2,7 @@
 Outline builder for script generation (Phase 1)
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 from .base import BaseScriptGenerator
 
@@ -37,6 +37,8 @@ class OutlineBuilder:
         content_focus: str,
         document_context: str = "auto",
         video_mode: str = "comprehensive",
+        pdf_path: Optional[str] = None,
+        total_pages: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Generate a detailed outline (Phase 1)."""
 
@@ -51,15 +53,21 @@ class OutlineBuilder:
         focus_instructions = self._build_focus_instructions(content_focus)
         context_instructions = self._build_context_instructions(document_context)
 
+        prompt_content = content
+        if pdf_path and not prompt_content:
+            prompt_content = "PDF attached. Use the document directly."
+
         phase1_prompt = self._build_prompt(
             topic=topic,
-            content=content,
+            content=prompt_content,
             suggested_duration=suggested_duration,
             language_instruction=language_instruction,
             focus_instructions=focus_instructions,
             context_instructions=context_instructions,
             language_name=language_name,
             video_mode=video_mode,
+            total_pages=total_pages,
+            pdf_attached=bool(pdf_path),
         )
 
         # Define response schema for structured JSON output
@@ -104,9 +112,21 @@ class OutlineBuilder:
                             },
                             "key_points": {"type": "array", "items": {"type": "string"}},
                             "visual_type": {"type": "string"},
-                            "estimated_duration_seconds": {"type": "integer"}
+                            "estimated_duration_seconds": {"type": "integer"},
+                            "page_start": {"type": "integer"},
+                            "page_end": {"type": "integer"},
                         },
-                        "required": ["id", "title", "section_type", "content_to_cover", "key_points", "visual_type", "estimated_duration_seconds"]
+                        "required": [
+                            "id",
+                            "title",
+                            "section_type",
+                            "content_to_cover",
+                            "key_points",
+                            "visual_type",
+                            "estimated_duration_seconds",
+                            "page_start",
+                            "page_end",
+                        ]
                     }
                 }
             },
@@ -123,10 +143,17 @@ class OutlineBuilder:
                 response_format="json"
             )
 
+            contents = None
+            if pdf_path:
+                pdf_part = self.base.build_pdf_part(pdf_path)
+                if pdf_part:
+                    contents = self.base.build_prompt_contents(phase1_prompt, pdf_part)
+
             response_text = await self.base.generate_with_engine(
                 prompt=phase1_prompt,
                 config=config,
-                response_schema=response_schema
+                response_schema=response_schema,
+                contents=contents,
             )
             outline = self.base.parse_json(response_text)
             if not outline:
@@ -205,7 +232,19 @@ DOCUMENT CONTEXT: AUTO-DETECT
         context_instructions: str,
         language_name: str,
         video_mode: str,
+        total_pages: Optional[int],
+        pdf_attached: bool,
     ) -> str:
+        page_note = f"{total_pages}" if total_pages is not None else "unknown"
+        pdf_note = ""
+        if pdf_attached:
+            pdf_note = (
+                "\nPDF NOTE:\n"
+                "- The source PDF is ATTACHED. Use it directly.\n"
+                "- For EACH section, include page_start and page_end (1-based, inclusive).\n"
+                f"- Total pages: {page_note}\n"
+            )
+
         return f"""You are an expert university professor planning a COMPREHENSIVE lecture video that provides DEEP UNDERSTANDING.
 
 Your goal is NOT just to cover the material, but to help viewers truly UNDERSTAND it at a profound level.
@@ -257,6 +296,7 @@ TARGET DURATION: {suggested_duration}+ minutes (take as long as needed for deep 
 OUTPUT LANGUAGE: {language_name}
 ═══════════════════════════════════════════════════════════════════════════════
 
+{pdf_note}
 SOURCE MATERIAL (analyze ALL of this - nothing should be omitted):
 {content[:60000]}
 
@@ -304,7 +344,9 @@ Respond with ONLY valid JSON:
             }},
             "key_points": ["Point 1", "Point 2", "Point 3", "Point 4"],
             "visual_type": "[animated|static|mixed|diagram|graph]",
-            "estimated_duration_seconds": [60-300]
+            "estimated_duration_seconds": [60-300],
+            "page_start": [1-based start page],
+            "page_end": [1-based end page]
         }}
     ]
 }}"""

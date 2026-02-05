@@ -7,7 +7,7 @@ overview mode generates everything at once for efficiency.
 """
 
 import asyncio
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from app.services.infrastructure.parsing import parse_json_response
 from .base import BaseScriptGenerator
@@ -28,6 +28,8 @@ class OverviewGenerator:
         topic: Dict[str, Any],
         language_name: str,
         language_instruction: str,
+        pdf_path: Optional[str] = None,
+        total_pages: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Generate a complete overview script in a single prompt.
         
@@ -40,14 +42,18 @@ class OverviewGenerator:
         Returns:
             Complete script dict with title, overview, sections, etc.
         """
-        # Limit content for overview - we don't need everything
-        content_excerpt = content[:15000] if len(content) > 15000 else content
+        # Limit content for overview - we don't need everything (non-PDF only)
+        content_excerpt = ""
+        if content:
+            content_excerpt = content[:15000] if len(content) > 15000 else content
         
         prompt = self._build_overview_prompt(
             content=content_excerpt,
             topic=topic,
             language_name=language_name,
             language_instruction=language_instruction,
+            pdf_attached=bool(pdf_path),
+            total_pages=total_pages,
         )
         
         response_schema = self._get_response_schema()
@@ -63,10 +69,17 @@ class OverviewGenerator:
                 response_format="json"
             )
             
+            contents = None
+            if pdf_path:
+                pdf_part = self.base.build_pdf_part(pdf_path)
+                if pdf_part:
+                    contents = self.base.build_prompt_contents(prompt, pdf_part)
+
             response_text = await self.base.generate_with_engine(
                 prompt=prompt,
                 config=config,
-                response_schema=response_schema
+                response_schema=response_schema,
+                contents=contents,
             )
             
             if not response_text:
@@ -82,6 +95,13 @@ class OverviewGenerator:
             
             # Validate and fix sections
             script = self._validate_script(script, topic)
+
+            # Attach PDF metadata to sections if available
+            if pdf_path:
+                for section in script.get("sections", []):
+                    section.setdefault("source_pdf_path", pdf_path)
+                    if total_pages:
+                        section.setdefault("source_pages", {"start": 1, "end": total_pages})
             
             print(f"[OverviewGen] Successfully generated script with {len(script.get('sections', []))} sections")
             return script
@@ -99,12 +119,23 @@ class OverviewGenerator:
         topic: Dict[str, Any],
         language_name: str,
         language_instruction: str,
+        pdf_attached: bool,
+        total_pages: Optional[int],
     ) -> str:
         """Build the single prompt for overview script generation."""
         title = topic.get("title", "Educational Content")
         description = topic.get("description", "")
         subject_area = topic.get("subject_area", "general")
         
+        total_note = f"{total_pages}" if total_pages is not None else "unknown"
+        pdf_note = ""
+        if pdf_attached:
+            pdf_note = (
+                "\nPDF NOTE:\n"
+                "- The source PDF is ATTACHED. Use it directly.\n"
+                f"- Total pages: {total_note}\n"
+            )
+
         return f"""You are an expert educator creating a SHORT, ENGAGING overview video script.
 {language_instruction}
 
@@ -139,6 +170,7 @@ OUTPUT LANGUAGE: {language_name}
 
 ═══════════════════════════════════════════════════════════════════════════════
 
+{pdf_note}
 SOURCE MATERIAL (extract the key concepts from this):
 {content}
 
@@ -148,6 +180,9 @@ Generate a COMPLETE video script with 3-5 sections. For each section, include:
 - A clear title
 - Engaging narration (spoken text for the video)
 - TTS-ready narration (spell out math symbols, format for text-to-speech)
+- Supporting data list (CRITICAL — be exhaustive: include full table data, matrices,
+  formulas with parameters, datasets, charts/axes values, constants, thresholds,
+  and any quantitative details useful for visuals)
 
 Respond with ONLY valid JSON matching the required schema."""
 
@@ -202,6 +237,19 @@ Respond with ONLY valid JSON matching the required schema."""
                             "visual_type": {
                                 "type": "string",
                                 "description": "Type of visual (animated, static, diagram, graph)"
+                            },
+                            "supporting_data": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"type": "string"},
+                                        "label": {"type": "string"},
+                                        "value": {},
+                                        "notes": {"type": "string"}
+                                    },
+                                    "required": ["type", "value"]
+                                }
                             }
                         },
                         "required": ["id", "title", "narration", "tts_narration"]
@@ -251,6 +299,9 @@ Respond with ONLY valid JSON matching the required schema."""
             
             if not section.get("visual_type"):
                 section["visual_type"] = "animated"
+
+            if not section.get("supporting_data"):
+                section["supporting_data"] = []
         
         script["sections"] = sections
         return script

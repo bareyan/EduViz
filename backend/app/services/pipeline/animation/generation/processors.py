@@ -641,6 +641,7 @@ class Animator:
             timing_info=self._format_timing_info(section),
             target_duration=duration,
             visual_hints=visual_hints,
+            section_data=self._format_section_data(section),
             theme_info=theme_info,
         )
         
@@ -916,6 +917,7 @@ class Animator:
             total_duration=duration,
             section_id_title=section_id_title,
             patterns=get_compact_patterns(),
+            section_data=self._format_section_data(section),
             theme_info=theme_info,
         )
 
@@ -1081,6 +1083,36 @@ class Animator:
                 f"{text[:60]}..."
             )
         return "\n".join(lines)
+
+    def _format_section_data(self, section: Dict[str, Any]) -> str:
+        """Format supporting data for animation prompts."""
+        data = section.get("supporting_data") or []
+        if not isinstance(data, list) or not data:
+            return "None"
+
+        lines: List[str] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            item_type = item.get("type", "data")
+            label = item.get("label") or ""
+            value = item.get("value")
+            notes = item.get("notes") or ""
+
+            if isinstance(value, (dict, list)):
+                value_text = json.dumps(value)
+            else:
+                value_text = str(value) if value is not None else ""
+
+            if label:
+                line = f"- [{item_type}] {label}: {value_text}"
+            else:
+                line = f"- [{item_type}] {value_text}"
+            if notes:
+                line = f"{line} ({notes})"
+            lines.append(line)
+
+        return "\n".join(lines) if lines else "None"
 
 
     def _get_section_class_name(self, section: Dict[str, Any]) -> str:

@@ -28,6 +28,9 @@ CHOREOGRAPHY_USER = PromptTemplate(
 **Visual Hints**:
 {visual_hints}
 
+**Section Data (for visuals, may be non-narrated)**:
+{section_data}
+
 ## YOUR TASK
 
 Create a structured plan with:
@@ -315,6 +318,9 @@ FULL_IMPLEMENTATION_USER = PromptTemplate(
 
 ## SEGMENT TIMINGS
 {segment_timings}
+
+## SECTION DATA (for visuals, may be non-narrated)
+{section_data}
 
 ## REQUIREMENTS
 - **Total Duration**: {total_duration}s (must match exactly)

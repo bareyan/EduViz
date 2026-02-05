@@ -190,19 +190,21 @@ class LLMLogger:
                 elif isinstance(item, dict):
                     # Handle dict-like content parts
                     if "text" in item:
-                        parts.append(item["text"])
+                        if isinstance(item["text"], str):
+                            parts.append(item["text"])
                     elif "parts" in item:
                         for part in item["parts"]:
                             if isinstance(part, str):
                                 parts.append(part)
-                            elif isinstance(part, dict) and "text" in part:
+                            elif isinstance(part, dict) and "text" in part and isinstance(part["text"], str):
                                 parts.append(part["text"])
                 elif hasattr(item, "text"):
                     # Handle object-like content parts
-                    parts.append(item.text)
+                    if isinstance(item.text, str):
+                        parts.append(item.text)
                 elif hasattr(item, "parts"):
                     for part in item.parts:
-                        if hasattr(part, "text"):
+                        if hasattr(part, "text") and isinstance(part.text, str):
                             parts.append(part.text)
             return "\n".join(parts)
         
