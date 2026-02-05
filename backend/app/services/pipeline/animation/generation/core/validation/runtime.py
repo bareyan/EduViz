@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from app.core import get_logger
+from ....config import MAX_ERROR_MESSAGE_LENGTH
 from .models import (
     IssueCategory,
     IssueConfidence,
@@ -262,7 +263,7 @@ class RuntimeValidator:
                 line_num = int(match.group(1))
                 break
 
-        if len(exception_line) > 300:
-            exception_line = exception_line[:300] + "..."
+        if len(exception_line) > MAX_ERROR_MESSAGE_LENGTH:
+            exception_line = exception_line[:MAX_ERROR_MESSAGE_LENGTH] + "..."
 
         return exception_line, line_num

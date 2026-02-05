@@ -30,8 +30,8 @@ logger = get_logger(__name__, component="deterministic_fixer")
 
 # ── Known bad patterns that can be fixed with simple regex ───────────────────
 _KNOWN_PATTERNS: List[Tuple[re.Pattern, str, str]] = [
-    # self.wait(0) → remove the line
-    (re.compile(r"^(\s*)self\.wait\(\s*0\s*\)\s*$", re.MULTILINE), "", "Remove self.wait(0)"),
+    # self.wait(0) or self._monitored_wait(0) → remove the line
+    (re.compile(r"^(\s*)self\.(?:_monitored_)?wait\(\s*0(?:\.0*)?\s*\)\s*$", re.MULTILINE), "", "Remove self.wait(0)"),
     # tracker.number → tracker.get_value()
     (
         re.compile(r"(\w+)\.number\b(?!\s*=)"),

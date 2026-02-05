@@ -24,14 +24,6 @@ from .library import (
     VALID_ANIMATIONS,
     DIRECTION_CONSTANTS
 )
-from .patterns import (
-    get_patterns_for_prompt,
-    get_compact_patterns,
-    NEURAL_NETWORK_EXAMPLE,
-    GRAPH_PLOT_EXAMPLE,
-    VALUE_TRACKER_EXAMPLE,
-    TIMING_SYNC_EXAMPLE
-)
 from .fixer_prompts import (
     INITIAL_RETRY_NOTE,
     RETRY_FAILURE_NOTE,
@@ -58,12 +50,6 @@ __all__ = [
     "VALID_COLORS",
     "VALID_ANIMATIONS",
     "DIRECTION_CONSTANTS",
-    "get_patterns_for_prompt",
-    "get_compact_patterns",
-    "NEURAL_NETWORK_EXAMPLE",
-    "GRAPH_PLOT_EXAMPLE",
-    "VALUE_TRACKER_EXAMPLE",
-    "TIMING_SYNC_EXAMPLE",
     "INITIAL_RETRY_NOTE",
     "RETRY_FAILURE_NOTE",
     "CODE_CONTEXT_NOTE",

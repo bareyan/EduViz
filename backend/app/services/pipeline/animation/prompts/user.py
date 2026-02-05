@@ -382,7 +382,7 @@ Return the complete, runnable Python file in a code block.
 - Defines `class Scene{section_id_title}(Scene)` or `class Scene{section_id_title}(ThreeDScene)`
 - Background set by theme (do not override)
 - No lists passed directly into `self.play(...)`
-- No `self.wait(0)`
+- No `self.wait(0)` or `self.wait(x if condition else 0)` - these CRASH
 - No `ValueTracker.number`
 - Only allowed rate functions
 - All objects within bounds""",

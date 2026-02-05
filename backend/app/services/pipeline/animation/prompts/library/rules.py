@@ -18,9 +18,13 @@ COMMON_MISTAKES = '''
    - [WRONG] `rate_func=ease_in_expo`
    - [CORRECT] `rate_func=smooth` or `rate_func=linear`
 
-3. **self.wait(0)** - Zero-duration waits cause issues
-   - [WRONG] `self.wait(0)`
-   - [CORRECT] Skip the wait entirely
+3. **self.wait(0)** - Zero-duration waits cause CRASHES
+   - [WRONG] `self.wait(0)` - CRASHES with duration error
+   - [WRONG] `self.wait(52.5 - 52.66 if 52.5 > 52.66 else 0)` - CRASHES when condition is False
+   - [WRONG] `self.wait(target - current if target > current else 0)` - CRASHES when target <= current
+   - [CORRECT] Skip the wait entirely if time has passed
+   - [CORRECT] Use `max(0.01, target - current)` if you must have minimum duration
+   - **WHY THIS CRASHES**: Manim's wait() validates duration > 0. Any conditional that CAN evaluate to 0 will eventually crash.
 
 4. **Undefined colors** - See "Valid Manim Colors" section above
 

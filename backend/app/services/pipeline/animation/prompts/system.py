@@ -156,7 +156,7 @@ GraphScene
 ThreeDScene
 CENTER (use ORIGIN)
 tracker.number
-self.wait(0)
+self.wait(0) or self.wait(x if cond else 0)
 ease_in_expo
 Axes.get_graph
 camera.frame unless MovingCameraScene

@@ -107,6 +107,9 @@ VERIFICATION_TEMPERATURE = 0.4  # Low temp for consistent verdicts
 VERIFICATION_TIMEOUT = 30.0  # Seconds per verification batch
 VERIFICATION_MAX_RETRIES = 1  # Don't waste tokens retrying
 
+# Error message handling
+MAX_ERROR_MESSAGE_LENGTH = 2000  # Max chars for runtime error messages (prevent truncation)
+
 # Theme setup code blocks for code injection
 THEME_SETUP_CODES = {
     "light": '        self.camera.background_color = "#FFFFFF"\n',
