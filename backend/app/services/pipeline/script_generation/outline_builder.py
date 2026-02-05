@@ -118,7 +118,7 @@ class OutlineBuilder:
             from app.services.infrastructure.llm import PromptConfig
             config = PromptConfig(
                 temperature=0.7,
-                max_output_tokens=4096,
+                max_output_tokens=4096*6,
                 timeout=300,
                 response_format="json"
             )
