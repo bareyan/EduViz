@@ -55,6 +55,123 @@ def parse_json_strict(text: str) -> JsonParseResult:
         return JsonParseResult(value=None, error=f"json_decode_error: {e.msg}", truncated=truncated)
 
 
+def extract_largest_balanced_json(text: str, expect_array: bool = False) -> Optional[str]:
+    """Extract the largest balanced JSON object/array from text.
+
+    Scans for balanced braces/brackets while respecting string literals and escapes.
+
+    Args:
+        text: Source text potentially containing JSON.
+        expect_array: If True, only return a JSON array (starts with '[').
+
+    Returns:
+        The largest balanced JSON substring, or None if not found.
+    """
+    if not text:
+        return None
+
+    in_string = False
+    string_char = ""
+    escape = False
+    stack: List[str] = []
+    start_idx: Optional[int] = None
+    best: Optional[str] = None
+
+    for i, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == string_char:
+                in_string = False
+            continue
+
+        if ch in ("\"", "'"):
+            in_string = True
+            string_char = ch
+            continue
+
+        if ch in "{[":
+            if not stack:
+                start_idx = i
+            stack.append(ch)
+            continue
+
+        if ch in "}]":
+            if not stack:
+                continue
+            open_ch = stack[-1]
+            if (open_ch == "{" and ch == "}") or (open_ch == "[" and ch == "]"):
+                stack.pop()
+                if not stack and start_idx is not None:
+                    candidate = text[start_idx:i + 1]
+                    if expect_array and candidate.lstrip().startswith("{"):
+                        start_idx = None
+                        continue
+                    if best is None or len(candidate) > len(best):
+                        best = candidate
+                    start_idx = None
+            else:
+                # Mismatched closing; reset state.
+                stack.clear()
+                start_idx = None
+
+    if best and expect_array and not best.lstrip().startswith("["):
+        return None
+    return best
+
+
+def is_likely_truncated_json(text: str) -> bool:
+    """Heuristic check for truncated JSON payloads.
+
+    Detects unterminated strings or unbalanced braces/brackets while
+    respecting escape sequences. Useful for distinguishing partial
+    responses from other invalid JSON errors.
+    """
+    if not text:
+        return False
+
+    in_string = False
+    string_char = ""
+    escape = False
+    stack: List[str] = []
+
+    for ch in text:
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == string_char:
+                in_string = False
+            continue
+
+        if ch in ("\"", "'"):
+            in_string = True
+            string_char = ch
+            continue
+
+        if ch in "{[":
+            stack.append(ch)
+            continue
+        if ch in "}]":
+            if not stack:
+                continue
+            open_ch = stack[-1]
+            if (open_ch == "{" and ch == "}") or (open_ch == "[" and ch == "]"):
+                stack.pop()
+            else:
+                # Mismatched closure; treat as invalid but not necessarily truncation.
+                return False
+
+    return bool(stack) or in_string
+
+
 # ============================================================================
 # JSON Parsing Utilities
 # ============================================================================
@@ -104,6 +221,59 @@ def fix_json_escapes(text: str) -> str:
     return text
 
 
+def repair_json_payload(text: str) -> Optional[str]:
+    """Attempt to repair malformed JSON payloads from LLM responses.
+
+    Strategy:
+    - Strip markdown fences while preserving content.
+    - Extract the largest balanced JSON object.
+    - If parsing fails, attempt to fix escape sequences.
+    - If fix-schema JSON appears to contain a code block, convert it to
+      full_code_lines with empty edits.
+
+    Returns:
+        A repaired JSON string or None if repair fails.
+    """
+    if not text:
+        return None
+
+    normalized = text.strip()
+    if normalized.startswith("```"):
+        lines = normalized.split("\n")
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        normalized = "\n".join(lines).strip()
+
+    candidate = extract_largest_balanced_json(normalized, expect_array=False)
+    if not candidate:
+        return None
+
+    try:
+        json.loads(candidate)
+        return candidate
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        fixed = fix_json_escapes(candidate)
+        json.loads(fixed)
+        return fixed
+    except json.JSONDecodeError:
+        pass
+
+    has_fix_keys = (
+        "\"edits\"" in candidate
+        or "\"full_code\"" in candidate
+        or "\"full_code_lines\"" in candidate
+    )
+    code_block = re.search(r"```(?:python|py)?\n([\s\S]*?)```", text)
+    if has_fix_keys and code_block:
+        code_lines = [line.rstrip("\n") for line in code_block.group(1).splitlines()]
+        payload = {"edits": [], "full_code_lines": code_lines}
+        return json.dumps(payload)
+
+    return None
+
+
 def parse_json_response(text: str, default: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Parse JSON from LLM response with comprehensive error recovery.
     
@@ -141,6 +311,14 @@ def parse_json_response(text: str, default: Optional[Dict[str, Any]] = None) -> 
     try:
         fixed_text = fix_json_escapes(text)
         return json.loads(fixed_text)
+    except json.JSONDecodeError:
+        pass
+
+    # Try balanced JSON extraction (brace matching)
+    try:
+        candidate = extract_largest_balanced_json(text, expect_array=False)
+        if candidate:
+            return json.loads(candidate)
     except json.JSONDecodeError:
         pass
 
@@ -197,6 +375,16 @@ def parse_json_array_response(text: str, default: Optional[List[Dict[str, Any]]]
         if isinstance(result, list):
             return result
         return default
+    except json.JSONDecodeError:
+        pass
+
+    # Try balanced JSON extraction (brace matching)
+    try:
+        candidate = extract_largest_balanced_json(text, expect_array=True)
+        if candidate:
+            result = json.loads(candidate)
+            if isinstance(result, list):
+                return result
     except json.JSONDecodeError:
         pass
 

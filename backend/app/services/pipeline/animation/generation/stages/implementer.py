@@ -6,6 +6,7 @@ Responsible for converting choreography plan into Manim code.
 Single Responsibility: Generate implementation code from plan
 """
 
+import json
 from typing import Dict, Any, Optional
 
 from app.core import get_logger
@@ -65,7 +66,10 @@ class Implementer:
             total_duration=duration,
             section_id_title=self.formatter.derive_class_name(section),
             theme_info=section.get("style", "3b1b"),
-            section_data=f"Key concepts: {section.get('key_concepts', [])}",
+            section_data=json.dumps({
+                "key_concepts": section.get("key_concepts", []),
+                "supporting_data": section.get("supporting_data", []),
+            }),
             patterns=self._get_patterns(),
             language_name=language_name
         )

@@ -67,7 +67,8 @@ class Choreographer:
             visual_hints=section.get("visual_description", ""),
             section_data=json.dumps({
                 "key_concepts": section.get("key_concepts", []),
-                "animation_type": section.get("animation_type", "mixed")
+                "animation_type": section.get("animation_type", "mixed"),
+                "supporting_data": section.get("supporting_data", []),
             }),
             language_name=language_name
         )

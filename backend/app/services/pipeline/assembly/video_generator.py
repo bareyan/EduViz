@@ -176,7 +176,8 @@ class VideoGenerator:
                         material_path=material_path,
                         language=language,
                         video_mode=video_mode,
-                        tracker=tracker
+                        tracker=tracker,
+                        artifacts_dir=str(sections_dir),
                     )
                     tracker.save_script(script)
 
@@ -292,7 +293,8 @@ class VideoGenerator:
         material_path: Optional[str],
         language: str,
         video_mode: str,
-        tracker: ProgressTracker
+        tracker: ProgressTracker,
+        artifacts_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate script from material (internal helper)
@@ -323,6 +325,7 @@ class VideoGenerator:
             topic={"title": "Educational Content", "description": ""},
             language=language,
             video_mode=video_mode,
+            artifacts_dir=artifacts_dir,
         )
 
         tracker.report_stage_progress("script", 100, "Script generated")
