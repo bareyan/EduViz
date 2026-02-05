@@ -99,13 +99,13 @@ class ManimEngine:
         original_wait = self.Scene.wait
         
         def patched_play(scene_self, *args, **kwargs):
-            on_play_callback(scene_self)
+            on_play_callback(scene_self, phase="before", play_args=args, play_kwargs=kwargs)
             original_play(scene_self, *args, **kwargs)
-            on_play_callback(scene_self)
+            on_play_callback(scene_self, phase="after", play_args=args, play_kwargs=kwargs)
             
         def patched_wait(scene_self, *args, **kwargs):
             original_wait(scene_self, *args, **kwargs)
-            on_play_callback(scene_self)
+            on_play_callback(scene_self, phase="wait", play_args=None, play_kwargs=kwargs)
 
         try:
             self.Scene.play = patched_play

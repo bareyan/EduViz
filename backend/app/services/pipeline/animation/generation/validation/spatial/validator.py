@@ -9,7 +9,7 @@ import os
 import tempfile
 import traceback
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .constants import (
     MAX_FONT_SIZE,
@@ -44,6 +44,7 @@ class SpatialValidator:
         self.engine = ManimEngine(self.linter_path)
         self.trackers: Dict[Any, SceneTracker] = {}
         self.frame_captures: Dict[float, FrameCapture] = {}  # timestamp -> FrameCapture (dedup)
+        self._highlight_miss_seen: Set[Tuple[int, float]] = set()
 
     def validate(self, code: str) -> SpatialValidationResult:
         """Entry point for spatial validation."""
@@ -57,6 +58,7 @@ class SpatialValidator:
 
         self.trackers.clear()
         self.frame_captures.clear()
+        self._highlight_miss_seen.clear()
         self.engine.apply_fast_config()
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
@@ -126,7 +128,13 @@ class SpatialValidator:
         }
         return result, timings
 
-    def _check_scene_state(self, scene: Any) -> None:
+    def _check_scene_state(
+        self,
+        scene: Any,
+        phase: Optional[str] = None,
+        play_args: Optional[tuple] = None,
+        play_kwargs: Optional[dict] = None,
+    ) -> None:
         """Detection logic: Analyzes current scene state for spatial issues."""
         if scene not in self.trackers:
             self.trackers[scene] = SceneTracker()
@@ -185,6 +193,147 @@ class SpatialValidator:
                 event = tracker.active_events.pop(eid)
                 event.finish(triggering_line, is_scene_end=False)
                 tracker.history.append(event)
+
+        # 4. Highlight-miss detection (after animations only)
+        if phase == "after" and play_args:
+            try:
+                self._detect_highlight_misses(scene, play_args, triggering_line)
+            except Exception:
+                LOGGER.debug("Highlight miss detection failed", exc_info=True)
+
+    def _detect_highlight_misses(
+        self,
+        scene: Any,
+        play_args: tuple,
+        triggering_line: int,
+    ) -> None:
+        """Detect highlight animations/boxes that don't target visible objects."""
+        if scene not in self.trackers:
+            return
+
+        tracker = self.trackers[scene]
+        current_time = getattr(scene.renderer, "time", 0.0)
+        timestamp_key = round(float(current_time), 2) if current_time is not None else 0.0
+
+        atoms: List[Any] = []
+        try:
+            for m in scene.mobjects:
+                atoms.extend(get_atomic_mobjects(m, self.engine.mobject_classes))
+        except Exception:
+            atoms = list(getattr(scene, "mobjects", []) or [])
+
+        non_connector_atoms = [
+            m for m in atoms if not is_connector_type_name(m.__class__.__name__)
+        ]
+
+        # Flatten animations from play_args
+        animations: List[Any] = []
+        for arg in play_args:
+            animations.extend(list(self._iter_animations(arg)))
+
+        # Detect highlight animations
+        highlight_anim_types = {"Indicate", "Circumscribe", "Flash", "FocusOn"}
+        for anim in animations:
+            anim_type = anim.__class__.__name__
+            if anim_type not in highlight_anim_types:
+                continue
+
+            target = getattr(anim, "mobject", None)
+            if target is None:
+                continue
+
+            if not self._is_mobject_in_scene(target, atoms, scene):
+                reason = "target not in scene"
+            elif self._is_too_small(target):
+                reason = "target too small to see"
+            elif get_boundary_violation(target, self.engine.config):
+                reason = "target off-screen"
+            else:
+                continue
+
+            key = (id(target), timestamp_key)
+            if key in self._highlight_miss_seen:
+                continue
+            self._highlight_miss_seen.add(key)
+
+            event = LintEvent(target, None, "highlight_miss", current_time, "user_code", triggering_line)
+            event.details = f"Highlight animation miss: {reason}"
+            frame_id = self._capture_frame_if_needed(scene, current_time, f"HLM_{id(target)}")
+            event.frame_id = frame_id
+            event.finish(triggering_line, is_scene_end=False)
+            tracker.history.append(event)
+
+        # Detect highlight boxes (rectangles intended to highlight)
+        candidate_boxes: List[Any] = []
+        for anim in animations:
+            mobj = getattr(anim, "mobject", None)
+            if mobj is not None and self._is_highlight_box(mobj):
+                candidate_boxes.append(mobj)
+
+        for box in candidate_boxes:
+            overlaps_any = False
+            for other in non_connector_atoms:
+                if other is box:
+                    continue
+                area, _, _ = get_overlap_metrics(box, other)
+                if area > 0.0:
+                    overlaps_any = True
+                    break
+
+            if overlaps_any:
+                continue
+
+            key = (id(box), timestamp_key)
+            if key in self._highlight_miss_seen:
+                continue
+            self._highlight_miss_seen.add(key)
+
+            event = LintEvent(box, None, "highlight_miss", current_time, "user_code", triggering_line)
+            event.details = "Highlight box does not overlap any visible object"
+            frame_id = self._capture_frame_if_needed(scene, current_time, f"HLB_{id(box)}")
+            event.frame_id = frame_id
+            event.finish(triggering_line, is_scene_end=False)
+            tracker.history.append(event)
+
+    def _iter_animations(self, anim: Any):
+        """Yield individual animations from nested groups."""
+        if anim is None:
+            return
+        if hasattr(anim, "animations"):
+            try:
+                for sub in anim.animations:
+                    yield from self._iter_animations(sub)
+                return
+            except Exception:
+                pass
+        yield anim
+
+    def _is_highlight_box(self, mobj: Any) -> bool:
+        """Heuristic for detecting highlight rectangles."""
+        name = mobj.__class__.__name__
+        if name == "SurroundingRectangle":
+            return True
+        if name != "Rectangle":
+            return False
+        stroke_width = getattr(mobj, "stroke_width", 1)
+        fill_opacity = getattr(mobj, "fill_opacity", 0.0)
+        return stroke_width >= 3 and fill_opacity <= 0.2
+
+    def _is_too_small(self, mobj: Any) -> bool:
+        """Detect objects too small to be visually meaningful."""
+        try:
+            return getattr(mobj, "width", 0.0) < 0.05 or getattr(mobj, "height", 0.0) < 0.05
+        except Exception:
+            return False
+
+    def _is_mobject_in_scene(self, mobj: Any, atoms: List[Any], scene: Any) -> bool:
+        """Check if a mobject is part of the current scene."""
+        if mobj in atoms:
+            return True
+        try:
+            return mobj in scene.mobjects
+        except Exception:
+            return False
 
     def _get_line(self, mobj: Any, fallback: int) -> int:
         """DRY helper to get creation line for a mobject."""

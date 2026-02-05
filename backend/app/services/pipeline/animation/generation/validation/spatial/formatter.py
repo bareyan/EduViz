@@ -41,3 +41,33 @@ def format_spatial_issues(result: SpatialValidationResult) -> str:
                     output.append(f"    Code: {warning.code_snippet}")
 
     return "\n".join(output)
+
+
+def format_visual_context_for_fix(result: SpatialValidationResult) -> str:
+    """Format a compact visual context block for surgical fixes."""
+    if not result or not result.frame_captures:
+        return ""
+
+    issues = (result.errors or []) + (result.warnings or []) + (result.info or [])
+    issues_by_frame = {}
+    for issue in issues:
+        if not issue.frame_id:
+            continue
+        issues_by_frame.setdefault(issue.frame_id, []).append(issue)
+
+    if not issues_by_frame:
+        return ""
+
+    lines = [
+        "## VISUAL CONTEXT",
+        "Screenshots are attached for the issues below:",
+    ]
+
+    for fc in result.frame_captures:
+        frame_issues = issues_by_frame.get(fc.screenshot_path, [])
+        if not frame_issues:
+            continue
+        msg = "; ".join(i.message for i in frame_issues[:3])
+        lines.append(f"- t={fc.timestamp:.2f}s: {msg}")
+
+    return "\n".join(lines)

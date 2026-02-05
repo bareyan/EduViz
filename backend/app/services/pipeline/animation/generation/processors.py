@@ -9,6 +9,7 @@ Pipeline:
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 
 from app.core import get_logger
@@ -42,6 +43,7 @@ from .core import (
     get_theme_palette_text
 )
 from .validation import CodeValidator
+from .validation.spatial.formatter import format_visual_context_for_fix
 from ..config import (
     CHOREOGRAPHY_MAX_SEGMENTS_PER_CALL,
     CHOREOGRAPHY_TEMPERATURE,
@@ -953,10 +955,16 @@ class Animator:
     ) -> tuple[str, int]:
         """Applies a surgical fix using structured JSON edits."""
         original_code = code
+        visual_context = ""
+        if validation is not None and getattr(validation, "spatial", None) is not None:
+            try:
+                visual_context = format_visual_context_for_fix(validation.spatial)
+            except Exception:
+                pass
         prompt_text = SURGICAL_FIX_USER.format(
             code=code,
             errors=errors or "Unknown error",
-            visual_context=""
+            visual_context=visual_context
         )
 
         config = PromptConfig(
@@ -982,10 +990,35 @@ class Animator:
         transient_attempts = 3
         for retry in range(transient_attempts):
             with llm_section_context({"stage": "surgical_fix", "attempt": attempt}):
+                contents = None
+                if validation is not None and getattr(validation, "spatial", None) is not None:
+                    frame_captures = validation.spatial.frame_captures or []
+                    if frame_captures:
+                        contents = [prompt_text]
+                        for fc in frame_captures:
+                            try:
+                                path = Path(fc.screenshot_path)
+                                if not path.exists():
+                                    continue
+                                image_data = path.read_bytes()
+                                try:
+                                    image_part = self.engine.types.Part.from_data(
+                                        data=image_data,
+                                        mime_type="image/png"
+                                    )
+                                except (AttributeError, TypeError):
+                                    image_part = self.engine.types.Part.from_bytes(
+                                        data=image_data,
+                                        mime_type="image/png"
+                                    )
+                                contents.append(image_part)
+                            except Exception:
+                                continue
                 result = await self.engine.generate(
                     prompt=prompt_text,
                     system_prompt=SURGICAL_FIX_SYSTEM.template,
-                    config=config
+                    config=config,
+                    contents=contents
                 )
 
             if result.get("success"):
