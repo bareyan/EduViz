@@ -10,6 +10,7 @@ from app.services.pipeline.animation.generation.core.code_helpers import (
     strip_theme_code_from_content,
     create_scene_file,
     fix_translated_code,
+    get_theme_palette_text,
     extract_scene_name,
     remove_markdown_blocks,
     ensure_manim_structure,
@@ -164,6 +165,36 @@ class TestCreateSceneFile:
         result = create_scene_file(code, "intro_section", 5.0)
         
         assert "pass" in result
+
+    def test_strips_background_override_and_injects_theme(self):
+        """Theme background should be enforced even if code sets its own."""
+        code = """from manim import *
+
+class SceneTest(Scene):
+    def construct(self):
+        self.camera.background_color = "#FFFFFF"
+        circle = Circle()
+"""
+        result = create_scene_file(code, "test_section", 5.0, style="dracula")
+
+        assert "#FFFFFF" not in result
+        assert "#282A36" in result
+
+
+class TestThemePresets:
+    """Test suite for theme preset helpers"""
+
+    def test_clean_alias_maps_to_light(self):
+        """clean style should map to light preset."""
+        result = get_theme_palette_text("clean")
+        assert "Style: light." in result
+        assert "Background: #FFFFFF" in result
+
+    def test_3blue1brown_alias_maps_to_3b1b(self):
+        """3blue1brown style should map to 3b1b preset."""
+        result = get_theme_palette_text("3blue1brown")
+        assert "Style: 3b1b." in result
+        assert "Background: #171717" in result
 
 
 class TestFixTranslatedCode:

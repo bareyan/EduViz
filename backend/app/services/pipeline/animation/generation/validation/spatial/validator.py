@@ -28,6 +28,7 @@ from .utils import (
 )
 from .events import LintEvent, SceneTracker
 from .engine import ManimEngine
+from .highlight_boxes import HighlightBoxChecker
 from .reporters import IssueReporter
 
 LOGGER = logging.getLogger(__name__)
@@ -45,6 +46,8 @@ class SpatialValidator:
         self.trackers: Dict[Any, SceneTracker] = {}
         self.frame_captures: Dict[float, FrameCapture] = {}  # timestamp -> FrameCapture (dedup)
         self._highlight_miss_seen: Set[Tuple[int, float]] = set()
+        self.highlight_checker = HighlightBoxChecker(self.engine)
+        self.highlight_captures: List[FrameCapture] = []
 
     def validate(self, code: str) -> SpatialValidationResult:
         """Entry point for spatial validation."""
@@ -59,6 +62,8 @@ class SpatialValidator:
         self.trackers.clear()
         self.frame_captures.clear()
         self._highlight_miss_seen.clear()
+        self.highlight_captures.clear()
+        self.highlight_checker.reset()
         self.engine.apply_fast_config()
         
         with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, encoding='utf-8') as f:
@@ -119,7 +124,7 @@ class SpatialValidator:
             warnings=warnings,
             info=info,
             raw_report="\n".join(reports),
-            frame_captures=list(self.frame_captures.values())
+            frame_captures=list(self.frame_captures.values()) + self.highlight_captures
         )
         timings = {
             "run_scenes_ms": run_scenes_ms,
@@ -201,6 +206,15 @@ class SpatialValidator:
             except Exception:
                 LOGGER.debug("Highlight miss detection failed", exc_info=True)
 
+            try:
+                events, captures = self.highlight_checker.detect(scene, play_args, triggering_line)
+                if events:
+                    tracker.history.extend(events)
+                if captures:
+                    self.highlight_captures.extend(captures)
+            except Exception:
+                LOGGER.debug("Highlight box detection failed", exc_info=True)
+
     def _detect_highlight_misses(
         self,
         scene: Any,
@@ -221,10 +235,6 @@ class SpatialValidator:
                 atoms.extend(get_atomic_mobjects(m, self.engine.mobject_classes))
         except Exception:
             atoms = list(getattr(scene, "mobjects", []) or [])
-
-        non_connector_atoms = [
-            m for m in atoms if not is_connector_type_name(m.__class__.__name__)
-        ]
 
         # Flatten animations from play_args
         animations: List[Any] = []
@@ -263,37 +273,6 @@ class SpatialValidator:
             event.finish(triggering_line, is_scene_end=False)
             tracker.history.append(event)
 
-        # Detect highlight boxes (rectangles intended to highlight)
-        candidate_boxes: List[Any] = []
-        for anim in animations:
-            mobj = getattr(anim, "mobject", None)
-            if mobj is not None and self._is_highlight_box(mobj):
-                candidate_boxes.append(mobj)
-
-        for box in candidate_boxes:
-            overlaps_any = False
-            for other in non_connector_atoms:
-                if other is box:
-                    continue
-                area, _, _ = get_overlap_metrics(box, other)
-                if area > 0.0:
-                    overlaps_any = True
-                    break
-
-            if overlaps_any:
-                continue
-
-            key = (id(box), timestamp_key)
-            if key in self._highlight_miss_seen:
-                continue
-            self._highlight_miss_seen.add(key)
-
-            event = LintEvent(box, None, "highlight_miss", current_time, "user_code", triggering_line)
-            event.details = "Highlight box does not overlap any visible object"
-            frame_id = self._capture_frame_if_needed(scene, current_time, f"HLB_{id(box)}")
-            event.frame_id = frame_id
-            event.finish(triggering_line, is_scene_end=False)
-            tracker.history.append(event)
 
     def _iter_animations(self, anim: Any):
         """Yield individual animations from nested groups."""
@@ -307,17 +286,6 @@ class SpatialValidator:
             except Exception:
                 pass
         yield anim
-
-    def _is_highlight_box(self, mobj: Any) -> bool:
-        """Heuristic for detecting highlight rectangles."""
-        name = mobj.__class__.__name__
-        if name == "SurroundingRectangle":
-            return True
-        if name != "Rectangle":
-            return False
-        stroke_width = getattr(mobj, "stroke_width", 1)
-        fill_opacity = getattr(mobj, "fill_opacity", 0.0)
-        return stroke_width >= 3 and fill_opacity <= 0.2
 
     def _is_too_small(self, mobj: Any) -> bool:
         """Detect objects too small to be visually meaningful."""

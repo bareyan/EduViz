@@ -49,6 +49,8 @@ Create a structured plan with:
 - Keep the scene visually stable; avoid clearing the whole scene unless narratively needed
 - Introduce new elements only when they support narration; avoid clutter
 - Make transitions explicit: add FadeOut/Transform steps when elements are no longer needed
+- If narration says to fill in a table or matrix, the plan MUST include a filled visual table
+- Use Section Data to populate all cells; no blank placeholders after the fill
 
 ## CONSTRAINTS (STRICT)
 - Max 20 objects total
@@ -327,6 +329,8 @@ FULL_IMPLEMENTATION_USER = PromptTemplate(
 - **Class Name**: Scene{section_id_title}
 - **Theme**: {theme_info}
 - If scene_type is missing, assume 2D
+- If narration or plan mentions filling a table/matrix, render it fully populated
+- Use Section Data values to fill all cells (even if narration summarizes)
 
 ## CODE REQUIREMENTS
 1. Start with `from manim import *`
@@ -340,7 +344,7 @@ FULL_IMPLEMENTATION_USER = PromptTemplate(
 {patterns}
 
 ## TYPE-TO-MANIM MAPPING (COMPACT)
-- Text -> `Text("...", font_size=36, color=WHITE)`
+- Text -> `Text("...", font_size=36, color=<palette color>)`
 - MathTex -> `MathTex(r"...")`
 - Rectangle -> `Rectangle(...)`
 - Circle -> `Circle(...)`
@@ -349,6 +353,7 @@ FULL_IMPLEMENTATION_USER = PromptTemplate(
 - Axes -> `Axes(...)`
 - ThreeDAxes -> `ThreeDAxes(...)`
 - Sphere/Cube/Cylinder/Cone/Torus -> corresponding Manim mobject
+- Table -> `Table([...])` or a `VGroup` grid of `Text` for full values
 
 ## TIMING RULES (STRICT)
 - Every `self.play(...)` MUST include `run_time=...`
@@ -387,6 +392,9 @@ SURGICAL_FIX_USER = PromptTemplate(
 ## ERRORS
 {errors}
 
+## THEME
+{theme_info}
+
 {visual_context}
 
 ## SPATIAL FIX STRATEGIES
@@ -416,10 +424,10 @@ When object exceeds screen edges (error shows direction like "Right (+0.88)"):
 - Reposition to safe zone: `.move_to(LEFT * 2)` instead of edge
 
 ### Low Contrast
-When text blends with background (#171717 is dark):
-- Use bright colors: WHITE, YELLOW, BLUE, GREEN, RED, ORANGE
-- Avoid: GRAY, BLACK, or any dark colors
-- Fix: Add `color=WHITE` in constructor OR `.set_color(WHITE)`
+When text blends with the theme background:
+- Use high-contrast colors from the palette (e.g., WHITE, YELLOW, BLUE)
+- Avoid dark colors on dark themes or very light colors on light themes
+- Fix: Add `color=<palette color>` in constructor OR `.set_color(<palette color>)`
 
 ## INSTRUCTIONS
 Return STRICT JSON ONLY with this schema:

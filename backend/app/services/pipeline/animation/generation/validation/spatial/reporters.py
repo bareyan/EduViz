@@ -32,6 +32,14 @@ class IssueReporter:
             
             if ev.event_type == "overlap":
                 self._handle_overlap_event(ev, snippet, errors, info, frame_id)
+            elif ev.event_type == "highlight_target":
+                target_desc = ev.details or ev.m2_name or "unknown target"
+                msg = f"Highlight box covers: {target_desc}"
+                info.append(SpatialIssue(
+                    ev.start_line, "info",
+                    msg,
+                    snippet, suggested_fix="", frame_id=frame_id
+                ))
             elif ev.event_type == "highlight_miss":
                 is_box = ev.m1_type in ("Rectangle", "SurroundingRectangle")
                 fix = (

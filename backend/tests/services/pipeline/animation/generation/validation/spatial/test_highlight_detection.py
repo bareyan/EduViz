@@ -1,5 +1,5 @@
 """
-Tests for highlight-miss detection heuristics.
+Tests for highlight box detection heuristics.
 """
 
 from types import SimpleNamespace
@@ -10,7 +10,7 @@ import pytest
 from app.services.pipeline.animation.generation.validation.spatial.events import SceneTracker
 from app.services.pipeline.animation.generation.validation.spatial.reporters import IssueReporter
 from app.services.pipeline.animation.generation.validation.spatial.validator import SpatialValidator
-from app.services.pipeline.animation.generation.validation.spatial import validator as spatial_validator
+from app.services.pipeline.animation.generation.validation.spatial import highlight_boxes as highlight_boxes_module
 
 
 class FakeRenderer:
@@ -70,7 +70,7 @@ def validator():
 
 
 def _patch_atomic(monkeypatch):
-    monkeypatch.setattr(spatial_validator, "get_atomic_mobjects", lambda m, classes: [m])
+    monkeypatch.setattr(highlight_boxes_module, "get_atomic_mobjects", lambda m, classes: [m])
 
 
 def test_highlight_box_overlaps_text_no_warning(validator, monkeypatch):
@@ -83,9 +83,15 @@ def test_highlight_box_overlaps_text_no_warning(validator, monkeypatch):
     validator.trackers[scene] = SceneTracker()
     validator.trackers[scene]._scene = scene
 
-    validator._detect_highlight_misses(scene, (Create(box),), triggering_line=10)
-
-    assert not any(ev.event_type == "highlight_miss" for ev in validator.trackers[scene].history)
+    events, captures = validator.highlight_checker.detect(scene, (Create(box),), triggering_line=10)
+    assert events
+    assert any(ev.event_type == "highlight_target" for ev in events)
+    assert not any(ev.event_type == "highlight_miss" for ev in events)
+    for ev in events:
+        if ev.frame_id:
+            import os
+            if os.path.exists(ev.frame_id):
+                os.remove(ev.frame_id)
 
 
 def test_highlight_box_miss_emits_warning(validator, monkeypatch):
@@ -98,11 +104,11 @@ def test_highlight_box_miss_emits_warning(validator, monkeypatch):
     validator.trackers[scene] = SceneTracker()
     validator.trackers[scene]._scene = scene
 
-    validator._detect_highlight_misses(scene, (Create(box),), triggering_line=12)
+    events, captures = validator.highlight_checker.detect(scene, (Create(box),), triggering_line=12)
 
     reporter = IssueReporter(code="")
     errors, warnings, info = [], [], []
-    reporter.collect_issues(validator.trackers[scene].history, errors, warnings, info)
+    reporter.collect_issues(events, errors, warnings, info)
 
     assert len(warnings) == 1
     assert warnings[0].frame_id is not None

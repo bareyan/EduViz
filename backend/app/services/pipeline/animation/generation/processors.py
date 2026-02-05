@@ -9,11 +9,12 @@ Pipeline:
 
 import asyncio
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 
 from app.core import get_logger
-from app.core.llm_logger import llm_section_context
+from app.core.llm_logger import llm_section_context, llm_section_log_path_var
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig, CostTracker
 from app.services.infrastructure.parsing import (
     parse_json_response,
@@ -469,6 +470,7 @@ class Animator:
                     code,
                     section_title,
                     duration,
+                    style=style,
                     code_persistor=code_persistor,
                     status_callback=status_callback,
                     syntax_ok_callback=_track_syntax_valid
@@ -504,6 +506,7 @@ class Animator:
         code: str,
         section_title: str,
         target_duration: float,
+        style: str,
         code_persistor: Optional[Any] = None,
         status_callback: Optional[Any] = None,
         syntax_ok_callback: Optional[Callable[[str], None]] = None,
@@ -590,7 +593,12 @@ class Animator:
             
             # Apply surgical fix
             new_code, edits_applied = await self._apply_surgical_fix(
-                code, error_summary, validation, attempt=attempt, status_callback=status_callback
+                code,
+                error_summary,
+                validation,
+                attempt=attempt,
+                status_callback=status_callback,
+                style=style,
             )
             if edits_applied:
                 total_edits_applied += edits_applied
@@ -952,8 +960,33 @@ class Animator:
         validation=None,
         attempt: Optional[int] = None,
         status_callback: Optional[Any] = None,
+        style: str = "3b1b",
     ) -> tuple[str, int]:
         """Applies a surgical fix using structured JSON edits."""
+        def _truncate(value: Optional[str], limit: int = 1600) -> str:
+            if value is None:
+                return ""
+            text = str(value)
+            if len(text) <= limit:
+                return text
+            return f"{text[:limit]}... [truncated {len(text) - limit} chars]"
+
+        def _append_section_log_block(title: str, body: str) -> None:
+            log_path = llm_section_log_path_var.get()
+            if not log_path:
+                return
+            try:
+                text_log_path = Path(log_path).parent / "section.log"
+                timestamp = datetime.utcnow().isoformat() + "Z"
+                header = f"\n=== {title} (attempt {attempt}) {timestamp} ===\n"
+                with text_log_path.open("a", encoding="utf-8") as f:
+                    f.write(header)
+                    f.write(body or "")
+                    if not (body or "").endswith("\n"):
+                        f.write("\n")
+            except Exception:
+                pass
+
         original_code = code
         visual_context = ""
         if validation is not None and getattr(validation, "spatial", None) is not None:
@@ -961,11 +994,34 @@ class Animator:
                 visual_context = format_visual_context_for_fix(validation.spatial)
             except Exception:
                 pass
+        theme_info = get_theme_palette_text(style)
         prompt_text = SURGICAL_FIX_USER.format(
             code=code,
             errors=errors or "Unknown error",
-            visual_context=visual_context
+            visual_context=visual_context,
+            theme_info=theme_info,
         )
+
+        screenshot_count = 0
+        if validation is not None and getattr(validation, "spatial", None) is not None:
+            frame_captures = validation.spatial.frame_captures or []
+            screenshot_count = len(frame_captures)
+
+        logger.info(
+            "Surgical fix request",
+            extra={
+                "attempt": attempt,
+                "code_len": len(code or ""),
+                "errors_len": len(errors or ""),
+                "prompt_len": len(prompt_text),
+                "has_visual_context": bool(visual_context),
+                "visual_context_len": len(visual_context),
+                "screenshot_count": screenshot_count,
+                "errors_preview": _truncate(errors or "", 800),
+                "prompt_preview": _truncate(prompt_text, 1200),
+            },
+        )
+        _append_section_log_block("Surgical fix request prompt", prompt_text)
 
         config = PromptConfig(
             timeout=120.0,
@@ -1021,6 +1077,23 @@ class Animator:
                     contents=contents
                 )
 
+            logger.info(
+                "Surgical fix response",
+                extra={
+                    "attempt": attempt,
+                    "retry": retry,
+                    "success": bool(result.get("success")) if result else False,
+                    "error": (result or {}).get("error"),
+                    "response_len": len((result or {}).get("response") or ""),
+                    "response_preview": _truncate((result or {}).get("response") or "", 1200),
+                    "has_parsed_json": (result or {}).get("parsed_json") is not None,
+                },
+            )
+            _append_section_log_block(
+                "Surgical fix raw response",
+                (result or {}).get("response") or "",
+            )
+
             if result.get("success"):
                 break
 
@@ -1059,13 +1132,42 @@ class Animator:
 
         payload = payload or {}
         edits = payload.get("edits") or []
+        logger.info(
+            "Surgical fix payload summary",
+            extra={
+                "attempt": attempt,
+                "edits_count": len(edits),
+                "has_full_code_lines": isinstance(payload.get("full_code_lines"), list),
+                "full_code_lines_count": len(payload.get("full_code_lines") or []),
+                "has_full_code": bool(payload.get("full_code")),
+            },
+        )
         applied = 0
 
-        for edit in edits:
+        for edit_index, edit in enumerate(edits):
             search_text = (edit or {}).get("search_text") or ""
             replacement_text = (edit or {}).get("replacement_text") or ""
             if not search_text:
+                logger.info(
+                    "Surgical edit skipped: empty search text",
+                    extra={"attempt": attempt, "edit_index": edit_index},
+                )
                 continue
+
+            match_count = code.count(search_text)
+            logger.info(
+                "Surgical edit analysis",
+                extra={
+                    "attempt": attempt,
+                    "edit_index": edit_index,
+                    "search_len": len(search_text),
+                    "replacement_len": len(replacement_text),
+                    "match_count": match_count,
+                    "is_valid_match": match_count == 1,
+                    "search_preview": _truncate(search_text, 400),
+                    "replacement_preview": _truncate(replacement_text, 400),
+                },
+            )
             try:
                 code = self.editor.execute(
                     code=code,
@@ -1073,10 +1175,36 @@ class Animator:
                     replacement_text=replacement_text
                 )
                 applied += 1
+                logger.info(
+                    "Surgical edit applied",
+                    extra={
+                        "attempt": attempt,
+                        "edit_index": edit_index,
+                        "applied": True,
+                        "match_count": match_count,
+                    },
+                )
             except Exception as e:
-                logger.warning(f"Surgical edit failed: {str(e)}")
+                logger.warning(
+                    "Surgical edit failed",
+                    extra={
+                        "attempt": attempt,
+                        "edit_index": edit_index,
+                        "applied": False,
+                        "match_count": match_count,
+                        "error": str(e),
+                    },
+                )
 
         if applied:
+            logger.info(
+                "Surgical fix edits applied",
+                extra={
+                    "attempt": attempt,
+                    "edits_applied": applied,
+                    "edits_total": len(edits),
+                },
+            )
             return code, applied
 
         full_code_lines = payload.get("full_code_lines") or []
@@ -1085,6 +1213,10 @@ class Animator:
             cleaned = clean_code(joined)
             if cleaned:
                 logger.info("Using full_code_lines fallback from JSON fix response")
+                logger.info(
+                    "Surgical fix fallback applied",
+                    extra={"attempt": attempt, "fallback": "full_code_lines"},
+                )
                 return cleaned, 1
 
         full_code = payload.get("full_code")
@@ -1092,6 +1224,10 @@ class Animator:
             cleaned = clean_code(full_code)
             if cleaned:
                 logger.info("Using full_code fallback from JSON fix response")
+                logger.info(
+                    "Surgical fix fallback applied",
+                    extra={"attempt": attempt, "fallback": "full_code"},
+                )
                 return cleaned, 1
 
         return code, 0

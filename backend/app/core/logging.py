@@ -19,6 +19,8 @@ from pathlib import Path
 # Context variable for request correlation
 request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
 job_id_var: ContextVar[Optional[str]] = ContextVar("job_id", default=None)
+section_index_var: ContextVar[Optional[int]] = ContextVar("section_index", default=None)
+section_id_var: ContextVar[Optional[str]] = ContextVar("section_id", default=None)
 
 
 class StructuredFormatter(logging.Formatter):
@@ -43,6 +45,14 @@ class StructuredFormatter(logging.Formatter):
         job_id = job_id_var.get()
         if job_id:
             log_data["job_id"] = job_id
+
+        section_index = section_index_var.get()
+        if section_index is not None:
+            log_data["section_index"] = section_index
+
+        section_id = section_id_var.get()
+        if section_id:
+            log_data["section_id"] = section_id
 
         # Add exception info if present
         if record.exc_info:
@@ -137,6 +147,14 @@ class DevelopmentFormatter(logging.Formatter):
         if job_id:
             context_parts.append(f"job:{job_id[:8]}")
 
+        section_index = section_index_var.get()
+        if section_index is not None:
+            context_parts.append(f"sec:{section_index}")
+
+        section_id = section_id_var.get()
+        if section_id and section_index is None:
+            context_parts.append(f"sec:{section_id}")
+
         context = f" [{', '.join(context_parts)}]" if context_parts else ""
 
         # Build log line
@@ -170,6 +188,14 @@ class LoggerAdapter(logging.LoggerAdapter):
         job_id = job_id_var.get()
         if job_id:
             kwargs["extra"]["job_id"] = job_id
+
+        section_index = section_index_var.get()
+        if section_index is not None:
+            kwargs["extra"]["section_index"] = section_index
+
+        section_id = section_id_var.get()
+        if section_id:
+            kwargs["extra"]["section_id"] = section_id
 
         # Merge with additional extra data
         if hasattr(self, "extra") and self.extra:
@@ -255,6 +281,18 @@ def set_request_id(request_id: str) -> None:
 def set_job_id(job_id: str) -> None:
     """Set job ID for correlation across log messages"""
     job_id_var.set(job_id)
+
+
+def set_section_context(section_index: Optional[int], section_id: Optional[str] = None) -> None:
+    """Set section context for per-section logging."""
+    section_index_var.set(section_index)
+    section_id_var.set(section_id)
+
+
+def clear_section_context() -> None:
+    """Clear section context."""
+    section_index_var.set(None)
+    section_id_var.set(None)
 
 
 def clear_context() -> None:

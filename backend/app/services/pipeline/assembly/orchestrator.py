@@ -5,6 +5,7 @@ Separated from VideoGenerator for better testability and single responsibility
 """
 
 import asyncio
+import logging
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from dataclasses import dataclass
@@ -19,7 +20,13 @@ from .sections import (
 from .progress import ProgressTracker
 from app.core import get_logger, LogTimer
 from app.core.llm_logger import set_llm_section_log, clear_llm_section_log
-from app.core.logging import job_id_var
+from app.core.logging import (
+    job_id_var,
+    section_index_var,
+    set_section_context,
+    clear_section_context,
+    DevelopmentFormatter,
+)
 
 logger = get_logger(__name__, component="section_orchestrator")
 
@@ -217,6 +224,7 @@ class SectionOrchestrator:
         section_id = section.get("id", f"section_{section_index}")
         section_title = section.get("title", f"Section {section_index + 1}")
         section_log_path = section_dir / "llm_calls.jsonl"
+        section_text_log_path = section_dir / "section.log"
         section_context = {
             "section_index": section_index,
             "section_id": section_id,
@@ -225,6 +233,30 @@ class SectionOrchestrator:
         }
 
         set_llm_section_log(section_log_path, section_context)
+        set_section_context(section_index, section_id)
+
+        section_handler = None
+        root_logger = logging.getLogger()
+        try:
+            section_handler = logging.FileHandler(section_text_log_path)
+            section_handler.setLevel(root_logger.level)
+            section_handler.setFormatter(DevelopmentFormatter())
+
+            class _SectionFilter(logging.Filter):
+                def __init__(self, expected_index: int):
+                    super().__init__()
+                    self.expected_index = expected_index
+
+                def filter(self, record: logging.LogRecord) -> bool:
+                    return section_index_var.get() == self.expected_index
+
+            section_handler.addFilter(_SectionFilter(section_index))
+            root_logger.addHandler(section_handler)
+        except Exception as e:
+            logger.warning(
+                "Failed to initialize section log file",
+                extra={"section_index": section_index, "error": str(e)},
+            )
 
         try:
             # Build initial result
@@ -374,6 +406,13 @@ class SectionOrchestrator:
             )
             return result
         finally:
+            if section_handler:
+                try:
+                    root_logger.removeHandler(section_handler)
+                    section_handler.close()
+                except Exception:
+                    pass
+            clear_section_context()
             clear_llm_section_log()
 
     def aggregate_results(

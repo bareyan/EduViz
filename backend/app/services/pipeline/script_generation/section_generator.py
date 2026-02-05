@@ -195,7 +195,7 @@ class SectionGenerator:
                         # Try with thinking config first
                         config = PromptConfig(
                             temperature=0.7,
-                            max_output_tokens=16536,
+                            max_output_tokens=16536*2,
                             timeout=150,
                             response_format="json",
                             enable_thinking=True
@@ -324,6 +324,10 @@ CONTEXT & INSTRUCTIONS:
 - For theorems: importance → statement → proof strategy → steps → reinforcement  
 - Be thorough - no length limits for comprehensive mode
 - Make content engaging and educational
+- Treat CONTENT TO COVER and KEY POINTS as a non-skippable checklist
+- For worked examples: narrate EVERY step and include ALL intermediate values
+- If you reference a table or matrix, summarize key rows/columns in narration (do not read every value)
+- Avoid placeholder phrasing like "we fill the table" without specifying what the table contains
 
 LECTURE OUTLINE:
 {outline_text}
@@ -349,6 +353,7 @@ SUPPORTING DATA (CRITICAL — BE EXHAUSTIVE):
   datasets, distributions, charts/axes data, constants, thresholds,
   algorithm inputs/outputs, categorical breakdowns, and any percentages.
 - If a table appears, include the COMPLETE table data (no summarizing).
+- Do NOT narrate every table value; summarize key takeaways instead.
 - Prefer structured values (arrays/objects) so visuals can be generated accurately.
 - Each item must include: type, label, value, notes (notes can be empty).
 
@@ -369,6 +374,12 @@ LECTURE OUTLINE:
 PREVIOUS SECTIONS CONTEXT:
 {previous_context}
 
+SECTION REQUIREMENTS:
+- Treat CONTENT TO COVER and KEY POINTS as a non-skippable checklist.
+- For worked examples: narrate EVERY step and include ALL intermediate values.
+- If you reference a table or matrix, summarize key rows/columns in narration (do not read every value).
+- Avoid placeholder phrasing like "we fill the table" without specifying what the table contains.
+
 {page_note}
 ═══════════════════════════════════════════════════════════════════════════════
 REQUEST: Generate narration for SECTION {section_idx + 1}
@@ -387,6 +398,7 @@ SUPPORTING DATA (CRITICAL — BE EXHAUSTIVE):
   datasets, distributions, charts/axes data, constants, thresholds,
   algorithm inputs/outputs, categorical breakdowns, and any percentages.
 - If a table appears, include the COMPLETE table data (no summarizing).
+- Do NOT narrate every table value; summarize key takeaways instead.
 - Prefer structured values (arrays/objects) so visuals can be generated accurately.
 - Each item must include: type, label, value, notes (notes can be empty).
 

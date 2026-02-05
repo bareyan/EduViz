@@ -23,7 +23,7 @@ import numpy as np
 
 class NeuralNetworkScene(Scene):
     def construct(self):
-        self.camera.background_color = "#171717"
+        # Background is set by theme (do not override)
         
         # Create layers
         layer_sizes = [4, 6, 4, 2]  # Input, hidden1, hidden2, output
@@ -75,7 +75,7 @@ from manim import *
 
 class EquationScene(Scene):
     def construct(self):
-        self.camera.background_color = "#171717"
+        # Background is set by theme (do not override)
         
         # Create equations
         eq1 = MathTex(r"f(x) = x^2", color=WHITE)
@@ -108,7 +108,7 @@ from manim import *
 
 class GraphScene(Scene):
     def construct(self):
-        self.camera.background_color = "#171717"
+        # Background is set by theme (do not override)
         
         # Create axes
         axes = Axes(
@@ -155,7 +155,7 @@ from manim import *
 
 class TimedScene(Scene):
     def construct(self):
-        self.camera.background_color = "#171717"
+        # Background is set by theme (do not override)
         
         # Segment 1: 0.0s - 3.0s (show title)
         title = Text("Introduction", font_size=48, color=WHITE)
@@ -193,7 +193,7 @@ from manim import *
 
 class CounterScene(Scene):
     def construct(self):
-        self.camera.background_color = "#171717"
+        # Background is set by theme (do not override)
         
         # Create a value tracker
         counter = ValueTracker(0)

@@ -33,6 +33,15 @@ def test_format_visual_context_includes_frames():
                 frame_id="/tmp/frame_1.png",
             )
         ],
+        info=[
+            SpatialIssue(
+                line_number=9,
+                severity="info",
+                message="Highlight box covers: Text(\"x\")",
+                code_snippet="self.play(Create(box))",
+                frame_id="/tmp/frame_1.png",
+            )
+        ],
         frame_captures=[
             FrameCapture("/tmp/frame_1.png", 1.234, ["e1"]),
         ],
@@ -43,3 +52,4 @@ def test_format_visual_context_includes_frames():
     assert "VISUAL CONTEXT" in text
     assert "t=1.23s" in text
     assert "Overlap detected" in text
+    assert "Highlight box covers" in text

@@ -184,6 +184,8 @@ class SceneTracker:
                 output.write(f"   [OCCLUSION] '{ev.m1_name}' may be hidden behind '{ev.m2_name}'\n")
             elif ev.event_type == "contrast":
                 output.write(f"   [LOW CONTRAST] '{ev.m1_name}' may be hard to read against background\n")
+            elif ev.event_type == "highlight_target":
+                output.write(f"   [HIGHLIGHT TARGET] '{ev.m1_name}' covers {ev.details}\n")
             elif ev.event_type == "highlight_miss":
                 output.write(f"   [HIGHLIGHT MISS] '{ev.m1_name}' did not highlight a visible target\n")
             elif ev.event_type == "font_size":

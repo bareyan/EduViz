@@ -27,7 +27,35 @@ THEME_PRESETS = {
         "background": "#0B0B12",
         "palette": ["WHITE", "PURPLE", "PINK", "BLUE", "TEAL", "YELLOW", "ORANGE"],
     },
+    "dracula": {
+        "background": "#282A36",
+        "palette": ["WHITE", "PURPLE", "PINK", "BLUE", "TEAL", "YELLOW", "ORANGE"],
+    },
+    "solarized": {
+        "background": "#002B36",
+        "palette": ["WHITE", "YELLOW", "ORANGE", "RED", "BLUE", "TEAL", "GREEN"],
+    },
+    "nord": {
+        "background": "#2E3440",
+        "palette": ["WHITE", "BLUE", "TEAL", "GREEN", "YELLOW", "ORANGE", "RED"],
+    },
 }
+
+STYLE_ALIASES = {
+    "3blue1brown": "3b1b",
+    "default": "3b1b",
+    "clean": "light",
+}
+
+
+def normalize_style(style: Optional[str]) -> str:
+    """Normalize style names and resolve aliases."""
+    if not style:
+        return "3b1b"
+    key = str(style).strip().lower()
+    if not key:
+        return "3b1b"
+    return STYLE_ALIASES.get(key, key)
 
 def get_theme_setup_code(style: str = "3b1b") -> str:
     """Returns the Manim setup code for a specific visual style.
@@ -38,15 +66,21 @@ def get_theme_setup_code(style: str = "3b1b") -> str:
     Returns:
         A formatted string of Python code to be injected into construct().
     """
-    preset = THEME_PRESETS.get(style, THEME_PRESETS["3b1b"])
+    normalized = normalize_style(style)
+    if normalized not in THEME_PRESETS:
+        normalized = "3b1b"
+    preset = THEME_PRESETS.get(normalized, THEME_PRESETS["3b1b"])
     return f"        self.camera.background_color = \"{preset['background']}\"\n"
 
 
 def get_theme_palette_text(style: str = "3b1b") -> str:
     """Return a compact palette guidance string for prompts."""
-    preset = THEME_PRESETS.get(style, THEME_PRESETS["3b1b"])
+    normalized = normalize_style(style)
+    if normalized not in THEME_PRESETS:
+        normalized = "3b1b"
+    preset = THEME_PRESETS.get(normalized, THEME_PRESETS["3b1b"])
     palette = ", ".join(preset["palette"])
-    return f"Style: {style}. Background: {preset['background']}. Palette: {palette}."
+    return f"Style: {normalized}. Background: {preset['background']}. Palette: {palette}."
 
 
 def clean_code(code_text: Optional[str]) -> str:
@@ -125,6 +159,9 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
     """
     # Fix any translated common issues
     code = fix_translated_code(code)
+
+    # Strip any theme/background overrides from generated code
+    code = strip_theme_code_from_content(code)
     
     # Ensure background color is set according to style if not present
     theme_setup = get_theme_setup_code(style).strip()
