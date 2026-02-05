@@ -6,7 +6,6 @@ Tests the UnifiedGeminiClient which handles both Gemini API and Vertex AI.
 
 import os
 import sys
-import pytest
 from unittest.mock import MagicMock, patch
 
 # Ensure app is in path
@@ -16,7 +15,6 @@ from app.services.infrastructure.llm.gemini.client import (
     UnifiedGeminiClient, 
     GenerationConfig,
     GeminiAPIModels,
-    VertexAIModels,
     create_client
 )
 
@@ -67,7 +65,7 @@ class TestGeminiAPIImplementation:
         models = GeminiAPIModels(mock_backend)
         config = GenerationConfig(temperature=0.7)
         
-        with patch("google.genai.types.GenerateContentConfig") as mock_cfg:
+        with patch("google.genai.types.GenerateContentConfig"):
             models.generate_content("model-1", "Prompt", config=config)
             mock_backend.models.generate_content.assert_called_once()
 

@@ -4,7 +4,6 @@ Tests for core/constants module
 Tests for shared constants including language mappings.
 """
 
-import pytest
 from app.core.constants import LANGUAGE_NAMES, get_language_name
 
 

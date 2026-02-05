@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from app.core import get_logger
 from ....config import MAX_ERROR_MESSAGE_LENGTH
@@ -123,21 +123,26 @@ class RuntimeValidator:
                 timeout=180.0  # 180s timeout - dry-run can be slow with complex loops
             )
             
-            if result_proc.returncode != 0:
-                # Check for structured spatial JSON first
-                spatial_issues = self._parse_spatial_json(result_proc.stderr)
-                if spatial_issues:
-                    for issue in spatial_issues:
-                        result.add_issue(issue)
-                else:
-                    error_msg, error_line = self._parse_manim_error(result_proc.stderr)
-                    result.add_issue(ValidationIssue(
-                        severity=IssueSeverity.CRITICAL,
-                        confidence=IssueConfidence.HIGH,
-                        category=IssueCategory.RUNTIME,
-                        message=error_msg,
-                        line=error_line,
-                    ))
+            # Always check for structured spatial JSON, even if manim exits cleanly.
+            spatial_issues = self._parse_spatial_json(result_proc.stderr)
+            if spatial_issues:
+                for issue in spatial_issues:
+                    result.add_issue(issue)
+
+            spatial_warnings = self._parse_spatial_warnings(result_proc.stderr)
+            if spatial_warnings:
+                for issue in spatial_warnings:
+                    result.add_issue(issue)
+
+            if result_proc.returncode != 0 and not spatial_issues:
+                error_msg, error_line = self._parse_manim_error(result_proc.stderr)
+                result.add_issue(ValidationIssue(
+                    severity=IssueSeverity.CRITICAL,
+                    confidence=IssueConfidence.HIGH,
+                    category=IssueCategory.RUNTIME,
+                    message=error_msg,
+                    line=error_line,
+                ))
                 
         except subprocess.TimeoutExpired:
             result.add_issue(ValidationIssue(
@@ -210,6 +215,37 @@ class RuntimeValidator:
             except (KeyError, ValueError) as exc:
                 logger.debug(f"Skipping malformed spatial issue: {exc}")
         return issues
+
+    @staticmethod
+    def _parse_spatial_warnings(stderr: str) -> List[ValidationIssue]:
+        """Extract spatial warnings emitted to stderr.
+
+        Warnings are emitted as: "SPATIAL_WARNING: <message>".
+        """
+        warnings: List[ValidationIssue] = []
+        for line in stderr.splitlines():
+            if not line.startswith("SPATIAL_WARNING:"):
+                continue
+            message = line.split("SPATIAL_WARNING:", 1)[-1].strip()
+            lowered = message.lower()
+            if "out of bounds" in lowered:
+                category = IssueCategory.OUT_OF_BOUNDS
+            elif "overlap" in lowered:
+                category = IssueCategory.TEXT_OVERLAP
+            elif "covers text" in lowered:
+                category = IssueCategory.OBJECT_OCCLUSION
+            elif "visibility" in lowered:
+                category = IssueCategory.VISIBILITY
+            else:
+                category = IssueCategory.SYSTEM
+
+            warnings.append(ValidationIssue(
+                severity=IssueSeverity.WARNING,
+                confidence=IssueConfidence.MEDIUM,
+                category=category,
+                message=message,
+            ))
+        return warnings
 
     @staticmethod
     def _raw_to_validation_issue(raw: dict) -> ValidationIssue:

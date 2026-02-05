@@ -5,10 +5,10 @@ Responsible for constructing the prompt for the adaptive fixer.
 Handles retry notes, history formatting, and strategy guidance.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from ...prompts import SURGICAL_FIX_USER, SURGICAL_FIX_FOLLOWUP
-from ...prompts.fixer_prompts import INITIAL_RETRY_NOTE, RETRY_FAILURE_NOTE
+from ...prompts.fixer_prompts import INITIAL_RETRY_NOTE
 
 
 class FixerPromptBuilder:

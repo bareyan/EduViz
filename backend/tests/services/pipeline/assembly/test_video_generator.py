@@ -39,7 +39,7 @@ class TestVideoGenerator:
         
         # Patch internal helper for parallel processing
         # Actually it uses SectionOrchestrator
-        with patch.object(generator, "_generate_script", AsyncMock(return_value={"sections": [{"title": "S1"}]})) as mock_gs, \
+        with patch.object(generator, "_generate_script", AsyncMock(return_value={"sections": [{"title": "S1"}]})), \
              patch("app.services.pipeline.assembly.video_generator.SectionOrchestrator") as mock_orch_class:
             
             mock_orch = mock_orch_class.return_value
@@ -85,7 +85,7 @@ class TestVideoGenerator:
                 # Should fail at combine if no videos, but we check if _generate_script was NOT called
                 generator._generate_script = AsyncMock()
                 
-                result = await generator.generate_video(job_id=job_id, resume=True)
+                await generator.generate_video(job_id=job_id, resume=True)
                 
                 generator._generate_script.assert_not_called()
                 mock_tracker.load_script.assert_called_once()

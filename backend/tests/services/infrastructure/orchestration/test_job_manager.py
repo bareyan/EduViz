@@ -4,10 +4,8 @@ Tests for app.services.infrastructure.orchestration.job_manager
 Tests job tracking and file-based persistence.
 """
 
-import os
 import json
 import pytest
-from pathlib import Path
 from app.services.infrastructure.orchestration.job_manager import Job, JobManager, JobStatus
 
 
@@ -55,7 +53,7 @@ class TestJobManager:
 
     def test_create_job_persists_to_disk(self, manager, temp_job_dir):
         """Verify that creating a job creates a file."""
-        job = manager.create_job("job-abc")
+        manager.create_job("job-abc")
         job_file = temp_job_dir / "job-abc.json"
         
         assert job_file.exists()

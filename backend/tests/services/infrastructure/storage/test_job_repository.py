@@ -6,7 +6,6 @@ Tests the JobRepository abstraction and its FileBasedJobRepository implementatio
 
 import pytest
 from unittest.mock import MagicMock, patch
-from dataclasses import asdict
 from app.services.infrastructure.storage.job_repository import (
     JobRecord,
     FileBasedJobRepository,

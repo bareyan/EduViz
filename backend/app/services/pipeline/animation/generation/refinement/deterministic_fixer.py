@@ -17,7 +17,7 @@ Architecture:
 """
 
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from app.core import get_logger
 from ...config import SAFE_X_LIMIT, SAFE_Y_LIMIT
@@ -145,7 +145,7 @@ class DeterministicFixer:
             return None
 
         # Strategy 1: Clamp numeric coordinates in move_to / shift
-        result = self._clamp_coordinates(code, center_x, center_y)
+        result = self._clamp_coordinates(code)
         if result is not None:
             return result
 
@@ -158,9 +158,7 @@ class DeterministicFixer:
 
         return None
 
-    def _clamp_coordinates(
-        self, code: str, target_x: float, target_y: float
-    ) -> Optional[str]:
+    def _clamp_coordinates(self, code: str) -> Optional[str]:
         """Find and clamp coordinate values near the reported position."""
         # Match patterns like: .move_to(RIGHT * 8) or .move_to(np.array([8, 0, 0]))
         # or .move_to([8, 0, 0]) or .shift(RIGHT * 8)

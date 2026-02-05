@@ -1,11 +1,8 @@
 
-import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch, AsyncMock
-import io
 
 from app.main import app
-from app.models import JobResponse
 from app.models.status import JobStatus
 from app.services.infrastructure.orchestration import Job
 
@@ -58,7 +55,7 @@ def test_analyze_material_success():
 
 def test_analyze_material_error():
     with patch("app.routes.analysis.find_uploaded_file", return_value="/tmp/bad.pdf"), \
-         patch("app.routes.analysis.analyzer.analyze", side_effect=ValueError("Bad file")) as mock_analyze:
+         patch("app.routes.analysis.analyzer.analyze", side_effect=ValueError("Bad file")):
          
         response = client.post("/analyze", json={"file_id": "bad_file"})
         assert response.status_code == 500
@@ -98,7 +95,7 @@ def test_delete_job():
     mock_repo.delete.return_value = {"id": valid_job_id}
     
     with patch("app.routes.jobs.FileBasedJobRepository", return_value=mock_repo), \
-         patch("app.routes.jobs.shutil.rmtree") as mock_rm:
+            patch("app.routes.jobs.shutil.rmtree"):
         
         # Need to mock exists call? 
         # app.routes.jobs.OUTPUT_DIR / job_id .exists()

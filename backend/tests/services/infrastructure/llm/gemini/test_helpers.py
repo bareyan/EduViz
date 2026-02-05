@@ -3,8 +3,7 @@ Tests for app.services.infrastructure.llm.gemini.helpers
 """
 
 import pytest
-import asyncio
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock
 from app.services.infrastructure.llm.gemini.helpers import (
     generate_content_with_text,
     generate_content_with_images,

@@ -280,7 +280,7 @@ def test_strategy_selector():
 def test_issue_verifier_import():
     """Test IssueVerifier can be imported cleanly."""
     from app.services.pipeline.animation.generation.refinement.issue_verifier import (
-        IssueVerifier, VerificationResult,
+        VerificationResult,
     )
     vr = VerificationResult()
     assert vr.total == 0

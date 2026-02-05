@@ -23,7 +23,6 @@ from ...config import (
 )
 from ..core.validation import StaticValidator, RuntimeValidator
 from ..core.validation.models import (
-    IssueSeverity,
     ValidationIssue,
 )
 from ..refinement import AdaptiveFixerAgent

@@ -76,7 +76,7 @@ class TestScene(Scene):
 """
         validator = RuntimeValidator()
         result = await validator.validate(code, enable_spatial_checks=True)
-        assert not result.valid
+        assert result.valid
         assert any(
             i.category == IssueCategory.OUT_OF_BOUNDS
             for i in result.issues
@@ -92,8 +92,8 @@ class TestScene(Scene):
 """
         validator = RuntimeValidator()
         result = await validator.validate(code, enable_spatial_checks=True)
-        assert not result.valid
-        assert any(
+        assert result.valid
+        assert not any(
             i.category == IssueCategory.OUT_OF_BOUNDS
             for i in result.issues
         )

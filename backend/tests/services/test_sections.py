@@ -4,7 +4,6 @@ Tests for pipeline/assembly/sections module
 Tests for section processing utilities including narration cleaning and subsection division.
 """
 
-import pytest
 from app.services.pipeline.assembly.sections import (
     clean_narration_for_tts,
     divide_into_subsections,

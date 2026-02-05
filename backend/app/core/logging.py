@@ -278,7 +278,7 @@ class LogTimer:
         self.logger.log(self.level, f"Starting: {self.operation}")
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, exc_type, exc_val, _exc_tb) -> None:
         duration = datetime.now().timestamp() - self.start_time
 
         if exc_type:

@@ -1,11 +1,9 @@
 
 import pytest
-from pathlib import Path
 from app.core.security import (
     sanitize_filename, 
     validate_job_id, 
     validate_path_within_directory,
-    validate_section_index,
     secure_file_path
 )
 

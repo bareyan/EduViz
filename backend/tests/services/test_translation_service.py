@@ -5,7 +5,7 @@ Tests for the TranslationService including language detection and text translati
 """
 
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, AsyncMock
 
 
 class TestTranslationServiceBasics:

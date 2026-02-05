@@ -3,7 +3,6 @@ Tests for app.services.pipeline.content_analysis components: Text, Image, and Ma
 """
 
 import pytest
-import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
 from app.services.pipeline.content_analysis.text import TextAnalyzer
 from app.services.pipeline.content_analysis.image import ImageAnalyzer

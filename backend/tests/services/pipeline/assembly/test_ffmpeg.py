@@ -3,16 +3,13 @@ Tests for app.services.pipeline.assembly.ffmpeg
 """
 
 import pytest
-import asyncio
 from unittest.mock import MagicMock, patch, AsyncMock
-from pathlib import Path
 from app.services.pipeline.assembly.ffmpeg import (
     get_media_duration,
     generate_silence,
     concatenate_audio_files,
     build_retime_merge_cmd,
     build_merge_no_cut_cmd,
-    concatenate_videos,
     combine_sections
 )
 
@@ -55,9 +52,9 @@ class TestFFmpegUtils:
         audio_dur = 10.0
         cmd = build_merge_no_cut_cmd("v.mp4", "a.mp3", video_dur, audio_dur, "out.mp4")
         
-        # Expect apad filter
-        assert any("apad" in arg for arg in cmd)
-        assert any("whole_dur=15.0" in arg for arg in cmd)
+        # Expect video padding filter (tpad) and no audio padding
+        assert any("tpad" in arg for arg in cmd)
+        assert not any("apad" in arg for arg in cmd)
 
 
 @pytest.mark.asyncio
@@ -98,7 +95,7 @@ class TestFFmpegAsync:
         # Mock file existence verify and prevent unlink
         with patch("asyncio.create_subprocess_exec", return_value=process_mock), \
              patch("pathlib.Path.exists", return_value=True), \
-             patch("pathlib.Path.unlink") as mock_unlink:
+               patch("pathlib.Path.unlink"):
             
             result = await concatenate_audio_files(in_files, str(out_file))
             assert result is True

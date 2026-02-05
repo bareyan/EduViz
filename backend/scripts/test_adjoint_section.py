@@ -7,17 +7,14 @@ real production script to verify it can handle complex, educational content.
 
 import asyncio
 import sys
-import json
 from pathlib import Path
 import tempfile
-import shutil
 
 # Add backend to path
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
 
 # Load environment variables from .env
-import app.config  # This triggers load_dotenv()
 
 from app.services.pipeline.animation.generation import ManimGenerator
 

@@ -158,7 +158,6 @@ Perevod dva
     def test_singleton(self):
         """Test get_translation_service singleton behavior."""
         with patch("app.services.infrastructure.llm.PromptingEngine"):
-            from app.services.features.translation.translation_service import _translation_service
             import app.services.features.translation.translation_service as ts_mod
             # Save original
             original = ts_mod._translation_service

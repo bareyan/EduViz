@@ -219,14 +219,24 @@ def parse_json_array_response(text: str, default: Optional[List[Dict[str, Any]]]
 
 # Forward compatible imports - deprecated, import from code_parser instead
 from .code_parser import (
-    extract_markdown_code_blocks, 
-    remove_markdown_wrappers as _remove_markdown_wrappers_impl, 
-    validate_python_syntax
+    extract_markdown_code_blocks as _extract_markdown_code_blocks_impl,
+    remove_markdown_wrappers as _remove_markdown_wrappers_impl,
+    validate_python_syntax as _validate_python_syntax_impl
 )
 
 def remove_markdown_wrappers(text: str) -> str:
     """Delegate to code_parser implementation."""
     return _remove_markdown_wrappers_impl(text)
+
+
+def extract_markdown_code_blocks(text: str, language: str = "python") -> List[str]:
+    """Delegate to code_parser implementation."""
+    return _extract_markdown_code_blocks_impl(text, language=language)
+
+
+def validate_python_syntax(code: str) -> Optional[str]:
+    """Delegate to code_parser implementation."""
+    return _validate_python_syntax_impl(code)
 
 
 

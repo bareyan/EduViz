@@ -6,7 +6,6 @@ Note: These tests document current behavior, including potential limitations.
 """
 
 import json
-import pytest
 from app.services.infrastructure.parsing.json_parser import (
     fix_json_escapes,
     parse_json_response,

@@ -63,14 +63,12 @@ class StrategySelector:
     
     def select(
         self,
-        errors: str,
-        failure_history: Optional[List[Dict]] = None
+        errors: str
     ) -> FixStrategy:
         """Select best strategy based on errors and history.
         
         Args:
             errors: Error messages string
-            failure_history: List of recent failures with strategies used
             
         Returns:
             Selected FixStrategy

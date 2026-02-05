@@ -1,7 +1,5 @@
 
-import pytest
 from app.models.jobs import DetailedProgress, JobResponse, ResumeInfo
-from app.models.sections import SectionProgress
 
 def test_resume_info_defaults():
     info = ResumeInfo(can_resume=True, completed_sections=2, total_sections=5)

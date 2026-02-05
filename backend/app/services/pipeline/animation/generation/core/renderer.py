@@ -49,7 +49,7 @@ def cleanup_output_artifacts(output_dir: str, code_file: Path, quality: str = "l
         except Exception as e:
             logger.warning(f"Failed to remove existing video {existing_video}: {e}")
 
-async def validate_video_file(video_path: str, min_duration: float = 0.5) -> bool:
+async def validate_video_file(video_path: str) -> bool:
     """Validates that a video file is functional and has reasonable content.
     
     Checks file existence, minimum size, and basic integrity via FFprobe.

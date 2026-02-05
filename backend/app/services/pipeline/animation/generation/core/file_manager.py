@@ -10,7 +10,7 @@ Follows SRP by handling:
 
 import shutil
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 
 from app.core import get_logger
 from app.services.pipeline.animation.config import QUALITY_DIR_MAP

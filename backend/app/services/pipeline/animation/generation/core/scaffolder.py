@@ -8,7 +8,7 @@ Following Google-quality standards:
 """
 
 import re
-from typing import List, Optional, Tuple, Set
+from typing import Optional, Tuple, Set
 
 class ManimScaffolder:
     """Manages the relationship between an LLM-generated snippet and a full Manim file."""

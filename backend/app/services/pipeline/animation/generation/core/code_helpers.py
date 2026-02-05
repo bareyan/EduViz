@@ -7,13 +7,10 @@ from typing import Optional
 
 from app.services.infrastructure.parsing.code_parser import (
     extract_markdown_code_blocks,
-    normalize_indentation,
     remove_markdown_wrappers
 )
 from ...config import (
     CONSTRUCT_INDENT_SPACES, 
-    MIN_DURATION_PADDING, 
-    DURATION_PADDING_PERCENTAGE,
     THEME_SETUP_CODES
 )
 

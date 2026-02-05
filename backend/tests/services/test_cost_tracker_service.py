@@ -5,10 +5,7 @@ Comprehensive tests for the CostTracker class including token tracking,
 cost calculation, and summarization.
 """
 
-import pytest
 from unittest.mock import MagicMock
-from io import StringIO
-import sys
 
 from app.services.infrastructure.llm.cost_tracker import (
     CostTracker,

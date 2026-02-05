@@ -1,5 +1,4 @@
 
-import pytest
 from app.models.generation import GenerationRequest, GeneratedVideo, GenerationResponse
 
 def test_generation_request_defaults():

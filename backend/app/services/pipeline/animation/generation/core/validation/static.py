@@ -4,7 +4,6 @@ Static Validator - Wraps Ruff and Pyright for robust code analysis.
 
 import asyncio
 import json
-import subprocess
 import tempfile
 import os
 from dataclasses import dataclass, field

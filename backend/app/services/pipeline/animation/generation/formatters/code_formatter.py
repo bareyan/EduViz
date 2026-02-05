@@ -10,7 +10,7 @@ Responsibilities:
 - Clean and normalize code output
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 
 class CodeFormatter:

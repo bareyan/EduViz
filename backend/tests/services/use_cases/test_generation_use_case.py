@@ -3,7 +3,6 @@ Tests for app.services.use_cases.generation_use_case
 """
 
 import pytest
-import uuid
 from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import HTTPException, BackgroundTasks
 from app.services.use_cases.generation_use_case import GenerationUseCase

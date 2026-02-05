@@ -6,9 +6,7 @@ Uses mocked subprocess to avoid requiring Manim/FFmpeg.
 """
 
 import pytest
-import asyncio
 from unittest.mock import MagicMock, patch, AsyncMock
-from pathlib import Path
 
 
 class TestGetQualitySubdir:
@@ -87,7 +85,7 @@ class TestValidateVideoFile:
         with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_thread:
             mock_thread.return_value = mock_result
             
-            result = await validate_video_file(str(video_file))
+            await validate_video_file(str(video_file))
             
             # Should have been called (at least for ffprobe)
             assert mock_thread.called
@@ -119,10 +117,13 @@ class TestRenderScene:
         # Create expected output video
         video_dir = tmp_path / "videos" / "test" / "480p15"
         video_dir.mkdir(parents=True)
-        (video_dir / "section_0.mp4").write_bytes(b"0" * 2000)
+        expected_video = video_dir / "section_0.mp4"
+        expected_video.write_bytes(b"0" * 2000)
+
+        mock_file_manager = MagicMock()
+        mock_file_manager.get_expected_video_path.return_value = expected_video
         
         with patch("asyncio.to_thread", new_callable=AsyncMock, return_value=mock_result), \
-             patch("app.services.pipeline.animation.generation.core.renderer.cleanup_output_artifacts"), \
              patch("app.services.pipeline.animation.generation.core.renderer.validate_video_file", new_callable=AsyncMock, return_value=True):
             
             result = await render_scene(
@@ -130,7 +131,8 @@ class TestRenderScene:
                 code_file=code_file,
                 scene_name="TestScene",
                 output_dir=str(tmp_path),
-                section_index=0
+                section_index=0,
+                file_manager=mock_file_manager
             )
             
             assert result is not None

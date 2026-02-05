@@ -38,7 +38,6 @@ class SectionGenerator:
 
         return await self._generate_sections_sequentially(
             sections_outline=sections_outline,
-            full_outline=outline,
             content=content,
             language_name=language_name,
             language_instruction=language_instruction,
@@ -48,7 +47,6 @@ class SectionGenerator:
     async def _generate_sections_sequentially(
         self,
         sections_outline: List[Dict[str, Any]],
-        full_outline: Dict[str, Any],
         content: str,
         language_name: str,
         language_instruction: str,

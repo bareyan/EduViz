@@ -290,6 +290,7 @@ def _perform_spatial_checks(self):
 # ── Injected at end of construct() to emit the final JSON report ─────────────
 INJECTED_FINAL_REPORT = '''
 # ── Spatial Validation: Final Report ──
+self._perform_spatial_checks()
 if hasattr(self, '_spatial_issues') and self._spatial_issues:
     import json as _json_report
     import sys as _sys_report

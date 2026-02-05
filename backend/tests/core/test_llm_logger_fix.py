@@ -3,7 +3,6 @@ Tests for LLM Logger robustness fixes.
 Specifically targets the "NoneType has no len()" error.
 """
 
-import pytest
 from unittest.mock import MagicMock
 from app.core.llm_logger import LLMLogger
 

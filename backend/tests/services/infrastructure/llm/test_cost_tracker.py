@@ -6,7 +6,7 @@ Tests token usage tracking and cost calculation.
 
 import pytest
 from unittest.mock import MagicMock
-from app.services.infrastructure.llm.cost_tracker import CostTracker, track_cost_safely, PRICING
+from app.services.infrastructure.llm.cost_tracker import CostTracker, track_cost_safely
 
 
 class TestCostTracker:

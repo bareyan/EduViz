@@ -54,7 +54,6 @@ class ScriptGenerator:
         self,
         file_path: str,
         topic: Dict[str, Any],
-        max_duration_minutes: int = 20,
         video_mode: str = "comprehensive",
         language: str = "en",
         content_focus: str = "as_document",

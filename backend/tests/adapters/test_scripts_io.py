@@ -8,7 +8,7 @@ saving, unwrapping, and metadata extraction.
 import pytest
 import json
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from fastapi import HTTPException
 
 from app.adapters.scripts_io import (

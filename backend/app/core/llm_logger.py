@@ -38,7 +38,7 @@ from datetime import datetime
 from dataclasses import dataclass, asdict
 import uuid
 
-from .logging import get_logger, StructuredFormatter
+from .logging import get_logger
 
 
 class LLMHumanFormatter(logging.Formatter):

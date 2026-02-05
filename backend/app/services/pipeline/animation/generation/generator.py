@@ -8,7 +8,6 @@ Handles the multi-stage animation generation workflow:
 4. Render: Produce final video sections
 """
 
-from pathlib import Path
 from typing import Dict, Any, Optional
 
 from app.core import get_logger
@@ -23,7 +22,7 @@ from .core import (
     render_scene,
     AnimationFileManager
 )
-from ..config import MAX_SURGICAL_FIX_ATTEMPTS, MAX_CLEAN_RETRIES
+from ..config import MAX_CLEAN_RETRIES
 
 logger = get_logger(__name__, component="manim_generator")
 

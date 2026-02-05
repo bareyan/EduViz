@@ -83,7 +83,7 @@ class AdaptiveFixerAgent:
             Tuple of (fixed_code, metadata)
         """
         # Select strategy based on error analysis
-        strategy = self.strategy_selector.select(errors, self._history)
+        strategy = self.strategy_selector.select(errors)
         logger.info(f"🎯 Selected strategy: {strategy.name}")
         
         # Delegate context preparation

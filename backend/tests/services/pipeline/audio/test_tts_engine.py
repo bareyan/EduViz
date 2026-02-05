@@ -3,13 +3,10 @@ Tests for app.services.pipeline.audio.tts_engine
 """
 
 import pytest
-import asyncio
 from unittest.mock import MagicMock, patch, AsyncMock
 from app.services.pipeline.audio.tts_engine import TTSEngine
 
 # Mock edge_tts module since it might not be installed
-import sys
-from types import ModuleType
 
 @pytest.fixture
 def mock_edge_tts_module():

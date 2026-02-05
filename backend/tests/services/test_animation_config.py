@@ -4,11 +4,9 @@ Tests for pipeline/animation/config module
 Tests for animation pipeline configuration constants and settings.
 """
 
-import pytest
 from app.services.pipeline.animation.config import (
     # Generation settings
     MAX_SURGICAL_FIX_ATTEMPTS,
-    GENERATION_TIMEOUT,
     CORRECTION_TIMEOUT,
     TEMPERATURE_INCREMENT,
     BASE_GENERATION_TEMPERATURE,
@@ -24,10 +22,7 @@ from app.services.pipeline.animation.config import (
     DURATION_PADDING_PERCENTAGE,
     CONSTRUCT_INDENT_SPACES,
     # Validation settings
-    ENABLE_SYNTAX_VALIDATION,
-    ENABLE_STRUCTURE_VALIDATION,
-    ENABLE_IMPORTS_VALIDATION,
-    ENABLE_SPATIAL_VALIDATION,
+    ENABLE_REFINEMENT_CYCLE,
 )
 
 
@@ -39,16 +34,9 @@ class TestGenerationSettings:
         assert MAX_SURGICAL_FIX_ATTEMPTS > 0
         assert isinstance(MAX_SURGICAL_FIX_ATTEMPTS, int)
 
-    def test_generation_timeout_reasonable(self):
-        """Test GENERATION_TIMEOUT is reasonable"""
-        assert GENERATION_TIMEOUT > 0
-        assert GENERATION_TIMEOUT <= 600  # Max 10 minutes
-        assert isinstance(GENERATION_TIMEOUT, int)
-
     def test_correction_timeout_reasonable(self):
         """Test CORRECTION_TIMEOUT is reasonable"""
         assert CORRECTION_TIMEOUT > 0
-        assert CORRECTION_TIMEOUT < GENERATION_TIMEOUT
         assert isinstance(CORRECTION_TIMEOUT, int)
 
     def test_temperature_increment_valid(self):
@@ -149,15 +137,12 @@ class TestValidationSettings:
 
     def test_validation_flags_are_boolean(self):
         """Test all validation flags are boolean"""
-        assert isinstance(ENABLE_SYNTAX_VALIDATION, bool)
-        assert isinstance(ENABLE_STRUCTURE_VALIDATION, bool)
-        assert isinstance(ENABLE_IMPORTS_VALIDATION, bool)
-        assert isinstance(ENABLE_SPATIAL_VALIDATION, bool)
+        assert isinstance(ENABLE_REFINEMENT_CYCLE, bool)
 
     def test_default_validations_enabled(self):
         """Test that default validations are enabled"""
         # At least syntax validation should always be on
-        assert ENABLE_SYNTAX_VALIDATION is True
+        assert ENABLE_REFINEMENT_CYCLE is True
 
 
 class TestConfigConsistency:
@@ -165,10 +150,8 @@ class TestConfigConsistency:
 
     def test_timeout_hierarchy(self):
         """Test timeout values make sense relative to each other"""
-        # Correction should be faster than generation
-        assert CORRECTION_TIMEOUT < GENERATION_TIMEOUT
-        # Render can be longer
-        assert RENDER_TIMEOUT >= GENERATION_TIMEOUT or True  # May vary
+        # Render can be longer than correction
+        assert RENDER_TIMEOUT >= CORRECTION_TIMEOUT or True  # May vary
 
     def test_iteration_vs_retries(self):
         """Test iteration settings are consistent"""

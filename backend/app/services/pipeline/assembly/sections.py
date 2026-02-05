@@ -17,7 +17,6 @@ from .ffmpeg import (
     concatenate_videos,
     build_retime_merge_cmd,
     build_merge_no_cut_cmd,
-    generate_silence,
 )
 from app.utils.section_status import write_status
 from app.core import get_logger

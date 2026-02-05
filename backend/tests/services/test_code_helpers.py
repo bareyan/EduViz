@@ -4,7 +4,6 @@ Tests for pipeline/animation/generation/code_helpers module
 Tests for code utilities including cleaning, normalization, and scene file creation.
 """
 
-import pytest
 from app.services.pipeline.animation.generation.core.code_helpers import (
     clean_code,
     strip_theme_code_from_content,
@@ -141,21 +140,21 @@ class TestCreateSceneFile:
         result = create_scene_file(code, "test_section", 10.0)
         
         assert "from manim import *" in result
-        assert "self.wait" in result
+        assert "self.play(Create(circle))" in result
 
     def test_includes_duration_comment(self):
-        """Test that target duration is included in comments"""
+        """Test that target duration does not force padding"""
         code = "circle = Circle()"
         result = create_scene_file(code, "test", 15.0)
         
-        assert "self.wait" in result
+        assert "self.wait" not in result
 
     def test_includes_padding_wait(self):
-        """Test that padding wait is added"""
+        """Test that padding wait is not automatically added"""
         code = "circle = Circle()"
         result = create_scene_file(code, "test", 10.0)
         
-        assert "self.wait" in result
+        assert "self.wait" not in result
 
     def test_class_name_from_section_id(self):
         """Class naming is no longer injected; ensure code returned."""
