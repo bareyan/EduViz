@@ -355,7 +355,10 @@ class ManimGenerator:
         section_index: int = 0,
         audio_duration: float = 60.0
     ) -> Optional[str]:
-        """Utility for rendering straight from code (legacy support)."""
+        """Render Manim code directly to video.
+        
+        Used by translation pipeline to render translated animations.
+        """
         result = await self.process_code_and_render(
             manim_code=manim_code,
             section={"id": f"manual_{section_index}"},

@@ -101,6 +101,7 @@ class RuntimeValidator:
             # Command: python -m manim -ql --dry_run --media_dir <tmp> <file>
             # We use a temp media dir to avoid polluting the workspace
             temp_media_dir = tmp_path.parent / f"manim_dry_run_{tmp_path.stem}"
+            self._prepare_media_dir(temp_media_dir)
             
             cmd = [
                 self.python_exe, "-m", "manim", 
@@ -266,6 +267,17 @@ class RuntimeValidator:
             fix_hint=raw.get("fix_hint"),
             details=raw.get("details", {}),
         )
+
+    @staticmethod
+    def _prepare_media_dir(media_dir: Path) -> None:
+        """Ensure Manim dry-run media folders exist before execution.
+
+        Some Windows environments fail to auto-create nested `Tex` output paths
+        during LaTeX rendering. Pre-creating these directories avoids intermittent
+        `FileNotFoundError` in pathlib.mkdir.
+        """
+        media_dir.mkdir(parents=True, exist_ok=True)
+        (media_dir / "Tex").mkdir(parents=True, exist_ok=True)
 
     def _parse_manim_error(
         self,

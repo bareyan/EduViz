@@ -16,7 +16,7 @@ Orchestrates the validate → triage → fix cycle with the
 The whitelist is session-scoped and resets between section generations,
 so we don't "learn" bad habits.
 
-Every issue is a typed ``ValidationIssue``. No legacy string errors.
+All issues are typed ``ValidationIssue`` objects with severity, confidence, and category.
 """
 
 from typing import Dict, Any, List, Optional, Tuple, Callable
@@ -72,7 +72,7 @@ class Refiner:
         # Session-scoped whitelist for verified false positives
         self.whitelist = FalsePositiveWhitelist()
         
-        # Track issues (legacy, kept for compatibility)
+        # Track pending issues for Visual QC post-render
         self.last_runtime_issues: List[ValidationIssue] = []
         self.pending_uncertain_issues: List[ValidationIssue] = []
 
@@ -319,7 +319,7 @@ class Refiner:
                     self.whitelist.add_all(verification_result.false_positives)
                     triage_stats["verified_false_positive"] = len(verification_result.false_positives)
             else:
-                # No verifier available - defer to pending (legacy behavior)
+                # No verifier available - defer all uncertain issues to Visual QC
                 self.pending_uncertain_issues.extend(partitions["uncertain"])
                 triage_stats["deferred_to_visual_qc"] = len(partitions["uncertain"])
 

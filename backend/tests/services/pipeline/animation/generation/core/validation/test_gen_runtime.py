@@ -1,6 +1,7 @@
 
 import pytest
 from unittest.mock import Mock, patch, AsyncMock
+from pathlib import Path
 from app.services.pipeline.animation.generation.core.validation.runtime import RuntimeValidator
 from app.services.pipeline.animation.generation.core.validation.models import IssueCategory
 
@@ -71,3 +72,10 @@ def test_parse_spatial_warnings(validator):
     issues = validator._parse_spatial_warnings(stderr)
     assert len(issues) == 1
     assert issues[0].category == IssueCategory.TEXT_OVERLAP
+
+
+def test_prepare_media_dir_creates_tex_folder(validator):
+    media_dir = Path("manim_dry_run_sample")
+    with patch.object(Path, "mkdir") as mock_mkdir:
+        validator._prepare_media_dir(media_dir)
+        assert mock_mkdir.call_count == 2

@@ -115,13 +115,6 @@ class ValidationIssue:
         """Whether this issue needs LLM intervention (can't be auto-fixed)."""
         return self.is_certain and not self.auto_fixable
 
-    # ── Deprecated: kept for backward compatibility ──────────────────────
-
-    @property
-    def needs_verification(self) -> bool:
-        """DEPRECATED: Use is_uncertain instead."""
-        return self.is_uncertain
-
     # ── Whitelist support ────────────────────────────────────────────────
 
     @property

@@ -3,9 +3,9 @@ Spatial Check Injector
 
 Injects AST-based spatial validation into Manim Scene code.
 
-Key improvements over v1:
+Features:
 - Confidence-based classification (CRITICAL / WARNING / INFO)
-- Overlap-ratio computation instead of binary AABB
+- Overlap-ratio computation for accurate occlusion detection
 - Effect & container suppression (Flash, SurroundingRectangle, etc.)
 - Structured JSON output for smart triage downstream
 - Accumulates ALL issues across play/wait calls, deduplicates at end

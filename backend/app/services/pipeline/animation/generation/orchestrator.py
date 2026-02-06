@@ -7,8 +7,6 @@ Orchestrates the three stages:
 1. Choreography (visual planning)
 2. Implementation (code generation)  
 3. Refinement (validation + fixing)
-
-This is the new entry point, replacing the monolithic Animator class.
 """
 
 import asyncio
@@ -67,7 +65,7 @@ class AnimationOrchestrator:
         
         # Verifier engine for IssueVerifier (lightweight LLM for issue verification)
         self.verifier_engine = PromptingEngine(
-            config_key="animation_verification",
+            config_key="animation_refinement",
             cost_tracker=self.cost_tracker
         )
         
