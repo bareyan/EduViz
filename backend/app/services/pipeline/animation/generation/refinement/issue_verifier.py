@@ -18,7 +18,8 @@ Usage:
 """
 
 from dataclasses import dataclass, field
-from typing import List
+from pathlib import Path
+from typing import List, Optional
 
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig
@@ -100,10 +101,24 @@ class IssueVerifier:
 
         # Build the verification prompt
         prompt = self._build_prompt(code, issues)
+        contents = [prompt]
+        
+        # Add images if available
+        has_images = False
+        for issue in issues:
+            if issue.details and issue.details.get("frame_path"):
+                frame_path = Path(issue.details["frame_path"])
+                if frame_path.exists():
+                    try:
+                        contents.append(self._build_image_part(frame_path.read_bytes()))
+                        has_images = True
+                    except Exception as e:
+                        logger.warning(f"Failed to read frame {frame_path}: {e}")
 
         try:
             llm_result = await self.engine.generate(
-                prompt=prompt,
+                prompt=prompt if not has_images else None, # pass as contents if images exist
+                contents=contents if has_images else None,
                 system_prompt=VERIFIER_SYSTEM.template,
                 config=PromptConfig(
                     temperature=VERIFICATION_TEMPERATURE,
@@ -172,7 +187,14 @@ class IssueVerifier:
             f"The spatial validator flagged these uncertain issues:\n"
             + "\n".join(issue_list)
             + "\n\nFor each issue (by index), is it REAL or FALSE_POSITIVE?"
+            + ("\n(Screenshots attached)" if any(i.details.get("frame_path") for i in issues) else "")
         )
+
+    def _build_image_part(self, image_bytes: bytes):
+        try:
+            return self.engine.types.Part.from_data(data=image_bytes, mime_type="image/png")
+        except AttributeError:
+            return self.engine.types.Part.from_bytes(data=image_bytes, mime_type="image/png")
 
     @staticmethod
     def _parse_verdicts(

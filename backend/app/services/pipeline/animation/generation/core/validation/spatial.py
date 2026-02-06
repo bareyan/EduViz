@@ -138,6 +138,33 @@ def _perform_spatial_checks(self):
     def _issue(severity, confidence, category, message, auto_fixable=False, fix_hint=None, **details):
         if "time_sec" not in details:
             details["time_sec"] = _current_time_sec()
+        
+        # ── Snapshot Logic ──
+        # If we have an output directory and this is a visual issue (not critical code failure),
+        # capture a snapshot for verifying with Vision LLM.
+        try:
+            import os as _os
+            _out_dir = _os.environ.get("MANIM_SPATIAL_OUTPUT_DIR")
+            if _out_dir and _os.path.exists(_out_dir):
+                # Don't spam snapshots - one per second-ish is enough? 
+                # Actually, precise frames are better. Dedupe by exact time + message hash?
+                # Simple dedupe: filename based on time.
+                _t_val = details["time_sec"] or 0.0
+                _fname = f"issue_t{_t_val:.2f}.png"
+                _full_path = _os.path.join(_out_dir, _fname)
+                
+                # If file doesn't exist, capture it.
+                if not _os.path.exists(_full_path):
+                     # self is available from closure
+                     if hasattr(self, "camera") and hasattr(self.camera, "get_image"):
+                         _img = self.camera.get_image()
+                         if _img:
+                             _img.save(_full_path)
+                             
+                details["frame_file"] = _fname
+        except Exception:
+            pass
+            
         return {
             "severity": severity,
             "confidence": confidence,
@@ -215,6 +242,7 @@ def _perform_spatial_checks(self):
         # ── Text edge proximity check ──
         # Even if not technically past SCREEN_X, text within TEXT_EDGE_MARGIN
         # of the screen boundary is at risk of visual clipping
+        # This is UNCERTAIN — needs Visual QC to confirm if it looks bad
         if is_text_obj and overshoot <= ignore_threshold:
             margin_right = SCREEN_X - right
             margin_left = SCREEN_X + left  # left is negative when object is left of center
@@ -227,8 +255,9 @@ def _perform_spatial_checks(self):
                     f"Text '{obj_type}' dangerously close to screen edge at "
                     f"({x:.1f}, {y:.1f}), margin={min_margin:.2f}"
                 )
+                # Use LOW confidence — let Visual QC decide if it's actually clipped
                 new_issues.append(_issue(
-                    "warning", "medium", "out_of_bounds", msg,
+                    "warning", "low", "out_of_bounds", msg,
                     auto_fixable=True,
                     fix_hint="Shift text inward or reduce font_size — risk of edge clipping",
                     object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
@@ -304,6 +333,7 @@ def _perform_spatial_checks(self):
             msg = f"Text overlap ({ratio:.0%}): '{txt1}' overlaps '{txt2}'"
 
             if ratio > 0.4:
+                # CERTAIN: Major overlap — definitely needs fixing
                 new_issues.append(_issue(
                     "critical", "high", "text_overlap", msg,
                     auto_fixable=True,
@@ -311,13 +341,21 @@ def _perform_spatial_checks(self):
                     text1=txt1, text2=txt2, overlap_ratio=round(ratio, 2),
                 ))
             elif ratio > 0.15:
+                # CERTAIN: Visible overlap — still needs fixing
                 new_issues.append(_issue(
-                    "critical", "medium", "text_overlap", msg,
+                    "critical", "high", "text_overlap", msg,
                     auto_fixable=True,
                     fix_hint="Visible text overlap: separate labels with .next_to()/.shift()",
                     text1=txt1, text2=txt2, overlap_ratio=round(ratio, 2),
                 ))
-            # < 0.15 -> marginal, skip
+            else:
+                # UNCERTAIN: Small overlap (5-15%) — let Visual QC decide
+                new_issues.append(_issue(
+                    "warning", "low", "text_overlap", msg,
+                    auto_fixable=True,
+                    fix_hint="Minor text overlap: may need adjustment",
+                    text1=txt1, text2=txt2, overlap_ratio=round(ratio, 2),
+                ))
 
     # ═══════════════════════════════════════════════════════════════════
     # 3. OBJECT-ON-TEXT OCCLUSION (z-order aware)
@@ -529,20 +567,32 @@ class SpatialCheckInjector:
 
     @staticmethod
     def _find_scene_class(tree: ast.Module):
-        """Find the Scene subclass (or first class as fallback)."""
-        for node in tree.body:
-            if isinstance(node, ast.ClassDef):
-                is_scene = any(
-                    isinstance(base, ast.Name) and base.id == "Scene"
-                    for base in node.bases
-                )
-                if is_scene:
+        """Find the Scene subclass using heuristics.
+        
+        Priority:
+        1. Class that explicitly inherits from a name ending in 'Scene'
+        2. Class that contains a 'construct' method (most reliable for Manim)
+        3. First class in the module as fallback
+        """
+        classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
+        if not classes:
+            return None
+
+        # 1. Look for 'Scene' in bases
+        for node in classes:
+            for base in node.bases:
+                if isinstance(base, ast.Name) and "Scene" in base.id:
+                    return node
+                if isinstance(base, ast.Attribute) and "Scene" in base.attr:
                     return node
 
-        # Fallback: first class (e.g. ThreeDScene, MovingCameraScene)
-        return next(
-            (n for n in tree.body if isinstance(n, ast.ClassDef)), None
-        )
+        # 2. Look for 'construct' method
+        for node in classes:
+            if any(isinstance(n, ast.FunctionDef) and n.name == "construct" for n in node.body):
+                return node
+
+        # 3. Fallback: first class
+        return classes[0]
 
     @staticmethod
     def _find_construct(scene_class: ast.ClassDef):

@@ -65,13 +65,19 @@ class AnimationOrchestrator:
             cost_tracker=self.cost_tracker
         )
         
+        # Verifier engine for IssueVerifier (lightweight LLM for issue verification)
+        self.verifier_engine = PromptingEngine(
+            config_key="animation_verification",
+            cost_tracker=self.cost_tracker
+        )
+        
         # Initialize stages
         self.choreographer = Choreographer(self.choreography_engine)
         self.implementer = Implementer(self.engine)
         
         # Initialize refinement components (using adaptive fixer)
         self.fixer = AdaptiveFixerAgent(self.engine)
-        self.refiner = Refiner(self.fixer)
+        self.refiner = Refiner(self.fixer, verifier_engine=self.verifier_engine)
     
     async def generate(
         self,

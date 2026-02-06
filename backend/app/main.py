@@ -34,11 +34,13 @@ from .core import setup_logging, get_logger, set_request_id, clear_context
 log_level = os.getenv("LOG_LEVEL", "INFO")
 log_file = os.getenv("LOG_FILE")
 use_json_logs = os.getenv("JSON_LOGS", "false").lower() == "true"
+pipeline_log_file = os.getenv("PIPELINE_LOG_FILE", "logs/animation_pipeline.jsonl")
 
 setup_logging(
     level=log_level,
     log_file=Path(log_file) if log_file else None,
-    use_json=use_json_logs
+    use_json=use_json_logs,
+    pipeline_log_file=Path(pipeline_log_file) if pipeline_log_file else None
 )
 
 logger = get_logger(__name__, service="api")

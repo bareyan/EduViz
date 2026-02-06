@@ -190,7 +190,7 @@ class StaticValidator:
             
         finally:
             # Cleanup
-             if tmp_path.exists():
+            if tmp_path.exists():
                 try:
                     os.unlink(tmp_path)
                 except Exception as e:

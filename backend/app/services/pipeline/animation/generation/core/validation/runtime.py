@@ -68,7 +68,7 @@ class RuntimeValidator:
         # We prefer 'python -m manim' to ensure we use the same environment
         self.python_exe = sys.executable
 
-    async def validate(self, code: str, temp_dir: Optional[str] = None, enable_spatial_checks: bool = False) -> ValidationResult:
+    async def validate(self, code: str, temp_dir: Optional[str] = None, enable_spatial_checks: bool = False, frames_dir: Optional[str] = None) -> ValidationResult:
         """
         Executes the code in dry-run mode.
         """
@@ -112,6 +112,8 @@ class RuntimeValidator:
 
             env = os.environ.copy()
             env["PYTHONWARNINGS"] = "ignore::SyntaxWarning"
+            if frames_dir:
+                env["MANIM_SPATIAL_OUTPUT_DIR"] = str(frames_dir)
             
             # Use subprocess.run via thread to avoid ProactorEventLoop issues on Windows
             result_proc = await asyncio.to_thread(
@@ -282,15 +284,36 @@ class RuntimeValidator:
 
         logger.debug(f"Full Manim stderr (first 2000 chars):\n{stderr[:2000]}")
 
-        # Strategy 1: Standard Python exception pattern
+        # Strategy 1: Look for 'Traceback (most recent call last):' block
+        traceback_block = []
+        in_traceback = False
+        for line in lines:
+            if "Traceback (most recent call last):" in line:
+                traceback_block = [line]
+                in_traceback = True
+            elif in_traceback:
+                if line.startswith("  ") or re.match(r'^[A-Z][a-zA-Z]*Error:', line.strip()) or re.match(r'^[A-Z][a-zA-Z]*:', line.strip()):
+                    traceback_block.append(line)
+                    if not line.startswith("  "):
+                        # End of traceback (the exception line)
+                        in_traceback = False
+                else:
+                    in_traceback = False
+        
         exception_line = None
-        for line in reversed(lines):
-            stripped = line.strip()
-            if re.match(r'^[A-Z][a-zA-Z]*Error:', stripped) or re.match(r'^[A-Z][a-zA-Z]*:', stripped):
-                exception_line = stripped
-                break
+        if traceback_block:
+            # The last line of the traceback block is usually the exception message
+            exception_line = traceback_block[-1].strip()
+        
+        if not exception_line:
+            # Fallback to standard Python exception pattern in whole stderr
+            for line in reversed(lines):
+                stripped = line.strip()
+                if re.match(r'^[A-Z][a-zA-Z]*Error:', stripped) or re.match(r'^[A-Z][a-zA-Z]*:', stripped):
+                    exception_line = stripped
+                    break
 
-        # Strategy 2: Last meaningful non-empty line
+        # Strategy 2: Last meaningful non-empty line (if all else fails)
         if not exception_line:
             for line in reversed(lines):
                 stripped = line.strip()

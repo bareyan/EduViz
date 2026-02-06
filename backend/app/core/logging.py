@@ -181,7 +181,8 @@ class LoggerAdapter(logging.LoggerAdapter):
 def setup_logging(
     level: str = "INFO",
     log_file: Optional[Path] = None,
-    use_json: bool = False
+    use_json: bool = False,
+    pipeline_log_file: Optional[Path] = None
 ) -> None:
     """
     Configure application logging
@@ -190,6 +191,7 @@ def setup_logging(
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         log_file: Optional file path for logging to file
         use_json: If True, use structured JSON logging; otherwise human-readable
+        pipeline_log_file: Optional file path for a separate pipeline log file
     """
     # Convert level string to logging constant
     numeric_level = getattr(logging, level.upper(), logging.INFO)
@@ -220,6 +222,14 @@ def setup_logging(
         file_handler.setLevel(numeric_level)
         file_handler.setFormatter(StructuredFormatter())  # Always use JSON for file logs
         root_logger.addHandler(file_handler)
+
+    # Separate pipeline log handler (if specified)
+    if pipeline_log_file:
+        pipeline_log_file.parent.mkdir(parents=True, exist_ok=True)
+        pipeline_handler = logging.FileHandler(pipeline_log_file)
+        pipeline_handler.setLevel(numeric_level)
+        pipeline_handler.setFormatter(StructuredFormatter())
+        root_logger.addHandler(pipeline_handler)
 
     # Suppress noisy third-party loggers
     logging.getLogger("urllib3").setLevel(logging.WARNING)

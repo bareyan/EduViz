@@ -124,6 +124,15 @@ class ManimGenerator:
                 section_index=section_index,
                 code_content=code
             )
+            logger.info(
+                "Raw Manim code generated",
+                extra={
+                    "section_index": section_index,
+                    "attempt": attempt_idx + 1,
+                    "code_chars": len(code),
+                    "pipeline_stage": "code_generated",
+                },
+            )
 
         def status_callback(status: SectionState) -> None:
             write_status(section_dir, status)
@@ -232,27 +241,45 @@ class ManimGenerator:
         output_dir: str,
         section_index: int,
     ) -> list[str]:
-        """Run vision QC as verification-only for uncertain spatial issues.
+        """Run Visual QC to verify uncertain spatial issues.
 
-        Architecture:
+        Architecture (Certain vs. Uncertain model):
             The spatial validator catches most issues deterministically.
-            Vision QC only verifies issues where the spatial validator
-            was uncertain (needs_verification=True). Confirmed issues
-            are logged but NOT auto-fixed (would require re-render).
+            Uncertain issues are deferred to this Visual QC step.
+            
+            Flow:
+            1. Get pending uncertain issues from Refiner
+            2. Run Vision LLM to verify each issue
+            3. If real → track for fixing (would require re-render)
+            4. If false positive → add to whitelist (skip next time)
         """
-        # Get uncertain spatial issues from the last runtime validation
-        uncertain_issues = [
-            issue
-            for issue in self.orchestrator.refiner.last_runtime_issues
-            if issue.is_spatial and issue.needs_verification
-        ]
+        # Get uncertain issues that were deferred during refinement
+        uncertain_issues = self.orchestrator.refiner.get_pending_uncertain_issues()
 
         if not uncertain_issues:
             return []
 
         logger.info(
-            f"Vision QC: verifying {len(uncertain_issues)} uncertain "
+            f"Visual QC: verifying {len(uncertain_issues)} uncertain "
             f"spatial issues for section {section_index}"
+        )
+        logger.info(
+            "Visual QC input",
+            extra={
+                "section_index": section_index,
+                "pipeline_stage": "visual_qc_input",
+                "issue_count": len(uncertain_issues),
+                "issues": [
+                    {
+                        "category": i.category.value,
+                        "severity": i.severity.value,
+                        "confidence": i.confidence.value,
+                        "whitelist_key": i.whitelist_key,
+                        "message": i.message[:160],
+                    }
+                    for i in uncertain_issues[:8]
+                ],
+            },
         )
 
         confirmed = await self.vision_validator.verify_issues(
@@ -263,9 +290,60 @@ class ManimGenerator:
         )
 
         if confirmed:
+            # Mark confirmed issues as real
+            self.orchestrator.refiner.mark_as_real_issues(confirmed)
             logger.warning(
-                f"Vision QC confirmed {len(confirmed)} issues in section "
+                f"Visual QC confirmed {len(confirmed)} issues in section "
                 f"{section_index} (not auto-fixed — would require re-render)"
+            )
+            logger.warning(
+                "Visual QC confirmed issues",
+                extra={
+                    "section_index": section_index,
+                    "pipeline_stage": "visual_qc_confirmed",
+                    "issue_count": len(confirmed),
+                    "issues": [
+                        {
+                            "category": i.category.value,
+                            "severity": i.severity.value,
+                            "confidence": i.confidence.value,
+                            "whitelist_key": i.whitelist_key,
+                            "message": i.message[:160],
+                        }
+                        for i in confirmed[:8]
+                    ],
+                },
+            )
+        
+        # Issues not confirmed are false positives - add to whitelist
+        confirmed_keys = {i.whitelist_key for i in confirmed}
+        false_positives = [
+            i for i in uncertain_issues
+            if i.whitelist_key not in confirmed_keys
+        ]
+        if false_positives:
+            self.orchestrator.refiner.mark_as_false_positives(false_positives)
+            logger.info(
+                f"Visual QC cleared {len(false_positives)} false positives "
+                f"in section {section_index}"
+            )
+            logger.info(
+                "Visual QC false positives",
+                extra={
+                    "section_index": section_index,
+                    "pipeline_stage": "visual_qc_false_positive",
+                    "issue_count": len(false_positives),
+                    "issues": [
+                        {
+                            "category": i.category.value,
+                            "severity": i.severity.value,
+                            "confidence": i.confidence.value,
+                            "whitelist_key": i.whitelist_key,
+                            "message": i.message[:160],
+                        }
+                        for i in false_positives[:8]
+                    ],
+                },
             )
 
         return [issue.message for issue in confirmed]

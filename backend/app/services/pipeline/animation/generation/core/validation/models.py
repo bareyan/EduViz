@@ -60,11 +60,14 @@ class IssueCategory(Enum):
 class ValidationIssue:
     """
     A single classified validation issue with routing metadata.
-
-    Routing rules (used by Refiner):
-    - auto_fixable + HIGH/MEDIUM confidence → DeterministicFixer (no LLM)
-    - LOW confidence or INFO severity → verify via lightweight LLM probe
-    - CRITICAL + not auto_fixable → full LLM fixer
+    
+    - **Certain Issue**: We are confident this is broken.
+      Action: Route directly to Fixer (Deterministic or LLM).
+      Examples: Text > 1 unit off-screen, Overlap > 40%, HIGH confidence issues.
+      
+    - **Uncertain Issue**: It might be broken, but we're not sure.
+      Action: Route to Visual QC first. Let the "eyes" decide.
+      Examples: Small overlap (5-15%), Flash effect on top of text, LOW confidence.
     """
 
     severity: IssueSeverity
@@ -76,27 +79,75 @@ class ValidationIssue:
     details: Dict[str, Any] = field(default_factory=dict)
     line: Optional[int] = None
 
-    @property
-    def requires_llm(self) -> bool:
-        """Whether this issue needs LLM intervention (can't be auto-fixed)."""
-        return self.severity == IssueSeverity.CRITICAL and not self.auto_fixable
+    # ── Core routing: Certain vs. Uncertain ──────────────────────────────
 
     @property
-    def needs_verification(self) -> bool:
-        """Whether this issue is uncertain and should be verified before acting."""
-        if self.severity == IssueSeverity.INFO and self.confidence == IssueConfidence.LOW:
+    def is_certain(self) -> bool:
+        """Whether we're confident this is a real issue that needs fixing.
+        
+        Certain issues route directly to the fixer (deterministic or LLM).
+        """
+        # HIGH confidence issues are always certain
+        if self.confidence == IssueConfidence.HIGH:
             return True
-        if self.confidence == IssueConfidence.LOW and self.severity != IssueSeverity.CRITICAL:
+        # CRITICAL severity with MEDIUM confidence is also certain
+        if self.severity == IssueSeverity.CRITICAL and self.confidence == IssueConfidence.MEDIUM:
             return True
         return False
 
     @property
+    def is_uncertain(self) -> bool:
+        """Whether this issue needs visual verification before acting.
+        
+        Uncertain issues are routed to Visual QC first to determine if real.
+        """
+        return not self.is_certain and self.is_spatial
+
+    # ── Fix routing ──────────────────────────────────────────────────────
+
+    @property
     def should_auto_fix(self) -> bool:
         """Whether this issue should be handled by the deterministic fixer."""
-        return self.auto_fixable and self.confidence in (
-            IssueConfidence.HIGH,
-            IssueConfidence.MEDIUM,
-        )
+        return self.auto_fixable and self.is_certain
+
+    @property
+    def requires_llm(self) -> bool:
+        """Whether this issue needs LLM intervention (can't be auto-fixed)."""
+        return self.is_certain and not self.auto_fixable
+
+    # ── Deprecated: kept for backward compatibility ──────────────────────
+
+    @property
+    def needs_verification(self) -> bool:
+        """DEPRECATED: Use is_uncertain instead."""
+        return self.is_uncertain
+
+    # ── Whitelist support ────────────────────────────────────────────────
+
+    @property
+    def whitelist_key(self) -> str:
+        """Generate a stable key for false positive whitelist.
+        
+        The key format: (category, subject_id, details_hash)
+        Used to track issues that Visual QC confirmed as non-problems.
+        """
+        import hashlib
+        # Build a stable details signature
+        # Include key identifying fields: object types, overlap ratios, positions
+        detail_parts = []
+        for key in sorted(self.details.keys()):
+            if key in ("time_sec", "frame_file", "frame_path", "source_message"):
+                # Skip time-varying fields
+                continue
+            val = self.details[key]
+            # Round floats for stable matching
+            if isinstance(val, float):
+                val = round(val, 1)
+            detail_parts.append(f"{key}={val}")
+        details_str = "|".join(detail_parts)
+        details_hash = hashlib.md5(details_str.encode()).hexdigest()[:8]
+        
+        return f"{self.category.value}:{details_hash}"
 
     @property
     def is_spatial(self) -> bool:

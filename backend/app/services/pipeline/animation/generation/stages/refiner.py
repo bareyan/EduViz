@@ -1,19 +1,27 @@
 """
 Refiner Stage
 
-Orchestrates the validate → triage → fix cycle with four tiers:
+Orchestrates the validate → triage → fix cycle with the
+"Certain vs. Uncertain" routing model:
 
-1. **Deterministic fixes** (no LLM) — pattern-based code transforms for
-   high-confidence spatial issues and known bad patterns.
-2. **Verification** — lightweight LLM probe for uncertain issues to
-   determine if they're real or false positives.
-3. **LLM surgical fixes** — AdaptiveFixerAgent for confirmed complex errors.
-4. **Discard** — verified false positives are dropped.
+1. **Certain Issues**: We are confident this is broken.
+   → Route directly to Fixer (Deterministic or LLM).
+   
+2. **Uncertain Issues**: It might be broken, but we're not sure.
+   → Check whitelist first (skip if known false positive).
+   → If not whitelisted → verify with IssueVerifier (Vision LLM).
+   → If verified as real → route to LLM fixer.
+   → If false positive → add to whitelist (skip next time).
+
+The whitelist is session-scoped and resets between section generations,
+so we don't "learn" bad habits.
 
 Every issue is a typed ``ValidationIssue``. No legacy string errors.
 """
 
 from typing import Dict, Any, List, Optional, Tuple, Callable
+import tempfile
+from pathlib import Path
 
 from app.core import get_logger
 from app.utils.section_status import SectionState
@@ -26,29 +34,47 @@ from ..core.validation import StaticValidator, RuntimeValidator
 from ..core.validation.models import (
     ValidationIssue,
 )
-from ..refinement import AdaptiveFixerAgent
-from ..refinement.deterministic_fixer import DeterministicFixer
-from ..refinement.issue_verifier import IssueVerifier
-
+from ..refinement import (
+    AdaptiveFixerAgent,
+    CSTFixer,
+    FalsePositiveWhitelist,
+    IssueRouter,
+    IssueVerifier,
+)
 
 logger = get_logger(__name__, component="animation_refiner")
 
 
 class Refiner:
-    """Manages the iterative validation and smart-triage fixing cycle."""
+    """Manages the iterative validation and smart-triage fixing cycle.
+    
+    Uses the "Certain vs. Uncertain" routing model:
+    - Certain issues → fix directly
+    - Uncertain issues → verify with IssueVerifier → if real, fix; if false, whitelist
+    """
 
     def __init__(
         self,
         fixer: AdaptiveFixerAgent,
+        verifier_engine=None,
         max_attempts: int = MAX_SURGICAL_FIX_ATTEMPTS,
     ):
         self.fixer = fixer
         self.max_attempts = max_attempts
         self.static_validator = StaticValidator()
         self.runtime_validator = RuntimeValidator()
-        self.deterministic_fixer = DeterministicFixer()
-        self.verifier = IssueVerifier(fixer.engine)
+        self.deterministic_fixer = CSTFixer()
+        self.router = IssueRouter()
+        
+        # IssueVerifier for verifying uncertain issues with LLM
+        self.issue_verifier = IssueVerifier(verifier_engine) if verifier_engine else None
+        
+        # Session-scoped whitelist for verified false positives
+        self.whitelist = FalsePositiveWhitelist()
+        
+        # Track issues (legacy, kept for compatibility)
         self.last_runtime_issues: List[ValidationIssue] = []
+        self.pending_uncertain_issues: List[ValidationIssue] = []
 
     async def refine(
         self,
@@ -57,7 +83,7 @@ class Refiner:
         context: Optional[Dict[str, Any]] = None,
         status_callback: Optional[Callable[[SectionState], None]] = None,
     ) -> Tuple[str, bool]:
-        """Execute the full refinement cycle with smart triage.
+        """Execute the full refinement cycle with the Certain/Uncertain model.
 
         Flow per iteration:
         1. Static validation → if fail → LLM fix → continue
@@ -65,9 +91,11 @@ class Refiner:
         3. Runtime validation (with spatial checks)
            → if pass → done
            → if fail → triage issues:
-               a. Auto-fixable → DeterministicFixer (no LLM)
-               b. Uncertain → IssueVerifier probe → real→fix / false→discard
-               c. Critical + not auto-fixable → LLM fixer
+               a. Certain + auto-fixable → CSTFixer (no LLM)
+               b. Certain + requires LLM → LLM fixer
+               c. Uncertain → verify with IssueVerifier:
+                  - Real → route to LLM fixer
+                  - False positive → add to whitelist
 
         Returns:
             Tuple of (refined_code, stabilized_bool).
@@ -75,10 +103,14 @@ class Refiner:
         if not ENABLE_REFINEMENT_CYCLE:
             logger.info(f"Refinement disabled for '{section_title}'")
             self.last_runtime_issues = []
+            self.pending_uncertain_issues = []
             return code, True
 
         self.fixer.reset()
+        # Reset whitelist for new section (don't carry over bad habits)
+        self.whitelist.reset()
         self.last_runtime_issues = []
+        self.pending_uncertain_issues = []
 
         current_code = code
         stats = {
@@ -87,8 +119,8 @@ class Refiner:
             "runtime_failures": 0,
             "deterministic_fixes": 0,
             "llm_fixes": 0,
-            "verified_real": 0,
-            "verified_false_positives": 0,
+            "deferred_to_visual_qc": 0,
+            "skipped_whitelisted": 0,
         }
 
         logger.info(
@@ -101,7 +133,10 @@ class Refiner:
         )
 
         for turn_idx in range(1, self.max_attempts + 1):
-            stats["attempts"] += 1
+            with tempfile.TemporaryDirectory() as frames_dir_str:
+                frames_dir = Path(frames_dir_str)
+                
+                stats["attempts"] += 1
 
             # ── Phase 1: Static validation ───────────────────────────
             static_result = await self.static_validator.validate(current_code)
@@ -124,11 +159,28 @@ class Refiner:
                 self.deterministic_fixer.fix_known_patterns(current_code)
             )
             stats["deterministic_fixes"] += pattern_fixes
+            if pattern_fixes:
+                logger.info(
+                    f"Applied {pattern_fixes} known-pattern fixes",
+                    extra={
+                        "section_title": section_title,
+                        "turn": turn_idx,
+                        "refinement_stage": "pattern_fix",
+                        "fixes": pattern_fixes,
+                    },
+                )
 
             # ── Phase 3: Runtime validation (with spatial checks) ────
             runtime_result = await self.runtime_validator.validate(
-                current_code, enable_spatial_checks=True
+                current_code, enable_spatial_checks=True, frames_dir=frames_dir
             )
+
+            # Resolve frame paths for verification
+            for issue in runtime_result.issues:
+                if issue.details and issue.details.get("frame_file"):
+                    frame_path = frames_dir / issue.details["frame_file"]
+                    if frame_path.exists():
+                        issue.details["frame_path"] = str(frame_path)
 
             self.last_runtime_issues = runtime_result.issues
 
@@ -156,11 +208,11 @@ class Refiner:
             )
             stats["deterministic_fixes"] += triage_stats["deterministic"]
             stats["llm_fixes"] += triage_stats["llm"]
-            stats["verified_real"] += triage_stats["verified_real"]
-            stats["verified_false_positives"] += triage_stats["verified_false_positives"]
-
-            # If triage resolved everything (only false positives left)
-            if triage_stats["unresolved"] == 0:
+            stats["deferred_to_visual_qc"] += triage_stats.get("deferred_to_visual_qc", 0)
+            stats["skipped_whitelisted"] += triage_stats.get("skipped_whitelisted", 0)
+            
+            # If triage resolved everything (only uncertain/whitelisted left)
+            if triage_stats.get("unresolved", 0) == 0:
                 logger.info(
                     f"All issues resolved/discarded for '{section_title}' (Turn {turn_idx})",
                     extra={**stats, "refinement_stage": "triage_resolved"},
@@ -173,8 +225,9 @@ class Refiner:
             extra={**stats, "refinement_stage": "exhausted"},
         )
 
-        # If only spatial issues remain, proceed to render
-        if self._only_spatial_remaining(runtime_result.issues if 'runtime_result' in dir() else []):
+        # If only spatial/uncertain issues remain, proceed to render
+        # (Visual QC will verify uncertain issues post-render)
+        if self.router.only_spatial_remaining(self.last_runtime_issues):
             logger.warning(
                 f"Only spatial issues remain — proceeding to render for '{section_title}'",
                 extra={**stats, "refinement_stage": "spatial_proceed"},
@@ -187,6 +240,7 @@ class Refiner:
         self,
         code: str,
         issues: List[ValidationIssue],
+        section_title: str = "unknown",
         context: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, Dict[str, int]]:
         """Apply fixes for externally supplied issues without re-validating."""
@@ -194,13 +248,13 @@ class Refiner:
             return code, {
                 "deterministic": 0,
                 "llm": 0,
-                "verified_real": 0,
-                "verified_false_positives": 0,
+                "deferred_to_visual_qc": 0,
+                "skipped_whitelisted": 0,
                 "unresolved": 0,
             }
 
         self.fixer.reset()
-        return await self._triage_issues(code, issues, 1, context)
+        return await self._triage_issues(code, issues, 1, section_title, context)
 
     # ── Triage ───────────────────────────────────────────────────────────
 
@@ -213,76 +267,73 @@ class Refiner:
         context: Optional[Dict[str, Any]],
         status_callback: Optional[Callable[[SectionState], None]] = None,
     ) -> Tuple[str, Dict[str, int]]:
-        """Route issues through the four fix tiers.
-
-        Returns:
-            Tuple of (fixed_code, stats_dict).
-        """
-        triage_stats = {
-            "deterministic": 0,
-            "llm": 0,
-            "verified_real": 0,
-            "verified_false_positives": 0,
-            "unresolved": 0,
-        }
-
-        # Partition issues by routing
-        auto_fixable = [i for i in issues if i.should_auto_fix]
-        uncertain = [i for i in issues if i.needs_verification]
-        llm_needed = [i for i in issues if i.requires_llm]
-
-        logger.info(
-            f"Triage: {len(auto_fixable)} auto-fixable, "
-            f"{len(uncertain)} need verification, "
-            f"{len(llm_needed)} need LLM"
+        """Route issues using the Certain/Uncertain model with inline verification."""
+        
+        # Use extracted router for partitioning
+        partitions = self.router.triage_issues(
+            issues, 
+            whitelist_filter=self.whitelist.filter_uncertain
         )
+        
+        triage_stats = self.router.summarize_triage(partitions)
+        triage_stats["unresolved"] = 0
+        triage_stats["verified_real"] = 0
+        triage_stats["verified_false_positive"] = 0
+        triage_stats["deterministic"] = 0
+        triage_stats["llm"] = 0
+        triage_stats["deferred_to_visual_qc"] = 0
+        triage_stats["skipped_whitelisted"] = 0
 
-        # Tier 1: Deterministic fixes
-        if auto_fixable:
+        # Tier 1: Deterministic fixes for certain auto-fixable issues
+        if partitions["certain_auto_fixable"]:
             code, remaining, fixes = self.deterministic_fixer.fix(
-                code, auto_fixable
+                code, partitions["certain_auto_fixable"]
             )
             triage_stats["deterministic"] = fixes
-            llm_needed.extend(remaining)
+            # Any that couldn't be auto-fixed need LLM
+            partitions["certain_llm_needed"].extend(remaining)
 
-        # Tier 2: Verify uncertain issues
-        if uncertain:
-            verification = await self.verifier.verify(code, uncertain)
-            triage_stats["verified_real"] = len(verification.real)
-            triage_stats["verified_false_positives"] = len(verification.false_positives)
-
-            # Verified-real issues that are auto-fixable get one more shot
-            for confirmed in verification.real:
-                if confirmed.should_auto_fix:
-                    code_attempt, remaining, fixes = self.deterministic_fixer.fix(
-                        code, [confirmed]
-                    )
-                    if fixes > 0:
-                        code = code_attempt
-                        triage_stats["deterministic"] += fixes
-                    else:
-                        llm_needed.extend(remaining)
-                else:
-                    llm_needed.append(confirmed)
-
-            for fp in verification.false_positives:
-                logger.debug(
-                    f"Discarded false positive: {fp.message[:60]}"
+        # Tier 2: Verify uncertain issues with IssueVerifier (LLM-based)
+        if partitions["uncertain"]:
+            if self.issue_verifier:
+                logger.info(
+                    f"Verifying {len(partitions['uncertain'])} uncertain issues with IssueVerifier"
                 )
+                verification_result = await self.issue_verifier.verify(
+                    code, partitions["uncertain"]
+                )
+                
+                # Real issues → route to LLM fixer
+                if verification_result.real:
+                    logger.info(
+                        f"IssueVerifier confirmed {len(verification_result.real)} real issues"
+                    )
+                    partitions["certain_llm_needed"].extend(verification_result.real)
+                    triage_stats["verified_real"] = len(verification_result.real)
+                
+                # False positives → add to whitelist
+                if verification_result.false_positives:
+                    logger.info(
+                        f"IssueVerifier identified {len(verification_result.false_positives)} false positives"
+                    )
+                    self.whitelist.add_all(verification_result.false_positives)
+                    triage_stats["verified_false_positive"] = len(verification_result.false_positives)
+            else:
+                # No verifier available - defer to pending (legacy behavior)
+                self.pending_uncertain_issues.extend(partitions["uncertain"])
+                triage_stats["deferred_to_visual_qc"] = len(partitions["uncertain"])
 
-        # Tier 3: LLM fixes for everything that couldn't be resolved
-        if llm_needed:
+        # Tier 3: LLM fixes for certain issues that need it
+        if partitions["certain_llm_needed"]:
             error_context = "\n".join(
-                issue.to_fixer_context() for issue in llm_needed
+                issue.to_fixer_context() for issue in partitions["certain_llm_needed"]
             )
             self._report_status(status_callback, "fixing_manim", section_title, turn_idx)
             code = await self._apply_llm_fix(
                 code, error_context, turn_idx, context
             )
-            triage_stats["llm"] = len(llm_needed)
-
-        # Count truly unresolved (LLM might not fix everything)
-        triage_stats["unresolved"] = len(llm_needed)
+            triage_stats["llm"] = len(partitions["certain_llm_needed"])
+            triage_stats["unresolved"] = len(partitions["certain_llm_needed"])
 
         return code, triage_stats
 
@@ -311,14 +362,29 @@ class Refiner:
 
         return new_code
 
-    # ── Classification helpers ───────────────────────────────────────────
+    # ── Visual QC Integration ────────────────────────────────────────────
 
-    @staticmethod
-    def _only_spatial_remaining(issues: List[ValidationIssue]) -> bool:
-        """Check if only spatial issues remain (safe to proceed)."""
-        if not issues:
-            return True
-        return all(issue.is_spatial for issue in issues)
+    def get_pending_uncertain_issues(self) -> List[ValidationIssue]:
+        """Get issues deferred to Visual QC for post-render verification."""
+        return list(self.pending_uncertain_issues)
+
+    def mark_as_false_positives(self, issues: List[ValidationIssue]) -> None:
+        """Add issues to the whitelist (Visual QC confirmed as not problems)."""
+        self.whitelist.add_all(issues)
+        # Remove from pending list
+        whitelisted_keys = {i.whitelist_key for i in issues}
+        self.pending_uncertain_issues = [
+            i for i in self.pending_uncertain_issues
+            if i.whitelist_key not in whitelisted_keys
+        ]
+
+    def mark_as_real_issues(self, issues: List[ValidationIssue]) -> None:
+        """Mark issues as confirmed real by Visual QC."""
+        confirmed_keys = {i.whitelist_key for i in issues}
+        self.pending_uncertain_issues = [
+            i for i in self.pending_uncertain_issues
+            if i.whitelist_key not in confirmed_keys
+        ]
 
     # ── Logging ──────────────────────────────────────────────────────────
 
@@ -338,6 +404,7 @@ class Refiner:
                 "validation_type": validation_type,
                 "issue_count": len(issues),
                 "section_title": section_title,
+                "issue_samples": self._summarize_issues(issues),
             },
         )
         for i, issue in enumerate(issues[:5], 1):
@@ -347,6 +414,25 @@ class Refiner:
             )
         if len(issues) > 5:
             logger.warning(f"  ... and {len(issues) - 5} more issues")
+
+    @staticmethod
+    def _issue_snapshot(issue: ValidationIssue) -> Dict[str, Any]:
+        """Create a compact, log-friendly issue snapshot."""
+        return {
+            "category": issue.category.value,
+            "severity": issue.severity.value,
+            "confidence": issue.confidence.value,
+            "auto_fixable": issue.auto_fixable,
+            "line": issue.line,
+            "is_certain": issue.is_certain,
+            "is_uncertain": issue.is_uncertain,
+            "whitelist_key": issue.whitelist_key,
+            "message": issue.message[:160],
+        }
+
+    def _summarize_issues(self, issues: List[ValidationIssue], limit: int = 6) -> List[Dict[str, Any]]:
+        """Summarize issues for logging (truncate to keep logs readable)."""
+        return [self._issue_snapshot(i) for i in issues[:limit]]
 
     def _report_status(
         self,
