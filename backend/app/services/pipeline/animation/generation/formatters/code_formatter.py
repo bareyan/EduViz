@@ -13,6 +13,23 @@ Responsibilities:
 import json
 from typing import Dict, Any
 
+# Language code to display name mapping
+_SUPPORTED_LANGUAGES = {
+    "en": "English",
+    "fr": "French",
+    "es": "Spanish",
+    "de": "German",
+    "it": "Italian",
+    "pt": "Portuguese",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "ar": "Arabic",
+    "ru": "Russian",
+    "ua": "Ukrainian",
+    "hy": "Armenian",
+}
+
 
 class CodeFormatter:
     """Formats code and related strings for animation generation."""
@@ -84,3 +101,23 @@ class CodeFormatter:
             return json.dumps(data, ensure_ascii=False, indent=2)
         except (TypeError, ValueError):
             return str(data)
+    
+    @staticmethod
+    def get_language_name(language_code: str) -> str:
+        """Convert language code to display name.
+        
+        Args:
+            language_code: ISO language code (e.g., 'en', 'fr', 'ru')
+            
+        Returns:
+            Display name of the language (e.g., 'English', 'French', 'Russian')
+            Defaults to 'English' for unknown codes
+            
+        Example:
+            >>> CodeFormatter.get_language_name('ru')
+            'Russian'
+            >>> CodeFormatter.get_language_name('unknown')
+            'English'
+        """
+        from ..constants import DEFAULT_LANGUAGE
+        return _SUPPORTED_LANGUAGES.get(language_code, _SUPPORTED_LANGUAGES[DEFAULT_LANGUAGE])

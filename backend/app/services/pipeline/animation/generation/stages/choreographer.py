@@ -13,6 +13,7 @@ from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig
 
 from ...config import BASE_GENERATION_TEMPERATURE, CHOREOGRAPHY_MAX_OUTPUT_TOKENS
+from ..constants import DEFAULT_THEME, DEFAULT_VISUAL_HINTS, DEFAULT_SECTION_TITLE, DEFAULT_LANGUAGE
 from ...prompts import (
     CHOREOGRAPHER_SYSTEM,
     CHOREOGRAPHY_USER,
@@ -55,10 +56,6 @@ class Choreographer:
         Raises:
             ChoreographyError: If planning fails
         """
-        # Get language from section (defaults to English)
-        language = section.get("language", "en")
-        language_name = self._get_language_name(language)
-        
         # Extract section data flexibly from multiple possible keys
         section_data = (
             section.get("section_data")
@@ -67,17 +64,17 @@ class Choreographer:
         )
         
         prompt = CHOREOGRAPHY_USER.format(
-            title=section.get("title", "Untitled"),
+            title=section.get("title", DEFAULT_SECTION_TITLE),
             narration=section.get("narration", ""),
             timing_info=json.dumps(section.get("narration_segments", []), indent=2),
             target_duration=duration,
-            theme_info=section.get("theme_info") or section.get("style", "3b1b dark educational style"),
+            theme_info=section.get("theme_info") or section.get("style", DEFAULT_THEME),
             visual_hints=CodeFormatter.serialize_for_prompt(
                 section.get("visual_hints") or section.get("visual_description"),
-                default="No explicit visual hints",
+                default=DEFAULT_VISUAL_HINTS,
             ),
             section_data=CodeFormatter.serialize_for_prompt(section_data),
-            language_name=language_name
+            language_name=CodeFormatter.get_language_name(section.get("language", DEFAULT_LANGUAGE))
         )
         
         result = await self.engine.generate(
@@ -102,23 +99,3 @@ class Choreographer:
         logger.info(f"Generated choreography plan ({len(plan)} chars)")
         
         return plan
-
-    @staticmethod
-    def _get_language_name(language_code: str) -> str:
-        """Get language name from code."""
-        LANGUAGE_NAMES = {
-            "en": "English",
-            "fr": "French",
-            "es": "Spanish",
-            "de": "German",
-            "it": "Italian",
-            "pt": "Portuguese",
-            "zh": "Chinese",
-            "ja": "Japanese",
-            "ko": "Korean",
-            "ar": "Arabic",
-            "ru": "Russian",
-            "ua": "Ukrainian",
-            "hy": "Armenian",
-        }
-        return LANGUAGE_NAMES.get(language_code, "English")

@@ -11,10 +11,11 @@ from app.services.infrastructure.parsing.code_parser import (
 )
 from ...config import (
     CONSTRUCT_INDENT_SPACES, 
-    THEME_SETUP_CODES
+    THEME_SETUP_CODES,
 )
+from ..constants import DEFAULT_THEME_CODE
 
-def get_theme_setup_code(style: str = "3b1b") -> str:
+def get_theme_setup_code(style: str = DEFAULT_THEME_CODE) -> str:
     """Returns the Manim setup code for a specific visual style.
     
     Args:
@@ -23,7 +24,7 @@ def get_theme_setup_code(style: str = "3b1b") -> str:
     Returns:
         A formatted string of Python code to be injected into construct().
     """
-    return THEME_SETUP_CODES.get(style, THEME_SETUP_CODES["3b1b"])
+    return THEME_SETUP_CODES.get(style, THEME_SETUP_CODES[DEFAULT_THEME_CODE])
 
 
 def clean_code(code_text: Optional[str]) -> str:
@@ -70,7 +71,7 @@ def strip_theme_code_from_content(code: str) -> str:
     return '\n'.join(filtered_lines)
 
 
-def create_scene_file(code: str, section_id: str, duration: float, style: str = "3b1b") -> str:
+def create_scene_file(code: str, section_id: str, duration: float, style: str = DEFAULT_THEME_CODE) -> str:
     """Ensures the generated code is a complete Manim scene file.
     
     Since the LLM now provides the full file structure, this function primarily

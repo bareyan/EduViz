@@ -16,6 +16,7 @@ Every issue is a typed ``ValidationIssue``. No legacy string errors.
 from typing import Dict, Any, List, Optional, Tuple, Callable
 
 from app.core import get_logger
+from app.utils.section_status import SectionState
 
 from ...config import (
     ENABLE_REFINEMENT_CYCLE,
@@ -54,7 +55,7 @@ class Refiner:
         code: str,
         section_title: str,
         context: Optional[Dict[str, Any]] = None,
-        status_callback: Optional[Callable[[str], None]] = None,
+        status_callback: Optional[Callable[[SectionState], None]] = None,
     ) -> Tuple[str, bool]:
         """Execute the full refinement cycle with smart triage.
 
@@ -210,7 +211,7 @@ class Refiner:
         turn_idx: int,
         section_title: str,
         context: Optional[Dict[str, Any]],
-        status_callback: Optional[Callable[[str], None]] = None,
+        status_callback: Optional[Callable[[SectionState], None]] = None,
     ) -> Tuple[str, Dict[str, int]]:
         """Route issues through the four fix tiers.
 
@@ -349,8 +350,8 @@ class Refiner:
 
     def _report_status(
         self,
-        status_callback: Optional[Callable[[str], None]],
-        status: str,
+        status_callback: Optional[Callable[[SectionState], None]],
+        status: SectionState,
         section_title: str,
         turn_idx: int,
     ) -> None:

@@ -16,6 +16,7 @@ from typing import Dict, Any, Optional, Callable
 
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, CostTracker
+from app.utils.section_status import SectionState
 
 from ..config import (
     BASE_GENERATION_TEMPERATURE,
@@ -78,7 +79,7 @@ class AnimationOrchestrator:
         duration: float,
         context: Optional[Dict[str, Any]] = None,
         on_raw_code: Optional[Callable[[str, int], None]] = None,
-        status_callback: Optional[Callable[[str], None]] = None
+        status_callback: Optional[Callable[[SectionState], None]] = None
     ) -> str:
         """Generate animation code for a section.
         
@@ -161,7 +162,7 @@ class AnimationOrchestrator:
         attempt_idx: int,
         context: Dict[str, Any],
         on_raw_code: Optional[Callable[[str, int], None]] = None,
-        status_callback: Optional[Callable[[str], None]] = None
+        status_callback: Optional[Callable[[SectionState], None]] = None
     ) -> str:
         """Execute the three-stage pipeline.
         

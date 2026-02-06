@@ -13,6 +13,7 @@ from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig
 
 from ...config import BASE_GENERATION_TEMPERATURE, IMPLEMENTATION_MAX_OUTPUT_TOKENS
+from ..constants import DEFAULT_THEME, DEFAULT_LANGUAGE
 from ...prompts import IMPLEMENTER_SYSTEM, FULL_IMPLEMENTATION_USER
 from ..core import clean_code, ImplementationError
 from ..formatters import CodeFormatter
@@ -56,10 +57,6 @@ class Implementer:
         Raises:
             ImplementationError: If code generation fails
         """
-        # Get language from section (defaults to English)
-        language = section.get("language", "en")
-        language_name = self._get_language_name(language)
-        
         # Extract section data flexibly from multiple possible keys
         section_data = (
             section.get("section_data")
@@ -72,10 +69,10 @@ class Implementer:
             segment_timings=self.formatter.summarize_segments(section),
             total_duration=duration,
             section_id_title=self.formatter.derive_class_name(section),
-            theme_info=section.get("theme_info") or section.get("style", "3b1b dark educational style"),
+            theme_info=section.get("theme_info") or section.get("style", DEFAULT_THEME),
             section_data=self.formatter.serialize_for_prompt(section_data),
             patterns=self._get_patterns(),
-            language_name=language_name
+            language_name=CodeFormatter.get_language_name(section.get("language", DEFAULT_LANGUAGE))
         )
         
         config = PromptConfig(
@@ -101,26 +98,6 @@ class Implementer:
         logger.info(f"Generated implementation ({len(code)} chars)")
         
         return code
-
-    @staticmethod
-    def _get_language_name(language_code: str) -> str:
-        """Get language name from code."""
-        LANGUAGE_NAMES = {
-            "en": "English",
-            "fr": "French",
-            "es": "Spanish",
-            "de": "German",
-            "it": "Italian",
-            "pt": "Portuguese",
-            "zh": "Chinese",
-            "ja": "Japanese",
-            "ko": "Korean",
-            "ar": "Arabic",
-            "ru": "Russian",
-            "ua": "Ukrainian",
-            "hy": "Armenian",
-        }
-        return LANGUAGE_NAMES.get(language_code, "English")
 
     @staticmethod
     def _get_patterns() -> str:

@@ -13,7 +13,7 @@ from pathlib import Path
 
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, CostTracker
-from app.utils.section_status import write_status
+from app.utils.section_status import write_status, SectionState
 
 from .orchestrator import AnimationOrchestrator
 from .core import (
@@ -29,6 +29,7 @@ from ..config import (
     ENABLE_VISION_QC,
     MAX_CLEAN_RETRIES,
 )
+from .constants import DEFAULT_THEME_CODE
 
 logger = get_logger(__name__, component="manim_generator")
 
@@ -85,7 +86,7 @@ class ManimGenerator:
         output_dir: str,
         section_index: int,
         audio_duration: float,
-        style: str = "3b1b",
+        style: str = DEFAULT_THEME_CODE,
         job_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """Orchestrates the animation generation pipeline for a section.
@@ -124,7 +125,7 @@ class ManimGenerator:
                 code_content=code
             )
 
-        def status_callback(status: str) -> None:
+        def status_callback(status: SectionState) -> None:
             write_status(section_dir, status)
 
         final_manim_code = await self.orchestrator.generate(
@@ -163,7 +164,7 @@ class ManimGenerator:
         output_dir: str,
         section_index: int,
         audio_duration: Optional[float] = None,
-        style: str = "3b1b",
+        style: str = DEFAULT_THEME_CODE,
     ) -> Dict[str, Any]:
         """Validates, prepares, and renders Manim code.
         
