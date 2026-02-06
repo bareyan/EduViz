@@ -10,6 +10,7 @@ Exports:
 
 from .static import StaticValidator, ValidationResult
 from .runtime import RuntimeValidator
+from .vision import VisionValidator
 from .models import (
     IssueCategory,
     IssueConfidence,
@@ -20,6 +21,7 @@ __all__ = [
     "StaticValidator",
     "ValidationResult",
     "RuntimeValidator",
+    "VisionValidator",
     "IssueCategory",
     "IssueConfidence",
     "IssueSeverity",

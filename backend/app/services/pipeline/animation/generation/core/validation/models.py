@@ -49,6 +49,9 @@ class IssueCategory(Enum):
     # Runtime issues (from Manim dry-run)
     RUNTIME = "runtime"
 
+    # Visual QC issues (post-render)
+    VISUAL_QUALITY = "visual_quality"
+
     # System / internal errors
     SYSTEM = "system"
 
@@ -113,6 +116,12 @@ class ValidationIssue:
             parts[0] += f" (Line {self.line})"
         if self.fix_hint:
             parts.append(f"Suggested approach: {self.fix_hint}")
+        traceback_excerpt = self.details.get("traceback_excerpt")
+        if isinstance(traceback_excerpt, str) and traceback_excerpt.strip():
+            parts.append(f"Traceback excerpt:\n{traceback_excerpt[:1400]}")
+        code_context = self.details.get("code_context")
+        if isinstance(code_context, str) and code_context.strip():
+            parts.append(f"Code context:\n{code_context[:1200]}")
         return "\n".join(parts)
 
     def to_verification_prompt(self) -> str:

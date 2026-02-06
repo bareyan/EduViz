@@ -26,63 +26,63 @@ async def main():
     
     # The first section from the production script
     section = {
-        "id": "intro_the_problem",
-        "index": 0,
-        "title": "The Efficiency Problem",
-        "narration": "Imagine you are training a massive neural network with billions of parameters. To improve it, you need the gradient—the direction that minimizes error. If you use the standard finite difference method, you would have to run your model billions of times just to get one update. That is practically impossible! This is where the Adjoint Trick comes in. It is a mathematical superpower used in machine learning, physics, and engineering to calculate gradients with incredible efficiency. Whether you call it backpropagation or reverse-mode automatic differentiation, the core idea is the same: finding how every single input affects the output, all in one go. It is the reason modern AI is even possible.",
+        "id": "full_tabular_example",
+        "title": "Démonstration Complète sur Tableau",
+        "narration": "Appliquons maintenant ce formalisme à notre exemple. Dans notre premier tableau, nous plaçons en base nos variables d'écart x3, x4 et x5. Les coefficients de la fonction objectif apparaissent sur la dernière ligne. On identifie la variable d'entrée en cherchant le coefficient le plus positif sous les variables hors-base : c'est notre colonne pivot. Pour trouver la variable sortante, nous effectuons les ratios sur le côté : on divise les constantes de la colonne de droite par les éléments strictement positifs de la colonne pivot. Le ratio le plus faible nous indique la ligne pivot. L'intersection définit notre pivot. Après une première itération, nous transformons le tableau pour obtenir une nouvelle base. On répète ce processus visuel : sélection de la colonne, calcul des ratios, pivotage. Une fois que tous les coefficients de la ligne Z sont négatifs ou nuls, l'algorithme s'arrête. Il ne nous reste qu'à lire la solution : les valeurs de x1 et x2 se trouvent directement dans la colonne des constantes, nous donnant le profit maximal calculé précédemment.",
+        "tts_narration": "Appliquons maintenant ce formalisme à notre exemple. Dans notre premier tableau, nous plaçons en base nos variables d'écart ix trois, ix quatre et ix cinq. Les coefficients de la fonction objectif apparaissent sur la dernière ligne. On identifie la variable d'entrée en cherchant le coefficient le plus positif sous les variables hors-base : c'est notre colonne pivot. Pour trouver la variable sortante, nous effectuons les ratios sur le côté : on divise les constantes de la colonne de droite par les éléments strictement positifs de la colonne pivot. Le ratio le plus faible nous indique la ligne pivot. L'intersection définit notre pivot. Après une première itération, nous transformons le tableau pour obtenir une nouvelle base. On répète ce processus visuel : sélection de la colonne, calcul des ratios, pivotage. Une fois que tous les coefficients de la ligne Zède sont négatifs ou nuls, l'algorithme s'arrête. Il ne nous reste qu'à lire la solution : les valeurs de ix un et ix deux se trouvent directement dans la colonne des constantes, nous donnant le profit maximal calculé précédemment.",
+        "duration_seconds": 87.12,
         "narration_segments": [
-            {
-                "text": "Imagine you are training a massive neural network with billions of parameters.",
-                "estimated_duration": 6.24,
-                "start_time": 0,
-                "duration": 6.24,
-                "segment_index": 0
-            },
-            {
-                "text": "To improve it, you need the gradient, the direction that minimizes error.",
-                "estimated_duration": 5.84,
-                "start_time": 6.24,
-                "duration": 5.84,
-                "segment_index": 1
-            },
-            {
-                "text": "If you use the standard finite difference method, you would have to run your model billions of times just to get one update.",
-                "estimated_duration": 9.92,
-                "start_time": 12.08,
-                "duration": 9.92,
-                "segment_index": 2
-            },
-            {
-                "text": "That is practically impossible! This is where the Adjoint Trick comes in.",
-                "estimated_duration": 5.84,
-                "start_time": 22.0,
-                "duration": 5.84,
-                "segment_index": 3
-            },
-            {
-                "text": "It is a mathematical superpower used in machine learning, physics, and engineering to calculate gradients with incredible efficiency.",
-                "estimated_duration": 10.64,
-                "start_time": 27.84,
-                "duration": 10.64,
-                "segment_index": 4
-            },
-            {
-                "text": "Whether you call it backpropagation or reverse-mode automatic differentiation, the core idea is the same: finding how every single input affects the output, all in one go.",
-                "estimated_duration": 13.68,
-                "start_time": 38.48,
-                "duration": 13.68,
-                "segment_index": 5
-            },
-            {
-                "text": "It is the reason modern AI is even possible.",
-                "estimated_duration": 3.52,
-                "start_time": 52.16,
-                "duration": 3.52,
-                "segment_index": 6
-            }
+          {
+            "text": "Appliquons maintenant ce formalisme à notre exemple.",
+            "estimated_duration": 4.16,
+            "segment_index": 0
+          },
+          {
+            "text": "Dans notre premier tableau, nous plaçons en base nos variables d'écart ix trois, ix quatre et ix cinq.",
+            "estimated_duration": 8.16,
+            "segment_index": 1
+          },
+          {
+            "text": "Les coefficients de la fonction objectif apparaissent sur la dernière ligne.",
+            "estimated_duration": 6.08,
+            "segment_index": 2
+          },
+          {
+            "text": "On identifie la variable d'entrée en cherchant le coefficient le plus positif sous les variables hors-base : c'est notre colonne pivot.",
+            "estimated_duration": 10.8,
+            "segment_index": 3
+          },
+          {
+            "text": "Pour trouver la variable sortante, nous effectuons les ratios sur le côté : on divise les constantes de la colonne de droite par les éléments strictement positifs de la colonne pivot.",
+            "estimated_duration": 14.64,
+            "segment_index": 4
+          },
+          {
+            "text": "Le ratio le plus faible nous indique la ligne pivot. L'intersection définit notre pivot.",
+            "estimated_duration": 7.04,
+            "segment_index": 5
+          },
+          {
+            "text": "Après une première itération, nous transformons le tableau pour obtenir une nouvelle base.",
+            "estimated_duration": 7.2,
+            "segment_index": 6
+          },
+          {
+            "text": "On répète ce processus visuel : sélection de la colonne, calcul des ratios, pivotage.",
+            "estimated_duration": 6.8,
+            "segment_index": 7
+          },
+          {
+            "text": "Une fois que tous les coefficients de la ligne Zède sont négatifs ou nuls, l'algorithme s'arrête.",
+            "estimated_duration": 7.76,
+            "segment_index": 8
+          },
+          {
+            "text": "Il ne nous reste qu'à lire la solution : les valeurs de ix un et ix deux se trouvent directement dans la colonne des constantes, nous donnant le profit maximal calculé précédemment.",
+            "estimated_duration": 14.48,
+            "segment_index": 9
+          }
         ],
-        "duration_seconds": 56,
-        "visual_type": "animated"
     }
     
     print(f"\n📝 Section: {section['title']}")

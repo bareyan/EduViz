@@ -15,7 +15,11 @@ from .user import (
 )
 from .schemas import (
     CHOREOGRAPHY_SCHEMA,
-    CODE_EDIT_SCHEMA
+    CODE_EDIT_SCHEMA,
+    VISION_QC_SCHEMA
+)
+from .visual_qc_prompts import (
+    VISION_QC_USER,
 )
 from .library import (
     COMMON_MISTAKES,
@@ -56,6 +60,7 @@ __all__ = [
     "CHOREOGRAPHY_SEGMENTS_USER",
     "CHOREOGRAPHY_SCHEMA",
     "CODE_EDIT_SCHEMA",
+    "VISION_QC_SCHEMA",
     "FULL_IMPLEMENTATION_USER",
     "SURGICAL_FIX_USER",
     "SURGICAL_FIX_FOLLOWUP",
@@ -68,5 +73,6 @@ __all__ = [
     "RETRY_FAILURE_NOTE",
     "CODE_CONTEXT_NOTE",
     "CODE_TRUNCATION_NOTE",
+    "VISION_QC_USER"
     "get_compact_patterns",
 ]

@@ -107,6 +107,16 @@ VERIFICATION_TEMPERATURE = 0.4  # Low temp for consistent verdicts
 VERIFICATION_TIMEOUT = 30.0  # Seconds per verification batch
 VERIFICATION_MAX_RETRIES = 1  # Don't waste tokens retrying
 
+# Vision QC settings (verification-only — no auto-fix loop)
+ENABLE_VISION_QC = True
+VISION_QC_MAX_FRAMES_PER_CALL = 4
+VISION_QC_FRAME_WIDTH = 1280
+VISION_QC_FRAME_TIME_ROUND = 0.1
+VISION_QC_TEMPERATURE = 0.2
+VISION_QC_TIMEOUT = 60.0
+VISION_QC_MAX_OUTPUT_TOKENS = 2048
+VISION_QC_FRAME_DIR_NAME = "frames"
+
 # Error message handling
 MAX_ERROR_MESSAGE_LENGTH = 2000  # Max chars for runtime error messages (prevent truncation)
 

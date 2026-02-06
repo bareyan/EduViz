@@ -24,7 +24,11 @@ from .core import (
     render_scene,
     AnimationFileManager
 )
-from ..config import MAX_CLEAN_RETRIES
+from .core.validation import VisionValidator
+from ..config import (
+    ENABLE_VISION_QC,
+    MAX_CLEAN_RETRIES,
+)
 
 logger = get_logger(__name__, component="manim_generator")
 
@@ -52,6 +56,13 @@ class ManimGenerator:
             engine=PromptingEngine("animation_implementation", self.cost_tracker, pipeline_name=pipeline_name),
             cost_tracker=self.cost_tracker
         )
+
+        self.vision_engine = PromptingEngine(
+            "visual_qc",
+            self.cost_tracker,
+            pipeline_name=pipeline_name,
+        )
+        self.vision_validator = VisionValidator(self.vision_engine)
 
         # Execution stats
         self.stats = {
@@ -198,11 +209,65 @@ class ManimGenerator:
             logger.error(f"Rendering stage failed to produce output for section {section_index}")
             raise RenderingError(f"Manim failed to render video for section {section_index}")
 
+        if ENABLE_VISION_QC:
+            vision_messages = await self._run_vision_verification(
+                output_video=output_video,
+                output_dir=output_dir,
+                section_index=section_index,
+            )
+        else:
+            vision_messages = []
+
         return {
             "video_path": output_video,
             "manim_code": full_code,
             "manim_code_path": str(code_file),
+            "vision_issues": vision_messages,
         }
+
+    async def _run_vision_verification(
+        self,
+        output_video: str,
+        output_dir: str,
+        section_index: int,
+    ) -> list[str]:
+        """Run vision QC as verification-only for uncertain spatial issues.
+
+        Architecture:
+            The spatial validator catches most issues deterministically.
+            Vision QC only verifies issues where the spatial validator
+            was uncertain (needs_verification=True). Confirmed issues
+            are logged but NOT auto-fixed (would require re-render).
+        """
+        # Get uncertain spatial issues from the last runtime validation
+        uncertain_issues = [
+            issue
+            for issue in self.orchestrator.refiner.last_runtime_issues
+            if issue.is_spatial and issue.needs_verification
+        ]
+
+        if not uncertain_issues:
+            return []
+
+        logger.info(
+            f"Vision QC: verifying {len(uncertain_issues)} uncertain "
+            f"spatial issues for section {section_index}"
+        )
+
+        confirmed = await self.vision_validator.verify_issues(
+            video_path=output_video,
+            uncertain_issues=uncertain_issues,
+            output_dir=output_dir,
+            context={"section_index": section_index},
+        )
+
+        if confirmed:
+            logger.warning(
+                f"Vision QC confirmed {len(confirmed)} issues in section "
+                f"{section_index} (not auto-fixed — would require re-render)"
+            )
+
+        return [issue.message for issue in confirmed]
 
     async def render_from_code(
         self,

@@ -19,6 +19,7 @@ from ...prompts import (
     CHOREOGRAPHY_SCHEMA
 )
 from ..core import ChoreographyError
+from ..formatters import CodeFormatter
 
 
 logger = get_logger(__name__, component="animation_choreographer")
@@ -58,18 +59,24 @@ class Choreographer:
         language = section.get("language", "en")
         language_name = self._get_language_name(language)
         
+        # Extract section data flexibly from multiple possible keys
+        section_data = (
+            section.get("section_data")
+            or section.get("visual_data")
+            or section.get("metadata")
+        )
+        
         prompt = CHOREOGRAPHY_USER.format(
             title=section.get("title", "Untitled"),
             narration=section.get("narration", ""),
             timing_info=json.dumps(section.get("narration_segments", []), indent=2),
             target_duration=duration,
-            theme_info=section.get("style", "3b1b"),
-            visual_hints=section.get("visual_description", ""),
-            section_data=json.dumps({
-                "key_concepts": section.get("key_concepts", []),
-                "animation_type": section.get("animation_type", "mixed"),
-                "supporting_data": section.get("supporting_data", []),
-            }),
+            theme_info=section.get("theme_info") or section.get("style", "3b1b dark educational style"),
+            visual_hints=CodeFormatter.serialize_for_prompt(
+                section.get("visual_hints") or section.get("visual_description"),
+                default="No explicit visual hints",
+            ),
+            section_data=CodeFormatter.serialize_for_prompt(section_data),
             language_name=language_name
         )
         

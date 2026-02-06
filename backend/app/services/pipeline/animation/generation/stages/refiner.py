@@ -47,6 +47,7 @@ class Refiner:
         self.runtime_validator = RuntimeValidator()
         self.deterministic_fixer = DeterministicFixer()
         self.verifier = IssueVerifier(fixer.engine)
+        self.last_runtime_issues: List[ValidationIssue] = []
 
     async def refine(
         self,
@@ -72,9 +73,11 @@ class Refiner:
         """
         if not ENABLE_REFINEMENT_CYCLE:
             logger.info(f"Refinement disabled for '{section_title}'")
+            self.last_runtime_issues = []
             return code, True
 
         self.fixer.reset()
+        self.last_runtime_issues = []
 
         current_code = code
         stats = {
@@ -126,6 +129,8 @@ class Refiner:
                 current_code, enable_spatial_checks=True
             )
 
+            self.last_runtime_issues = runtime_result.issues
+
             if runtime_result.valid:
                 logger.info(
                     f"Refinement successful for '{section_title}' "
@@ -176,6 +181,25 @@ class Refiner:
             return current_code, True
 
         return current_code, False
+
+    async def apply_issues(
+        self,
+        code: str,
+        issues: List[ValidationIssue],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, Dict[str, int]]:
+        """Apply fixes for externally supplied issues without re-validating."""
+        if not issues:
+            return code, {
+                "deterministic": 0,
+                "llm": 0,
+                "verified_real": 0,
+                "verified_false_positives": 0,
+                "unresolved": 0,
+            }
+
+        self.fixer.reset()
+        return await self._triage_issues(code, issues, 1, context)
 
     # ── Triage ───────────────────────────────────────────────────────────
 

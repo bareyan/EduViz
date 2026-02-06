@@ -10,6 +10,7 @@ Responsibilities:
 - Clean and normalize code output
 """
 
+import json
 from typing import Dict, Any
 
 
@@ -53,7 +54,33 @@ class CodeFormatter:
             '- T+0.0s: Welcome to calculus\\n- T+2.5s: Today we\\'ll learn derivatives'
         """
         segs = section.get("narration_segments", [])
-        return "\n".join([
-            f"- T+{s.get('start_time', 0):.1f}s: {s.get('text', '')[:max_chars]}"
-            for s in segs
-        ])
+        lines = []
+        running_time = 0.0
+
+        for seg in segs:
+            raw_start = seg.get("start_time")
+            if isinstance(raw_start, (int, float)):
+                start_time = float(raw_start)
+            else:
+                start_time = running_time
+
+            text = str(seg.get("text", ""))[:max_chars]
+            lines.append(f"- T+{start_time:.1f}s: {text}")
+
+            est = seg.get("estimated_duration")
+            if isinstance(est, (int, float)) and est > 0:
+                running_time = max(running_time, start_time + float(est))
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def serialize_for_prompt(data: Any, default: str = "None provided") -> str:
+        """Serialize optional structured data for prompt templates."""
+        if data in (None, "", [], {}):
+            return default
+        if isinstance(data, str):
+            return data
+        try:
+            return json.dumps(data, ensure_ascii=False, indent=2)
+        except (TypeError, ValueError):
+            return str(data)

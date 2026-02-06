@@ -60,16 +60,20 @@ class Implementer:
         language = section.get("language", "en")
         language_name = self._get_language_name(language)
         
+        # Extract section data flexibly from multiple possible keys
+        section_data = (
+            section.get("section_data")
+            or section.get("visual_data")
+            or section.get("metadata")
+        )
+        
         prompt = FULL_IMPLEMENTATION_USER.format(
             plan=plan,
             segment_timings=self.formatter.summarize_segments(section),
             total_duration=duration,
             section_id_title=self.formatter.derive_class_name(section),
-            theme_info=section.get("style", "3b1b"),
-            section_data=json.dumps({
-                "key_concepts": section.get("key_concepts", []),
-                "supporting_data": section.get("supporting_data", []),
-            }),
+            theme_info=section.get("theme_info") or section.get("style", "3b1b dark educational style"),
+            section_data=self.formatter.serialize_for_prompt(section_data),
             patterns=self._get_patterns(),
             language_name=language_name
         )
