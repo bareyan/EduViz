@@ -9,6 +9,7 @@ Handles the multi-stage animation generation workflow:
 """
 
 from typing import Dict, Any, Optional
+from pathlib import Path
 
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, CostTracker

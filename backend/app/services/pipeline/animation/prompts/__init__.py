@@ -31,6 +31,20 @@ from .fixer_prompts import (
     CODE_TRUNCATION_NOTE
 )
 
+def get_compact_patterns() -> str:
+    """Return a compact, ordered bundle of Manim rules and constraints."""
+    return "\n\n".join(
+        block.strip()
+        for block in (
+            COMMON_MISTAKES,
+            VALID_COLORS,
+            VALID_ANIMATIONS,
+            AVAILABLE_RATE_FUNCS,
+            DIRECTION_CONSTANTS,
+        )
+        if block
+    ).strip()
+
 __all__ = [
     "IMPLEMENTER_SYSTEM",
     "FIXER_SYSTEM",
@@ -53,5 +67,6 @@ __all__ = [
     "INITIAL_RETRY_NOTE",
     "RETRY_FAILURE_NOTE",
     "CODE_CONTEXT_NOTE",
-    "CODE_TRUNCATION_NOTE"
+    "CODE_TRUNCATION_NOTE",
+    "get_compact_patterns",
 ]
