@@ -39,6 +39,14 @@ def _perform_spatial_checks(self):
     SCREEN_Y = 4.0
     SAFE_X = 5.5
     SAFE_Y = 3.0
+    # Text needs extra margin — partial letters at screen edge look broken
+    TEXT_EDGE_MARGIN = 0.3
+    # Lower threshold for text (0.1) vs general objects (0.3)
+    TEXT_OVERSHOOT_THRESHOLD = 0.1
+    GENERAL_OVERSHOOT_THRESHOLD = 0.3
+    # Group/table size limits — anything larger is definitely broken
+    GROUP_MAX_WIDTH = 15.0
+    GROUP_MAX_HEIGHT = 9.0
 
     # ── Types we expect to overlap (not bugs) ──
     EFFECT_TYPES = frozenset({
@@ -47,9 +55,10 @@ def _perform_spatial_checks(self):
         "ShowCreation", "Uncreate", "GrowFromCenter", "SpinInFromNothing",
         "ShrinkToCenter", "ShowIncreasingSubsets", "ShowSubmobjectsOneByOne",
     })
+    # Only BackgroundRectangle and Underline are true containers.
+    # SurroundingRectangle can be a highlight box that covers content.
     CONTAINER_TYPES = frozenset({
-        "SurroundingRectangle", "BackgroundRectangle",
-        "Underline", "Brace", "BraceBetweenPoints", "Cross",
+        "BackgroundRectangle", "Underline",
     })
 
     # ── Lazy-init accumulator on scene instance ──
@@ -82,6 +91,11 @@ def _perform_spatial_checks(self):
         except Exception:
             return True
 
+    # ── Helper: check if object is text-like ──
+    def _is_text(m):
+        name = type(m).__name__
+        return "Text" in name or "Tex" in name or hasattr(m, "text")
+
     # ── Helper: intersection-over-smaller-area ratio ──
     def _overlap_ratio(m1, m2):
         try:
@@ -112,7 +126,18 @@ def _perform_spatial_checks(self):
     def _trunc(s, n=50):
         return s[:n] if len(s) > n else s
 
+    def _current_time_sec():
+        try:
+            t = getattr(getattr(self, "renderer", None), "time", None)
+            if t is None:
+                t = getattr(self, "time", None)
+            return float(t) if t is not None else None
+        except Exception:
+            return None
+
     def _issue(severity, confidence, category, message, auto_fixable=False, fix_hint=None, **details):
+        if "time_sec" not in details:
+            details["time_sec"] = _current_time_sec()
         return {
             "severity": severity,
             "confidence": confidence,
@@ -128,7 +153,7 @@ def _perform_spatial_checks(self):
     new_issues = []
 
     # ═══════════════════════════════════════════════════════════════════
-    # 1. BOUNDS CHECK
+    # 1. BOUNDS CHECK (with text-specific stricter thresholds)
     # ═══════════════════════════════════════════════════════════════════
     for m in all_ordered:
         if not hasattr(m, "get_center") or not hasattr(m, "width"):
@@ -146,38 +171,107 @@ def _perform_spatial_checks(self):
 
         left, right = x - w / 2, x + w / 2
         top, bottom = y + h / 2, y - h / 2
+        obj_type = type(m).__name__
+        is_text_obj = _is_text(m)
 
         overshoot_x = max(0, -left - SCREEN_X, right - SCREEN_X)
         overshoot_y = max(0, -bottom - SCREEN_Y, top - SCREEN_Y)
         overshoot = max(overshoot_x, overshoot_y)
 
-        if overshoot <= 0:
-            continue
-
-        obj_type = type(m).__name__
-        msg = (
-            f"Object '{obj_type}' out of bounds at "
-            f"({x:.1f}, {y:.1f}), size {w:.1f}x{h:.1f}, "
-            f"overshoot {overshoot:.1f}"
-        )
+        # Use stricter threshold for text objects
+        ignore_threshold = TEXT_OVERSHOOT_THRESHOLD if is_text_obj else GENERAL_OVERSHOOT_THRESHOLD
 
         if overshoot > 1.0:
+            msg = (
+                f"{'Text' if is_text_obj else 'Object'} '{obj_type}' SEVERELY out of bounds at "
+                f"({x:.1f}, {y:.1f}), size {w:.1f}x{h:.1f}, "
+                f"overshoot {overshoot:.1f}"
+            )
             new_issues.append(_issue(
                 "critical", "high", "out_of_bounds", msg,
                 auto_fixable=True,
                 fix_hint=f"Shift or scale to bring within +/-{SAFE_X} x +/-{SAFE_Y}",
                 object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
                 width=round(w, 2), height=round(h, 2), overshoot=round(overshoot, 2),
+                is_text=is_text_obj,
             ))
-        elif overshoot > 0.3:
+        elif overshoot > ignore_threshold:
+            msg = (
+                f"{'Text' if is_text_obj else 'Object'} '{obj_type}' partially clipped at "
+                f"({x:.1f}, {y:.1f}), size {w:.1f}x{h:.1f}, "
+                f"overshoot {overshoot:.1f}"
+            )
+            sev = "critical" if (is_text_obj and overshoot > 0.2) else "warning"
+            conf = "high" if is_text_obj else "medium"
             new_issues.append(_issue(
-                "warning", "medium", "out_of_bounds", msg,
+                sev, conf, "out_of_bounds", msg,
                 auto_fixable=True,
-                fix_hint=f"Minor adjustment needed (~{overshoot:.1f} units)",
+                fix_hint=f"{'Text clipped at edge — shift inward or reduce font_size' if is_text_obj else f'Minor adjustment needed (~{overshoot:.1f} units)'}",
                 object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
-                overshoot=round(overshoot, 2),
+                width=round(w, 2), height=round(h, 2), overshoot=round(overshoot, 2),
+                is_text=is_text_obj,
             ))
-        # overshoot <= 0.3 -> sub-pixel, ignore
+
+        # ── Text edge proximity check ──
+        # Even if not technically past SCREEN_X, text within TEXT_EDGE_MARGIN
+        # of the screen boundary is at risk of visual clipping
+        if is_text_obj and overshoot <= ignore_threshold:
+            margin_right = SCREEN_X - right
+            margin_left = SCREEN_X + left  # left is negative when object is left of center
+            margin_top = SCREEN_Y - top
+            margin_bottom = SCREEN_Y + bottom
+
+            min_margin = min(margin_right, margin_left, margin_top, margin_bottom)
+            if 0 < min_margin < TEXT_EDGE_MARGIN:
+                msg = (
+                    f"Text '{obj_type}' dangerously close to screen edge at "
+                    f"({x:.1f}, {y:.1f}), margin={min_margin:.2f}"
+                )
+                new_issues.append(_issue(
+                    "warning", "medium", "out_of_bounds", msg,
+                    auto_fixable=True,
+                    fix_hint="Shift text inward or reduce font_size — risk of edge clipping",
+                    object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
+                    width=round(w, 2), height=round(h, 2),
+                    overshoot=round(TEXT_EDGE_MARGIN - min_margin, 2),
+                    is_text=True, edge_margin=round(min_margin, 2),
+                ))
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 1b. GROUP / TABLE OVERFLOW CHECK
+    # ═══════════════════════════════════════════════════════════════════
+    # Catch VGroup/Table/MobjectTable that are too large for the screen
+    for m in all_ordered:
+        obj_type = type(m).__name__
+        if obj_type not in ("VGroup", "Group", "Table", "MobjectTable", "IntegerTable", "DecimalTable", "MathTable"):
+            continue
+        if not _visible(m):
+            continue
+        try:
+            w, h = m.width, m.height
+        except Exception:
+            continue
+        if w < 0.5 and h < 0.5:
+            continue
+
+        if w > GROUP_MAX_WIDTH or h > GROUP_MAX_HEIGHT:
+            try:
+                x, y, _ = m.get_center()
+            except Exception:
+                x, y = 0, 0
+            msg = (
+                f"{obj_type} too large: {w:.1f}x{h:.1f} "
+                f"(max {GROUP_MAX_WIDTH}x{GROUP_MAX_HEIGHT}) at ({x:.1f}, {y:.1f})"
+            )
+            new_issues.append(_issue(
+                "critical", "high", "out_of_bounds", msg,
+                auto_fixable=True,
+                fix_hint=f"Add .scale_to_fit_width({2*SAFE_X:.0f}) after creating the {obj_type}",
+                object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
+                width=round(w, 2), height=round(h, 2),
+                overshoot=round(max(w - 2 * SCREEN_X, h - 2 * SCREEN_Y, 0), 2),
+                is_group_overflow=True,
+            ))
 
     # ═══════════════════════════════════════════════════════════════════
     # 2. TEXT-ON-TEXT OVERLAP
@@ -189,8 +283,7 @@ def _perform_spatial_checks(self):
             continue
         if not _visible(m):
             continue
-        is_text = "Text" in type(m).__name__ or hasattr(m, "text")
-        if is_text:
+        if _is_text(m):
             texts.append((idx, m))
         elif hasattr(m, "width"):
             objects.append((idx, m))
@@ -219,7 +312,9 @@ def _perform_spatial_checks(self):
                 ))
             elif ratio > 0.15:
                 new_issues.append(_issue(
-                    "warning", "medium", "text_overlap", msg,
+                    "critical", "medium", "text_overlap", msg,
+                    auto_fixable=True,
+                    fix_hint="Visible text overlap: separate labels with .next_to()/.shift()",
                     text1=txt1, text2=txt2, overlap_ratio=round(ratio, 2),
                 ))
             # < 0.15 -> marginal, skip
@@ -246,6 +341,17 @@ def _perform_spatial_checks(self):
                     continue
             except Exception:
                 pass
+
+            # SurroundingRectangle: suppress only if stroke-only (no fill)
+            # A filled SurroundingRectangle covering text IS a real issue
+            if obj_type in ("SurroundingRectangle", "Brace", "BraceBetweenPoints", "Cross"):
+                try:
+                    fill_op = o.get_fill_opacity() if hasattr(o, "get_fill_opacity") else 0
+                    if fill_op < 0.15:
+                        continue  # Stroke-only container — not occluding
+                except Exception:
+                    continue
+
             try:
                 if hasattr(o, "get_fill_opacity") and o.get_fill_opacity() < 0.15:
                     continue
@@ -253,7 +359,7 @@ def _perform_spatial_checks(self):
                 pass
 
             ratio = _overlap_ratio(t, o)
-            if ratio < 0.1:
+            if ratio < 0.08:
                 continue
 
             txt = _trunc(getattr(t, "text", repr(t)))
@@ -270,10 +376,19 @@ def _perform_spatial_checks(self):
                 f"covers text '{txt}' ({ratio:.0%} overlap)"
             )
 
-            if ratio > 0.6:
+            if ratio > 0.5:
+                new_issues.append(_issue(
+                    "critical", "high", "object_occlusion", msg,
+                    auto_fixable=True,
+                    fix_hint="Reposition object, use stroke_only, or reduce fill_opacity",
+                    object_type=obj_type, text=txt,
+                    overlap_ratio=round(ratio, 2),
+                ))
+            elif ratio > 0.2:
                 new_issues.append(_issue(
                     "warning", "medium", "object_occlusion", msg,
-                    fix_hint="Reposition object or add transparency",
+                    auto_fixable=True,
+                    fix_hint="Object partially covering text — adjust position or opacity",
                     object_type=obj_type, text=txt,
                     overlap_ratio=round(ratio, 2),
                 ))
@@ -291,28 +406,20 @@ def _perform_spatial_checks(self):
 INJECTED_FINAL_REPORT = '''
 # ── Spatial Validation: Final Report ──
 self._perform_spatial_checks()
-if hasattr(self, '_spatial_issues') and self._spatial_issues:
-    import json as _json_report
-    import sys as _sys_report
+import json as _json_report
+import sys as _sys_report
 
-    _seen = set()
-    _unique = []
-    for _iss in self._spatial_issues:
-        _key = _iss['message']
-        if _key not in _seen:
-            _seen.add(_key)
-            _unique.append(_iss)
+_issues_list = getattr(self, '_spatial_issues', [])
+_seen = set()
+_unique = []
+for _iss in _issues_list:
+    _key = _iss['message']
+    if _key not in _seen:
+        _seen.add(_key)
+        _unique.append(_iss)
 
-    _has_critical = any(_i['severity'] == 'critical' for _i in _unique)
-
-    if _has_critical:
-        _sys_report.exit("SPATIAL_ISSUES_JSON:" + _json_report.dumps(_unique))
-    else:
-        for _i in _unique:
-            print(
-                "SPATIAL_WARNING: " + _i['message'],
-                file=_sys_report.stderr,
-            )
+if _unique:
+    _sys_report.exit("SPATIAL_ISSUES_JSON:" + _json_report.dumps(_unique))
 '''
 
 # ── Monkey-patch setup injected at start of construct() ──────────────────────

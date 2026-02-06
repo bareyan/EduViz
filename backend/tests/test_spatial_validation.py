@@ -9,8 +9,12 @@ from app.services.pipeline.animation.generation.core.validation.static import (
 from app.services.pipeline.animation.generation.refinement.deterministic_fixer import (
     DeterministicFixer,
 )
+from app.services.pipeline.animation.generation.formatters.code_formatter import (
+    CodeFormatter,
+)
 from app.services.pipeline.animation.generation.core.validation.spatial import (
     SpatialCheckInjector,
+    INJECTED_METHOD,
 )
 
 
@@ -153,11 +157,17 @@ def test_to_fixer_context():
         message="ZeroDivisionError: division by zero",
         line=42,
         fix_hint="Remove the division",
+        details={
+            "traceback_excerpt": "Traceback ...",
+            "code_context": ">>   42: x = 1 / 0",
+        },
     )
     ctx = issue.to_fixer_context()
     assert "runtime/critical" in ctx
     assert "Line 42" in ctx
     assert "Remove the division" in ctx
+    assert "Traceback excerpt" in ctx
+    assert "Code context" in ctx
     print("  to_fixer_context: PASS")
 
 
@@ -193,6 +203,113 @@ class S(Scene):
     assert "self.wait(0)" not in fixed
     assert "ORIGIN" in fixed
     print(f"  known pattern fixes ({count}x): PASS")
+
+
+def test_header_mathtex_pattern_fix():
+    """Dense header MathTex should be normalized to arranged labels."""
+    fixer = DeterministicFixer()
+    code = """from manim import *
+class S(Scene):
+    def construct(self):
+        headers = MathTex(
+            r"\\\\text{Base}", r"x_1", r"x_2", r"x_3", r"x_4", r"x_5", r"\\\\text{RHS}",
+            font_size=34, color=BLUE_B
+        )
+"""
+    fixed, count = fixer.fix_known_patterns(code)
+    assert ".arrange(RIGHT, buff=0.7)" in fixed
+    assert ".scale_to_fit_width(min(headers.width, 10.5))" in fixed
+    assert count >= 1
+    print("  dense header MathTex fix: PASS")
+
+
+def test_table_grid_lines_pattern_fix():
+    """Fix unsupported table.grid_lines access."""
+    fixer = DeterministicFixer()
+    code = """from manim import *
+class S(Scene):
+    def construct(self):
+        table = MathTable([["a"]])
+        self.play(Create(table.grid_lines), run_time=1.0)
+"""
+    fixed, count = fixer.fix_known_patterns(code)
+    assert "table.grid_lines" not in fixed
+    assert "table.get_horizontal_lines()" in fixed
+    assert "table.get_vertical_lines()" in fixed
+    assert count >= 1
+    print("  table.grid_lines fix: PASS")
+
+
+def test_table_double_index_pattern_fix():
+    """Fix table[i][j] indexing to table.get_cell()."""
+    fixer = DeterministicFixer()
+    code = """from manim import *
+class S(Scene):
+    def construct(self):
+        table = MathTable([["a","b"],["c","d"]])
+        pivot = table[2][2]
+"""
+    fixed, count = fixer.fix_known_patterns(code)
+    assert "table[2][2]" not in fixed
+    assert "table.get_cell(3, 3)" in fixed
+    assert count >= 1
+    print("  table double indexing fix: PASS")
+
+
+def test_mathtex_array_table_highlight_geometry_fix():
+    """Fix fragile MathTex-array table highlight sizing/centering patterns."""
+    fixer = DeterministicFixer()
+    code = """from manim import *
+class S(Scene):
+    def construct(self):
+        tableau_1 = MathTex(
+            r"\\begin{array}{c|ccccc|c} "
+            r"B & x_1 & x_2 & x_3 & x_4 & x_5 & b \\\\ \\hline "
+            r"x_3 & 1 & 0 & 1 & 0 & 0 & 4 \\\\ "
+            r"x_4 & 0 & 2 & 0 & 1 & 0 & 12 \\\\ "
+            r"x_5 & 3 & 2 & 0 & 0 & 1 & 18 \\\\ \\hline "
+            r"Z & 3 & 5 & 0 & 0 & 0 & 0 \\end{array}",
+            font_size=36,
+            color=WHITE
+        )
+        pivot_col_highlight = SurroundingRectangle(tableau_1, color=BLUE_C, fill_opacity=0)
+        pivot_col_highlight.stretch_to_fit_width(tableau_1.width / 8)
+        pivot_col_highlight.move_to(tableau_1.get_left(), aligned_edge=LEFT).shift(RIGHT * 3.3)
+        pivot_row_highlight = SurroundingRectangle(tableau_1, color=GREEN, fill_opacity=0)
+        pivot_row_highlight.stretch_to_fit_height(tableau_1.height / 5.5)
+        pivot_row_highlight.move_to(tableau_1.get_top(), aligned_edge=UP).shift(DOWN * 1.55)
+        pivot_cell = SurroundingRectangle(pivot_row_highlight, color=RED, fill_opacity=0)
+        pivot_cell.stretch_to_fit_width(pivot_col_highlight.width)
+        pivot_cell.move_to(pivot_col_highlight.get_center()).shift(UP * 0.1)
+"""
+    fixed, count = fixer.fix_known_patterns(code)
+    assert "pivot_col_highlight.stretch_to_fit_width(tableau_1.width / 7)" in fixed
+    assert "pivot_row_highlight.stretch_to_fit_height(tableau_1.height / 5)" in fixed
+    assert "pivot_col_highlight.set_y(tableau_1.get_y())" in fixed
+    assert "pivot_row_highlight.set_x(tableau_1.get_x())" in fixed
+    assert "pivot_cell.set_y(pivot_row_highlight.get_y())" in fixed
+    assert "pivot_cell.stretch_to_fit_height(tableau_1.height / 5)" in fixed
+    assert count >= 1
+    print("  MathTex array table highlight geometry fix: PASS")
+
+
+def test_decorative_table_line_group_removed():
+    """Remove VGroup table overlays that add extra decorative lines."""
+    fixer = DeterministicFixer()
+    code = """from manim import *
+class S(Scene):
+    def construct(self):
+        table1 = MathTable([["a","b"],["c","d"]], include_outer_lines=False)
+        h_line = Line(table1.get_left(), table1.get_right(), color=WHITE, stroke_width=2)
+        v_line = Line(table1.get_top(), table1.get_bottom(), color=WHITE, stroke_width=2)
+        table1_group = VGroup(table1, h_line, v_line)
+        self.play(FadeIn(table1_group), run_time=1.0)
+"""
+    fixed, count = fixer.fix_known_patterns(code)
+    assert "table1_group = table1" in fixed
+    assert "avoid duplicate decorative grid lines" in fixed
+    assert count >= 1
+    print("  decorative table line group removal: PASS")
 
 
 def test_coordinate_clamping():
@@ -259,6 +376,13 @@ class MyScene(Scene):
     print("  SpatialCheckInjector: PASS")
 
 
+def test_text_overlap_policy_is_critical_and_auto_fixable():
+    """Meaningful text overlap should be classified as critical + auto-fixable."""
+    assert '"critical", "medium", "text_overlap"' in INJECTED_METHOD
+    assert "Visible text overlap: separate labels with .next_to()/.shift()" in INJECTED_METHOD
+    print("  text overlap policy (critical+autofix): PASS")
+
+
 def test_strategy_selector():
     """Test spatial strategy selection."""
     from app.services.pipeline.animation.generation.refinement.strategies import (
@@ -289,6 +413,23 @@ def test_issue_verifier_import():
     print("  IssueVerifier import: PASS")
 
 
+def test_segment_summary_uses_estimated_duration_when_start_missing():
+    """Segment summaries should advance using estimated durations."""
+    summary = CodeFormatter.summarize_segments(
+        {
+            "narration_segments": [
+                {"text": "first", "estimated_duration": 1.5},
+                {"text": "second", "estimated_duration": 2.0},
+                {"text": "third", "estimated_duration": 1.0},
+            ]
+        }
+    )
+    assert "- T+0.0s: first" in summary
+    assert "- T+1.5s: second" in summary
+    assert "- T+3.5s: third" in summary
+    print("  segment summary timing fallback: PASS")
+
+
 if __name__ == "__main__":
     print("Running validation system tests...")
     test_issue_routing()
@@ -298,9 +439,16 @@ if __name__ == "__main__":
     test_to_fixer_context()
     test_to_verification_prompt()
     test_known_pattern_fixes()
+    test_header_mathtex_pattern_fix()
+    test_table_grid_lines_pattern_fix()
+    test_table_double_index_pattern_fix()
+    test_mathtex_array_table_highlight_geometry_fix()
+    test_decorative_table_line_group_removed()
     test_coordinate_clamping()
     test_text_overlap_fix()
     test_spatial_injector()
+    test_text_overlap_policy_is_critical_and_auto_fixable()
     test_strategy_selector()
     test_issue_verifier_import()
+    test_segment_summary_uses_estimated_duration_when_start_missing()
     print("\nALL TESTS PASSED")

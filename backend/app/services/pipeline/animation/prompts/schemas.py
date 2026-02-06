@@ -106,3 +106,36 @@ CODE_EDIT_SCHEMA = {
     },
     "required": ["analysis", "edits"]
 }
+
+
+# =============================================================================
+# VISION QC SCHEMA
+# =============================================================================
+
+VISION_QC_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "issues": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "frame": {"type": "string"},
+                    "time_sec": {"type": "number"},
+                    "severity": {
+                        "type": "string",
+                        "enum": ["critical", "warning", "info"],
+                    },
+                    "confidence": {
+                        "type": "string",
+                        "enum": ["high", "medium", "low"],
+                    },
+                    "message": {"type": "string"},
+                    "fix_hint": {"type": "string"},
+                },
+                "required": ["frame", "time_sec", "severity", "confidence", "message"],
+            },
+        },
+    },
+    "required": ["issues"],
+}

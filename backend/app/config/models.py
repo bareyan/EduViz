@@ -132,6 +132,13 @@ class PipelineModels:
         description="Refine code and fix errors"
     ))
 
+    # Step 7: Visual QC (Post-render review)
+    visual_qc: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-2.5-flash",
+        thinking_level=None,
+        description="Visual quality inspection for rendered frames"
+    ))
+
 
 # Default and only pipeline configuration
 DEFAULT_PIPELINE_MODELS = PipelineModels()

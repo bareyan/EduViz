@@ -75,9 +75,12 @@ COMMON_MISTAKES = '''
 
 15. **Objects going out of frame** - Keep everything visible
     - [WRONG] Objects positioned at edges get cut off
+    - [WRONG] Text at X=6.5 with width 2.0 → right edge at X=7.5, clipped!
     - [CORRECT] Use `.scale(0.8)` to shrink large groups
     - [CORRECT] Check positions with `.move_to(ORIGIN)` then shift
     - [CORRECT] X range: -6 to 6, Y range: -3.5 to 3.5 (visible area)
+    - [CORRECT] Text needs ≥0.5 units margin from screen edges
+    - **WHY THIS MATTERS**: Even 0.1 units past the screen edge clips text characters visibly.
 
 16. **Common Undefined Names & Hallucinations (DO NOT USE)**
     - [WRONG] `CYAN` (causes crash). Use `BLUE_C` or `TEAL` instead.
@@ -90,6 +93,33 @@ COMMON_MISTAKES = '''
     - [CORRECT] `obj.set_color(RED); self.add(obj)` (Community style)
     - [WRONG] `self.play(obj.animate.scale(2))` inside `self.add_foreground_mobject`
     - [CORRECT] Keep animations and additions separate.
+
+18. **Tables and large groups MUST be scaled** (CRITICAL)
+    - [WRONG] `table = MobjectTable(...)` then positioning without scaling → TABLE OVERFLOWS SCREEN
+    - [WRONG] `table = Table(...)` without `.scale_to_fit_width(11)` → columns push off-screen
+    - [CORRECT] `table = MobjectTable(...); table.scale_to_fit_width(11); table.move_to(ORIGIN)`
+    - [CORRECT] Any VGroup with 4+ items: `.scale_to_fit_width(11)` after creation
+    - **WHY THIS CRASHES**: Tables with 4+ columns are typically 15-20 units wide. Screen is only 14.2 units.
+
+19. **Highlight rectangles MUST be stroke-only** (CRITICAL)
+    - [WRONG] `SurroundingRectangle(cell, color=GREEN)` → filled green box COVERS digits!
+    - [WRONG] `Rectangle(fill_opacity=0.5).move_to(text)` → text becomes unreadable
+    - [CORRECT] `SurroundingRectangle(cell, color=GREEN, fill_opacity=0, stroke_width=2)`
+    - [CORRECT] `SurroundingRectangle(cell, color=GREEN, fill_opacity=0.1, stroke_width=3)` (very light fill OK)
+    - **WHY THIS MATTERS**: The default SurroundingRectangle has fill_opacity that covers the text.
+
+20. **Row labels MUST be attached to table** (CRITICAL for tables)
+    - [WRONG] Creating Text labels and positioning them independently → labels misalign from rows
+    - [CORRECT] Use `table.add_highlighted_cell()` or `table.get_rows()` to reference cells
+    - [CORRECT] `label.next_to(table.get_rows()[i], LEFT, buff=0.3)` to attach label to row
+    - **WHY THIS MATTERS**: Independently positioned labels won't track if table is scaled/moved.
+
+21. **Do NOT fake tables with MathTex array + manual shifts** (CRITICAL)
+    - [WRONG] `table = MathTex(r"\\begin{{array}}...")` with highlights positioned by
+      `.stretch_to_fit_width(table.width/8)` and `.shift(RIGHT * 3.3)` → unstable/misaligned pivots
+    - [CORRECT] `table = MathTable(...)` or `MobjectTable(...)`, then use
+      `table.get_rows()`, `table.get_columns()`, `table.get_cell()` for highlights
+    - **WHY THIS MATTERS**: hardcoded shifts break when text metrics change and cause repeated visual defects.
 '''
 
 VALID_COLORS = '''

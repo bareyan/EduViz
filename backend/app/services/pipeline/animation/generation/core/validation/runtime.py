@@ -16,7 +16,7 @@ import subprocess
 import tempfile
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from app.core import get_logger
 from ....config import MAX_ERROR_MESSAGE_LENGTH
@@ -135,13 +135,18 @@ class RuntimeValidator:
                     result.add_issue(issue)
 
             if result_proc.returncode != 0 and not spatial_issues:
-                error_msg, error_line = self._parse_manim_error(result_proc.stderr)
+                error_msg, error_line, error_details = self._parse_manim_error(
+                    result_proc.stderr,
+                    code=code,
+                    tmp_path=tmp_path,
+                )
                 result.add_issue(ValidationIssue(
                     severity=IssueSeverity.CRITICAL,
                     confidence=IssueConfidence.HIGH,
                     category=IssueCategory.RUNTIME,
                     message=error_msg,
                     line=error_line,
+                    details=error_details,
                 ))
                 
         except subprocess.TimeoutExpired:
@@ -260,15 +265,20 @@ class RuntimeValidator:
             details=raw.get("details", {}),
         )
 
-    def _parse_manim_error(self, stderr: str) -> tuple[str, Optional[int]]:
-        """Extract the meaningful error message and line from Manim traceback.
+    def _parse_manim_error(
+        self,
+        stderr: str,
+        code: Optional[str] = None,
+        tmp_path: Optional[Path] = None,
+    ) -> tuple[str, Optional[int], Dict[str, Any]]:
+        """Extract message, best line number, and context from Manim stderr.
 
         Returns:
-            Tuple of (error_message, line_number_or_None).
+            Tuple of (error_message, line_number_or_None, details_dict).
         """
-        lines = stderr.splitlines()
+        lines = [self._strip_ansi(line) for line in stderr.splitlines()]
         if not lines:
-            return "Unknown runtime error (no stderr output)", None
+            return "Unknown runtime error (no stderr output)", None, {}
 
         logger.debug(f"Full Manim stderr (first 2000 chars):\n{stderr[:2000]}")
 
@@ -291,15 +301,74 @@ class RuntimeValidator:
         if not exception_line:
             exception_line = "Unknown error"
 
-        # Extract line number from traceback
+        # Prefer traceback lines that point to our temporary source file.
         line_num: Optional[int] = None
-        for line in reversed(lines):
-            match = re.search(r'File ".*\.py", line (\d+),', line)
-            if match:
-                line_num = int(match.group(1))
-                break
+        tmp_norm = str(tmp_path).replace("\\", "/") if tmp_path else None
+
+        trace_locs: List[tuple[str, int]] = []
+        for line in lines:
+            match = re.search(r'File "([^"]+\.py)", line (\d+),', line)
+            if not match:
+                continue
+            trace_locs.append((match.group(1).replace("\\", "/"), int(match.group(2))))
+
+        if tmp_norm:
+            for path_text, candidate_line in reversed(trace_locs):
+                if path_text == tmp_norm or path_text.endswith(tmp_norm):
+                    line_num = candidate_line
+                    break
+
+        if line_num is None and trace_locs:
+            line_num = trace_locs[-1][1]
+
+        if line_num is None:
+            # Fallback for formatted tracebacks that omit explicit File lines.
+            for line in reversed(lines):
+                match = re.search(r'\bline\s+(\d+)\b', line)
+                if match:
+                    line_num = int(match.group(1))
+                    break
+
+        details: Dict[str, Any] = {}
+        excerpt = self._build_traceback_excerpt(lines)
+        if excerpt:
+            details["traceback_excerpt"] = excerpt
+        if code and line_num:
+            snippet = self._build_code_context(code, line_num)
+            if snippet:
+                details["code_context"] = snippet
 
         if len(exception_line) > MAX_ERROR_MESSAGE_LENGTH:
             exception_line = exception_line[:MAX_ERROR_MESSAGE_LENGTH] + "..."
 
-        return exception_line, line_num
+        return exception_line, line_num, details
+
+    @staticmethod
+    def _strip_ansi(text: str) -> str:
+        """Remove ANSI color/control escapes from stderr lines."""
+        return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+
+    @staticmethod
+    def _build_traceback_excerpt(lines: List[str], max_lines: int = 18, max_chars: int = 1400) -> str:
+        """Take the last useful traceback lines for LLM debugging context."""
+        useful = [ln.rstrip() for ln in lines if ln.strip()]
+        if not useful:
+            return ""
+        excerpt = "\n".join(useful[-max_lines:])
+        if len(excerpt) > max_chars:
+            excerpt = excerpt[-max_chars:]
+        return excerpt
+
+    @staticmethod
+    def _build_code_context(code: str, line_num: int, radius: int = 3) -> str:
+        """Render a small numbered snippet around the failing line."""
+        code_lines = code.splitlines()
+        if line_num < 1 or line_num > len(code_lines):
+            return ""
+        start = max(1, line_num - radius)
+        end = min(len(code_lines), line_num + radius)
+        rendered: List[str] = []
+        for idx in range(start, end + 1):
+            marker = ">>" if idx == line_num else "  "
+            rendered.append(f"{marker} {idx:4}: {code_lines[idx - 1]}")
+        return "\n".join(rendered)

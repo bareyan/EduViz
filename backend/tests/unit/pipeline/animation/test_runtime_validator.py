@@ -2,6 +2,7 @@
 Unit Tests for RuntimeValidator
 """
 import pytest
+from pathlib import Path
 from app.services.pipeline.animation.generation.core.validation.runtime import RuntimeValidator
 from app.services.pipeline.animation.generation.core.validation.models import IssueCategory
 
@@ -84,3 +85,26 @@ class TestScene(Scene):
             "latex" in i.message.lower() or "error" in i.message.lower()
             for i in result.issues
         )
+
+
+def test_parse_manim_error_includes_line_and_context():
+    """Parser should capture exact line plus traceback/code snippets."""
+    validator = RuntimeValidator()
+    code = """from manim import *
+class TestScene(Scene):
+    def construct(self):
+        arr = [1]
+        x = arr[5]
+"""
+    tmp_path = Path("C:/tmp/fake_scene.py")
+    stderr = """Traceback (most recent call last):
+  File "C:/tmp/fake_scene.py", line 5, in construct
+    x = arr[5]
+IndexError: list index out of range
+"""
+    message, line, details = validator._parse_manim_error(stderr, code=code, tmp_path=tmp_path)
+    assert "IndexError" in message
+    assert line == 5
+    assert "traceback_excerpt" in details
+    assert "code_context" in details
+    assert ">>    5:" in details["code_context"]

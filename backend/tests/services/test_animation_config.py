@@ -23,6 +23,14 @@ from app.services.pipeline.animation.config import (
     CONSTRUCT_INDENT_SPACES,
     # Validation settings
     ENABLE_REFINEMENT_CYCLE,
+    ENABLE_VISION_QC,
+    VISION_QC_MAX_FRAMES_PER_CALL,
+    VISION_QC_FRAME_WIDTH,
+    VISION_QC_FRAME_TIME_ROUND,
+    VISION_QC_TEMPERATURE,
+    VISION_QC_TIMEOUT,
+    VISION_QC_MAX_OUTPUT_TOKENS,
+    VISION_QC_FRAME_DIR_NAME,
 )
 
 
@@ -138,11 +146,25 @@ class TestValidationSettings:
     def test_validation_flags_are_boolean(self):
         """Test all validation flags are boolean"""
         assert isinstance(ENABLE_REFINEMENT_CYCLE, bool)
+        assert isinstance(ENABLE_VISION_QC, bool)
 
     def test_default_validations_enabled(self):
         """Test that default validations are enabled"""
         # At least syntax validation should always be on
         assert ENABLE_REFINEMENT_CYCLE is True
+
+
+class TestVisionQcSettings:
+    """Test suite for vision QC settings"""
+
+    def test_vision_qc_settings_types(self):
+        assert isinstance(VISION_QC_MAX_FRAMES_PER_CALL, int)
+        assert isinstance(VISION_QC_FRAME_WIDTH, int)
+        assert isinstance(VISION_QC_FRAME_TIME_ROUND, float)
+        assert isinstance(VISION_QC_TEMPERATURE, float)
+        assert isinstance(VISION_QC_TIMEOUT, float)
+        assert isinstance(VISION_QC_MAX_OUTPUT_TOKENS, int)
+        assert isinstance(VISION_QC_FRAME_DIR_NAME, str)
 
 
 class TestConfigConsistency:
