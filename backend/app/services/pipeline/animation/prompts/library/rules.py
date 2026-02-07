@@ -34,8 +34,8 @@ COMMON_MISTAKES = '''
 
 6. **Missing imports** - Always start with `from manim import *`
 
-7. **Forgetting background** - Always set dark background
-   - [CORRECT] `self.camera.background_color = "#171717"`
+7. **Forgetting background ownership** - Theme is injected by pipeline
+   - [CORRECT] Do NOT set `self.camera.background_color` manually unless explicitly requested
 
 8. **Animating lists** - `Animation` only works on Mobjects, not lists
    - [WRONG] `self.play(FadeOut(self.mobjects))` (Crash! list not Mobject)

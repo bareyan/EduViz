@@ -6,7 +6,12 @@ from .exceptions import (
     AnimationError, ChoreographyError, ImplementationError, 
     RefinementError, RenderingError
 )
-from .code_helpers import clean_code, create_scene_file, extract_scene_name
+from .code_helpers import (
+    clean_code,
+    create_scene_file,
+    extract_scene_name,
+    extract_scene_names,
+)
 from .renderer import render_scene, validate_video_file, cleanup_output_artifacts
 from .file_manager import AnimationFileManager
 
@@ -15,7 +20,7 @@ __all__ = [
     "AnimationError", "ChoreographyError", "ImplementationError",
     "RefinementError", "RenderingError",
     # Code utilities
-    "clean_code", "create_scene_file", "extract_scene_name",
+    "clean_code", "create_scene_file", "extract_scene_name", "extract_scene_names",
     # Rendering
     "render_scene", "validate_video_file", "cleanup_output_artifacts",
     # File Management

@@ -2,6 +2,7 @@
 Code utilities - cleaning, normalization, scene file creation
 """
 
+import ast
 import re
 from typing import Optional
 
@@ -85,7 +86,7 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
     
     # Ensure background color is set according to style if not present
     theme_setup = get_theme_setup_code(style).strip()
-    if theme_setup and theme_setup not in code:
+    if theme_setup and not _has_background_assignment(code):
         # Find construct(self): and insert theme setup
         match = re.search(r"def construct\(self\):", code)
         if match:
@@ -104,6 +105,16 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
             code = code[:insertion_point] + "\n" + indent + theme_setup.strip() + "\n" + code[insertion_point:]
 
     return code
+
+
+def _has_background_assignment(code: str) -> bool:
+    """Detect explicit background assignment regardless of exact formatting."""
+    patterns = (
+        r"(?m)^\s*self\.camera\.background_color\s*=",
+        r"(?m)^\s*camera\.background_color\s*=",
+        r"(?m)^\s*config\.background_color\s*=",
+    )
+    return any(re.search(pattern, code) for pattern in patterns)
 
 
 def fix_translated_code(code: str) -> str:
@@ -158,11 +169,37 @@ def fix_translated_code(code: str) -> str:
 
 
 def extract_scene_name(code: str) -> Optional[str]:
-    """Extract the Scene class name from Manim code"""
-    match = re.search(r"class\s+(\w+)\s*\(\s*Scene\s*\)", code)
-    if match:
-        return match.group(1)
+    """Extract a single Scene class name from Manim code.
+
+    Returns ``None`` when zero or multiple scene classes are present.
+    """
+    names = extract_scene_names(code)
+    if len(names) == 1:
+        return names[0]
     return None
+
+
+def extract_scene_names(code: str) -> list[str]:
+    """Extract all scene-like class names from source code."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        return []
+
+    def is_scene_base(node: ast.expr) -> bool:
+        if isinstance(node, ast.Name):
+            return node.id.endswith("Scene")
+        if isinstance(node, ast.Attribute):
+            return node.attr.endswith("Scene")
+        return False
+
+    names: list[str] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        if any(is_scene_base(base) for base in node.bases):
+            names.append(node.name)
+    return names
 
 
 

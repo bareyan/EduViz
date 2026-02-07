@@ -13,13 +13,37 @@ Organization:
 # CHOREOGRAPHY SCHEMAS
 # =============================================================================
 
-# Choreography JSON Schema (Full)
+def _nullable(schema: dict) -> dict:
+    """Build provider-compatible nullable schema nodes."""
+    node = dict(schema)
+    node["nullable"] = True
+    return node
+
+
+_NULLABLE_STRING = _nullable({"type": "string"})
+
+# Choreography JSON Schema (V2 canonical shape)
 CHOREOGRAPHY_SCHEMA = {
     "type": "object",
     "properties": {
-        "scene_type": {
-            "type": "string",
-            "description": "Scene type: 2D or 3D"
+        "version": {"type": "string", "enum": ["2.0"]},
+        "scene": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["2D", "3D"]},
+                "camera": _nullable({"type": "object"}),
+                "safe_bounds": {
+                    "type": "object",
+                    "properties": {
+                        "x_min": {"type": "number"},
+                        "x_max": {"type": "number"},
+                        "y_min": {"type": "number"},
+                        "y_max": {"type": "number"},
+                    },
+                    "required": ["x_min", "x_max", "y_min", "y_max"],
+                },
+            },
+            "required": ["mode", "camera", "safe_bounds"],
         },
         "objects": {
             "type": "array",
@@ -27,46 +51,115 @@ CHOREOGRAPHY_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "id": {"type": "string"},
-                    "type": {"type": "string"},
-                    "text": {"type": "string"},
-                    "latex": {"type": "string"},
-                    "appears_at": {"type": "number"},
-                    "removed_at": {"type": "number"},
-                    "relative_to": {"type": "string"},
-                    "relation": {"type": "string"},
-                    "spacing": {"type": "number"}
+                    "kind": {"type": "string"},
+                    "content": {
+                        "type": "object",
+                        "properties": {
+                            "text": _NULLABLE_STRING,
+                            "latex": _NULLABLE_STRING,
+                            "asset_path": _NULLABLE_STRING,
+                        },
+                        "required": ["text", "latex", "asset_path"],
+                    },
+                    "placement": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "enum": ["absolute", "relative"]},
+                            "absolute": {
+                                "type": "object",
+                                "nullable": True,
+                                "properties": {
+                                    "x": {"type": "number"},
+                                    "y": {"type": "number"},
+                                },
+                                "required": ["x", "y"],
+                            },
+                            "relative": {
+                                "type": "object",
+                                "nullable": True,
+                                "properties": {
+                                    "relative_to": {"type": "string"},
+                                    "relation": {
+                                        "type": "string",
+                                        "enum": ["above", "below", "left_of", "right_of"],
+                                    },
+                                    "spacing": {"type": "number"},
+                                },
+                                "required": ["relative_to", "relation", "spacing"],
+                            },
+                        },
+                        "required": ["type", "absolute", "relative"],
+                    },
+                    "lifecycle": {
+                        "type": "object",
+                        "properties": {
+                            "appear_at": {"type": "number"},
+                            "remove_at": {"type": "number"},
+                        },
+                        "required": ["appear_at", "remove_at"],
+                    },
                 },
-                "required": ["id", "type", "appears_at", "removed_at"]
-            }
+                "required": ["id", "kind", "content", "placement", "lifecycle"],
+            },
         },
-        "segments": {
+        "timeline": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
                     "segment_index": {"type": "integer"},
-                    "start_time": {"type": "number"},
-                    "end_time": {"type": "number"},
-                    "steps": {
+                    "start_at": {"type": "number"},
+                    "end_at": {"type": "number"},
+                    "actions": {
                         "type": "array",
                         "items": {
                             "type": "object",
                             "properties": {
-                                "time": {"type": "number"},
-                                "action": {"type": "string"},
+                                "at": {"type": "number"},
+                                "op": {
+                                    "type": "string",
+                                    "enum": [
+                                        "Create",
+                                        "FadeIn",
+                                        "Transform",
+                                        "ReplacementTransform",
+                                        "Write",
+                                        "Wait",
+                                        "FadeOut",
+                                    ],
+                                },
                                 "target": {"type": "string"},
-                                "duration": {"type": "number"}
+                                "source": _NULLABLE_STRING,
+                                "run_time": {"type": "number"},
                             },
-                            "required": ["time", "action"]
-                        }
-                    }
+                            "required": ["at", "op", "target", "source", "run_time"],
+                        },
+                    },
                 },
-                "required": ["segment_index", "start_time", "end_time", "steps"]
-            }
-        }
+                "required": ["segment_index", "start_at", "end_at", "actions"],
+            },
+        },
+        "constraints": {
+            "type": "object",
+            "properties": {
+                "language": {"type": "string"},
+                "max_visible_objects": {"type": "integer"},
+                "forbidden_constants": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["language", "max_visible_objects", "forbidden_constants"],
+        },
+        "notes": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
     },
-    "required": ["scene_type", "objects", "segments"]
+    "required": ["version", "scene", "objects", "timeline", "constraints", "notes"],
 }
+
+CHOREOGRAPHY_SCHEMA_V2 = CHOREOGRAPHY_SCHEMA
 
 
 # =============================================================================

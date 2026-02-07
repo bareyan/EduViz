@@ -106,6 +106,7 @@ VERIFICATION_BATCH_SIZE = 5  # Max uncertain issues per LLM verification call
 VERIFICATION_TEMPERATURE = 0.4  # Low temp for consistent verdicts
 VERIFICATION_TIMEOUT = 30.0  # Seconds per verification batch
 VERIFICATION_MAX_RETRIES = 1  # Don't waste tokens retrying
+MAX_LLM_FIX_ISSUES_PER_TURN = 8  # Cap issue context sent to fixer each turn
 
 # Vision QC settings (verification-only — no auto-fix loop)
 ENABLE_VISION_QC = True

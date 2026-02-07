@@ -7,6 +7,7 @@ from app.services.pipeline.animation.generation.core.code_helpers import (
     create_scene_file,
     fix_translated_code,
     extract_scene_name,
+    extract_scene_names,
     ensure_manim_structure,
     get_theme_setup_code
 )
@@ -89,6 +90,29 @@ def test_extract_scene_name():
     
     code = "class Test( Scene ):"
     assert extract_scene_name(code) == "Test"
+
+
+def test_extract_scene_name_multiple_returns_none():
+    code = textwrap.dedent("""
+class SceneOne(Scene):
+    pass
+class SceneTwo(ThreeDScene):
+    pass
+""")
+    assert extract_scene_name(code) is None
+    assert extract_scene_names(code) == ["SceneOne", "SceneTwo"]
+
+
+def test_create_scene_file_does_not_duplicate_background():
+    code = textwrap.dedent("""
+from manim import *
+class MyScene(Scene):
+    def construct(self):
+        self.camera.background_color = "#171717"
+        c = Circle()
+""")
+    full = create_scene_file(code, "id", 10.0, DEFAULT_THEME_CODE)
+    assert full.count("background_color") == 1
 
 def test_ensure_manim_structure():
     good = textwrap.dedent("""from manim import *

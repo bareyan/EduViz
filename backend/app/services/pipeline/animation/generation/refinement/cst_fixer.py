@@ -4,6 +4,8 @@ Uses LibCST for robust code modification, avoiding the pitfalls of regex-based
 text replacement on Python source.
 """
 
+import ast as py_ast
+from difflib import SequenceMatcher
 from typing import List, Optional, Sequence, Set, Tuple
 import libcst as cst
 import libcst.matchers as m
@@ -1092,16 +1094,17 @@ class CSTFixer:
         if not text_content:
             return None
 
-        needle = text_content[:20]
+        needle = self._normalize_text_for_match(text_content)
+        if not needle:
+            return None
 
         class _FindByTextVisitor(cst.CSTVisitor):
             def __init__(self, text_needle: str) -> None:
                 self.text_needle = text_needle
                 self.found: Optional[str] = None
+                self.best_score: float = 0.0
 
             def visit_Assign(self, node: cst.Assign) -> None:
-                if self.found is not None:
-                    return
                 if len(node.targets) != 1:
                     return
                 target = node.targets[0].target
@@ -1122,10 +1125,52 @@ class CSTFixer:
                     return
 
                 for arg in node.value.args:
-                    if isinstance(arg.value, cst.SimpleString) and self.text_needle in arg.value.value:
+                    if not isinstance(arg.value, cst.SimpleString):
+                        continue
+                    literal = CSTFixer._decode_python_string_literal(arg.value.value)
+                    if not literal:
+                        continue
+                    candidate = CSTFixer._normalize_text_for_match(literal)
+                    score = CSTFixer._text_match_score(self.text_needle, candidate)
+                    if score > self.best_score:
+                        self.best_score = score
                         self.found = target.value
-                        return
 
         visitor = _FindByTextVisitor(needle)
         module.visit(visitor)
         return visitor.found
+
+    @staticmethod
+    def _decode_python_string_literal(literal: str) -> str:
+        """Decode Python string literal into raw text for robust matching."""
+        try:
+            value = py_ast.literal_eval(literal)
+            if isinstance(value, str):
+                return value
+        except (ValueError, SyntaxError):
+            pass
+        return literal.strip("\"'")
+
+    @staticmethod
+    def _normalize_text_for_match(value: str) -> str:
+        """Normalize text for matching across whitespace/punctuation variants."""
+        if not value:
+            return ""
+        lowered = value.lower()
+        normalized = "".join(ch for ch in lowered if ch.isalnum())
+        return normalized
+
+    @staticmethod
+    def _text_match_score(needle: str, candidate: str) -> float:
+        if not needle or not candidate:
+            return 0.0
+        if needle == candidate:
+            return 1_000 + len(candidate)
+        if needle in candidate:
+            return 900 + len(needle)
+        if candidate in needle:
+            return 800 + len(candidate)
+        ratio = SequenceMatcher(a=needle, b=candidate).ratio()
+        if ratio < 0.72:
+            return 0.0
+        return ratio * 100

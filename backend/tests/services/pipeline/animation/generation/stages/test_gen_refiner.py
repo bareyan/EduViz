@@ -1,6 +1,7 @@
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
+from pathlib import Path
 from app.services.pipeline.animation.generation.stages.refiner import Refiner
 from app.services.pipeline.animation.generation.core.validation.models import ValidationIssue, IssueSeverity, IssueConfidence, IssueCategory
 from app.services.pipeline.animation.generation.core.validation.static import ValidationResult
@@ -64,6 +65,48 @@ async def test_refine_runtime_triage(refiner):
     
     final_code, stable = await refiner.refine(code, "Title")
     assert final_code == "fixed code"
+    assert stable is True
+
+
+@pytest.mark.asyncio
+async def test_refine_keeps_frames_dir_alive_through_triage(refiner):
+    refiner.static_validator.validate = AsyncMock(return_value=ValidationResult(True, []))
+    refiner.deterministic_fixer.fix_known_patterns = Mock(side_effect=lambda c: (c, 0))
+
+    issue = ValidationIssue(
+        IssueSeverity.WARNING,
+        IssueConfidence.LOW,
+        IssueCategory.OUT_OF_BOUNDS,
+        "minor clipping",
+        auto_fixable=True,
+        details={"frame_file": "issue_t0.10.png"},
+    )
+
+    async def runtime_validate(*_args, **kwargs):
+        frames_dir = kwargs.get("frames_dir")
+        assert frames_dir is not None
+        frame_path = Path(frames_dir) / "issue_t0.10.png"
+        frame_path.write_text("frame")
+        return ValidationResult(False, [issue])
+
+    async def triage(*args, **_kwargs):
+        issues = args[1]
+        hydrated = issues[0].details.get("frame_path")
+        assert hydrated is not None
+        assert Path(hydrated).exists()
+        return args[0], {
+            "deterministic": 0,
+            "llm": 0,
+            "deferred_to_visual_qc": 0,
+            "skipped_whitelisted": 0,
+            "unresolved": 0,
+        }
+
+    refiner.runtime_validator.validate = AsyncMock(side_effect=runtime_validate)
+    refiner._triage_issues = AsyncMock(side_effect=triage)
+
+    final_code, stable = await refiner.refine("code", "Title")
+    assert final_code == "code"
     assert stable is True
 
 @pytest.mark.asyncio

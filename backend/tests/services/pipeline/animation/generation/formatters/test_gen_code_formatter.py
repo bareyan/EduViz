@@ -30,3 +30,61 @@ def test_get_language_name():
     assert CodeFormatter.get_language_name("en") == "English"
     assert CodeFormatter.get_language_name("ru") == "Russian"
     assert CodeFormatter.get_language_name("unknown") == "English" # Default
+
+
+def test_normalize_choreography_plan_adapts_legacy_null_strings():
+    legacy = {
+        "scene_type": "2D",
+        "objects": [
+            {
+                "id": "title",
+                "type": "Text",
+                "text": "Hello",
+                "appears_at": 0,
+                "removed_at": 2,
+                "relative_to": "null",
+                "relation": "null",
+            }
+        ],
+        "segments": [],
+    }
+    normalized = CodeFormatter.normalize_choreography_plan(legacy, language_name="English")
+    obj = normalized["objects"][0]
+    assert normalized["version"] == "2.0"
+    assert obj["placement"]["type"] == "absolute"
+    assert obj["placement"]["relative"] is None
+
+
+def test_normalize_choreography_plan_quantizes_v2_times():
+    v2 = {
+        "version": "2.0",
+        "scene": {
+            "mode": "2D",
+            "camera": None,
+            "safe_bounds": {"x_min": -5.5, "x_max": 5.5, "y_min": -3, "y_max": 3},
+        },
+        "objects": [
+            {
+                "id": "title",
+                "kind": "Text",
+                "content": {"text": "A", "latex": None, "asset_path": None},
+                "placement": {"type": "absolute", "absolute": {"x": 0, "y": 0}, "relative": None},
+                "lifecycle": {"appear_at": 0.0004, "remove_at": 1.9996},
+            }
+        ],
+        "timeline": [
+            {
+                "segment_index": 0,
+                "start_at": 0.0004,
+                "end_at": 1.9996,
+                "actions": [
+                    {"at": 0.12345, "op": "Write", "target": "title", "source": None, "run_time": 1.23456}
+                ],
+            }
+        ],
+        "constraints": {"language": "English", "max_visible_objects": 10, "forbidden_constants": ["TOP", "BOTTOM"]},
+        "notes": [],
+    }
+    normalized = CodeFormatter.normalize_choreography_plan(v2, language_name="English")
+    assert normalized["timeline"][0]["actions"][0]["at"] == 0.123
+    assert normalized["timeline"][0]["actions"][0]["run_time"] == 1.235

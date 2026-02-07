@@ -22,6 +22,7 @@ from .core import (
     RenderingError, 
     create_scene_file, 
     render_scene,
+    extract_scene_names,
     AnimationFileManager
 )
 from .core.validation import VisionValidator
@@ -117,6 +118,24 @@ class ManimGenerator:
         # Modular Pipeline Flow (Choreograph -> Implement -> Refine)
         section_dir = Path(output_dir)
         write_status(section_dir, "generating_manim")
+        choreography_plan_path: Optional[str] = None
+
+        def on_choreography(plan: Dict[str, Any], attempt_idx: int) -> None:
+            nonlocal choreography_plan_path
+            plan_path = self.file_manager.save_choreography_plan(
+                output_dir=output_dir,
+                plan=plan,
+            )
+            choreography_plan_path = str(plan_path)
+            logger.info(
+                "Choreography plan generated",
+                extra={
+                    "section_index": section_index,
+                    "attempt": attempt_idx + 1,
+                    "plan_path": choreography_plan_path,
+                    "pipeline_stage": "choreography_generated",
+                },
+            )
 
         def on_raw_code(code: str, attempt_idx: int) -> None:
             self.file_manager.prepare_scene_file(
@@ -141,6 +160,7 @@ class ManimGenerator:
             section,
             audio_duration,
             context,
+            on_choreography=on_choreography,
             on_raw_code=on_raw_code,
             status_callback=status_callback
         )
@@ -157,7 +177,7 @@ class ManimGenerator:
             )
 
         # Stage 4: Rendering (Production)
-        return await self.process_code_and_render(
+        render_result = await self.process_code_and_render(
             manim_code=final_manim_code,
             section=section,
             output_dir=output_dir,
@@ -165,6 +185,9 @@ class ManimGenerator:
             audio_duration=audio_duration,
             style=style
         )
+        if choreography_plan_path:
+            render_result["choreography_plan_path"] = choreography_plan_path
+        return render_result
 
     async def process_code_and_render(
         self,
@@ -189,11 +212,21 @@ class ManimGenerator:
 
         # 2. File Preparation via Manager
         section_id = section.get("id", f"section_{section_index}").replace("-", "_").replace(" ", "_")
-        scene_name = f"Section{section_id.title().replace('_', '')}"
-        
-        logger.info(f"Preparing scene: {scene_name}")
         
         full_code = create_scene_file(manim_code, section_id, target_duration, style)
+        scene_classes = extract_scene_names(full_code)
+        if not scene_classes:
+            raise RenderingError(
+                f"No Scene subclass found in generated code for section {section_index}"
+            )
+        if len(scene_classes) > 1:
+            raise RenderingError(
+                f"Expected exactly one Scene subclass for section {section_index}, "
+                f"found {len(scene_classes)}: {scene_classes}"
+            )
+        scene_name = scene_classes[0]
+
+        logger.info(f"Preparing scene: {scene_name}")
         
         # Delegate I/O to FileManager
         code_file = self.file_manager.prepare_scene_file(

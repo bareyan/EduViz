@@ -194,3 +194,24 @@ class Scene(Scene):
     fixed, remaining, count = fixer.fix(code, [issue])
     assert count == 1
     assert "headers.set_z_index(10)" in fixed
+
+
+def test_fix_visual_quality_text_match_ignores_spaces_and_punctuation():
+    fixer = CSTFixer()
+    code = """
+class Scene(Scene):
+    def construct(self):
+        title = Text("Dilated Causal Convolutions")
+"""
+    issue = ValidationIssue(
+        severity=IssueSeverity.CRITICAL,
+        confidence=IssueConfidence.HIGH,
+        category=IssueCategory.VISUAL_QUALITY,
+        message="Stroke crosses title",
+        details={"reason": "stroke_through_text", "text": "DilatedCausalConvolutions"},
+        auto_fixable=True,
+    )
+
+    fixed, remaining, count = fixer.fix(code, [issue])
+    assert count == 1
+    assert "title.set_z_index(10)" in fixed

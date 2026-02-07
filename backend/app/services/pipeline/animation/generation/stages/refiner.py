@@ -30,6 +30,7 @@ from app.utils.section_status import SectionState
 
 from ...config import (
     ENABLE_REFINEMENT_CYCLE,
+    MAX_LLM_FIX_ISSUES_PER_TURN,
     MAX_SURGICAL_FIX_ATTEMPTS,
 )
 from ..core.validation import StaticValidator, RuntimeValidator
@@ -136,91 +137,94 @@ class Refiner:
         )
 
         for turn_idx in range(1, self.max_attempts + 1):
-            with tempfile.TemporaryDirectory() as frames_dir_str:
-                frames_dir = Path(frames_dir_str)
-                
+            frames_tmpdir = tempfile.TemporaryDirectory()
+            frames_dir = Path(frames_tmpdir.name)
+
+            try:
                 stats["attempts"] += 1
 
-            # ── Phase 1: Static validation ───────────────────────────
-            static_result = await self.static_validator.validate(current_code)
+                # ── Phase 1: Static validation ───────────────────────────
+                static_result = await self.static_validator.validate(current_code)
 
-            if not static_result.valid:
-                stats["static_failures"] += 1
-                self._log_issues("static", turn_idx, static_result.issues, section_title)
-                error_context = static_result.error_summary()
-                self._report_status(status_callback, "fixing_manim", section_title, turn_idx)
-                current_code = await self._apply_llm_fix(
-                    current_code, error_context, turn_idx, context
+                if not static_result.valid:
+                    stats["static_failures"] += 1
+                    self._log_issues("static", turn_idx, static_result.issues, section_title)
+                    error_context = static_result.error_summary()
+                    self._report_status(status_callback, "fixing_manim", section_title, turn_idx)
+                    current_code = await self._apply_llm_fix(
+                        current_code, error_context, turn_idx, context
+                    )
+                    stats["llm_fixes"] += 1
+                    continue
+
+                logger.info(f"Static validation PASSED (Turn {turn_idx})")
+
+                # ── Phase 2: Known-pattern deterministic fixes ───────────
+                current_code, pattern_fixes = (
+                    self.deterministic_fixer.fix_known_patterns(current_code)
                 )
-                stats["llm_fixes"] += 1
-                continue
+                stats["deterministic_fixes"] += pattern_fixes
+                if pattern_fixes:
+                    logger.info(
+                        f"Applied {pattern_fixes} known-pattern fixes",
+                        extra={
+                            "section_title": section_title,
+                            "turn": turn_idx,
+                            "refinement_stage": "pattern_fix",
+                            "fixes": pattern_fixes,
+                        },
+                    )
 
-            logger.info(f"Static validation PASSED (Turn {turn_idx})")
-
-            # ── Phase 2: Known-pattern deterministic fixes ───────────
-            current_code, pattern_fixes = (
-                self.deterministic_fixer.fix_known_patterns(current_code)
-            )
-            stats["deterministic_fixes"] += pattern_fixes
-            if pattern_fixes:
-                logger.info(
-                    f"Applied {pattern_fixes} known-pattern fixes",
-                    extra={
-                        "section_title": section_title,
-                        "turn": turn_idx,
-                        "refinement_stage": "pattern_fix",
-                        "fixes": pattern_fixes,
-                    },
+                # ── Phase 3: Runtime validation (with spatial checks) ────
+                runtime_result = await self.runtime_validator.validate(
+                    current_code, enable_spatial_checks=True, frames_dir=frames_dir
                 )
 
-            # ── Phase 3: Runtime validation (with spatial checks) ────
-            runtime_result = await self.runtime_validator.validate(
-                current_code, enable_spatial_checks=True, frames_dir=frames_dir
-            )
+                # Resolve frame paths for verification
+                for issue in runtime_result.issues:
+                    if issue.details and issue.details.get("frame_file"):
+                        frame_path = frames_dir / issue.details["frame_file"]
+                        if frame_path.exists():
+                            issue.details["frame_path"] = str(frame_path)
 
-            # Resolve frame paths for verification
-            for issue in runtime_result.issues:
-                if issue.details and issue.details.get("frame_file"):
-                    frame_path = frames_dir / issue.details["frame_file"]
-                    if frame_path.exists():
-                        issue.details["frame_path"] = str(frame_path)
+                self.last_runtime_issues = runtime_result.issues
 
-            self.last_runtime_issues = runtime_result.issues
+                if runtime_result.valid:
+                    logger.info(
+                        f"Refinement successful for '{section_title}' "
+                        f"(Turn {turn_idx})",
+                        extra={**stats, "refinement_stage": "success"},
+                    )
+                    return current_code, True
 
-            if runtime_result.valid:
-                logger.info(
-                    f"Refinement successful for '{section_title}' "
-                    f"(Turn {turn_idx})",
-                    extra={**stats, "refinement_stage": "success"},
+                # ── Phase 4: Smart triage ────────────────────────────────
+                stats["runtime_failures"] += 1
+                self._log_issues(
+                    "runtime", turn_idx, runtime_result.issues, section_title
                 )
-                return current_code, True
 
-            # ── Phase 4: Smart triage ────────────────────────────────
-            stats["runtime_failures"] += 1
-            self._log_issues(
-                "runtime", turn_idx, runtime_result.issues, section_title
-            )
-
-            current_code, triage_stats = await self._triage_issues(
-                current_code,
-                runtime_result.issues,
-                turn_idx,
-                section_title,
-                context,
-                status_callback=status_callback,
-            )
-            stats["deterministic_fixes"] += triage_stats["deterministic"]
-            stats["llm_fixes"] += triage_stats["llm"]
-            stats["deferred_to_visual_qc"] += triage_stats.get("deferred_to_visual_qc", 0)
-            stats["skipped_whitelisted"] += triage_stats.get("skipped_whitelisted", 0)
-            
-            # If triage resolved everything (only uncertain/whitelisted left)
-            if triage_stats.get("unresolved", 0) == 0:
-                logger.info(
-                    f"All issues resolved/discarded for '{section_title}' (Turn {turn_idx})",
-                    extra={**stats, "refinement_stage": "triage_resolved"},
+                current_code, triage_stats = await self._triage_issues(
+                    current_code,
+                    runtime_result.issues,
+                    turn_idx,
+                    section_title,
+                    context,
+                    status_callback=status_callback,
                 )
-                return current_code, True
+                stats["deterministic_fixes"] += triage_stats["deterministic"]
+                stats["llm_fixes"] += triage_stats["llm"]
+                stats["deferred_to_visual_qc"] += triage_stats.get("deferred_to_visual_qc", 0)
+                stats["skipped_whitelisted"] += triage_stats.get("skipped_whitelisted", 0)
+
+                # If triage resolved everything (only uncertain/whitelisted left)
+                if triage_stats.get("unresolved", 0) == 0:
+                    logger.info(
+                        f"All issues resolved/discarded for '{section_title}' (Turn {turn_idx})",
+                        extra={**stats, "refinement_stage": "triage_resolved"},
+                    )
+                    return current_code, True
+            finally:
+                frames_tmpdir.cleanup()
 
         # ── Exhausted ────────────────────────────────────────────────
         logger.warning(
@@ -338,6 +342,16 @@ class Refiner:
         # Tier 3: LLM fixes for non-auto-fixable real issues
         llm_batch = list(partitions["certain_llm_needed"])
         llm_batch.extend(verified_real_llm_needed)
+        llm_batch = self._dedupe_issues(llm_batch)
+        if len(llm_batch) > MAX_LLM_FIX_ISSUES_PER_TURN:
+            logger.info(
+                "Capping LLM fixer issue context",
+                extra={
+                    "requested": len(llm_batch),
+                    "capped_to": MAX_LLM_FIX_ISSUES_PER_TURN,
+                },
+            )
+            llm_batch = llm_batch[:MAX_LLM_FIX_ISSUES_PER_TURN]
         if llm_batch:
             error_context = "\n".join(
                 issue.to_fixer_context() for issue in llm_batch
@@ -447,6 +461,19 @@ class Refiner:
     def _summarize_issues(self, issues: List[ValidationIssue], limit: int = 6) -> List[Dict[str, Any]]:
         """Summarize issues for logging (truncate to keep logs readable)."""
         return [self._issue_snapshot(i) for i in issues[:limit]]
+
+    @staticmethod
+    def _dedupe_issues(issues: List[ValidationIssue]) -> List[ValidationIssue]:
+        """Dedupe issue list while preserving original order."""
+        seen: set[str] = set()
+        deduped: List[ValidationIssue] = []
+        for issue in issues:
+            key = f"{issue.category.value}:{issue.whitelist_key}:{issue.message}"
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(issue)
+        return deduped
 
     def _report_status(
         self,

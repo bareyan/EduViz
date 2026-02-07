@@ -39,7 +39,7 @@ def orchestrator(mock_engine, mock_stages):
 @pytest.mark.asyncio
 async def test_generate_success(orchestrator, mock_stages):
     # Setup mocks
-    mock_stages["choreographer"].plan = AsyncMock(return_value="plan")
+    mock_stages["choreographer"].plan = AsyncMock(return_value={"version": "2.0"})
     mock_stages["implementer"].implement = AsyncMock(return_value="code")
     mock_stages["refiner"].refine = AsyncMock(return_value=("final_code", True))
     
@@ -52,10 +52,24 @@ async def test_generate_success(orchestrator, mock_stages):
     mock_stages["implementer"].implement.assert_called_once()
     mock_stages["refiner"].refine.assert_called_once()
 
+
+@pytest.mark.asyncio
+async def test_generate_persists_choreography_callback(orchestrator, mock_stages):
+    mock_stages["choreographer"].plan = AsyncMock(return_value={"version": "2.0"})
+    mock_stages["implementer"].implement = AsyncMock(return_value="code")
+    mock_stages["refiner"].refine = AsyncMock(return_value=("final_code", True))
+    on_choreography = Mock()
+
+    section = {"title": "Test Section"}
+    result = await orchestrator.generate(section, 60.0, on_choreography=on_choreography)
+
+    assert result == "final_code"
+    on_choreography.assert_called_once_with({"version": "2.0"}, 0)
+
 @pytest.mark.asyncio
 async def test_generate_retry_logic(orchestrator, mock_stages):
     # Choreography fails on first attempt, succeeds on second
-    mock_stages["choreographer"].plan = AsyncMock(side_effect=[ChoreographyError("Fail"), "plan"])
+    mock_stages["choreographer"].plan = AsyncMock(side_effect=[ChoreographyError("Fail"), {"version": "2.0"}])
     mock_stages["implementer"].implement = AsyncMock(return_value="code")
     mock_stages["refiner"].refine = AsyncMock(return_value=("final_code", True))
     
@@ -82,7 +96,7 @@ async def test_generate_all_retries_fail(orchestrator, mock_stages):
 
 @pytest.mark.asyncio
 async def test_refinement_failure(orchestrator, mock_stages):
-    mock_stages["choreographer"].plan = AsyncMock(return_value="plan")
+    mock_stages["choreographer"].plan = AsyncMock(return_value={"version": "2.0"})
     mock_stages["implementer"].implement = AsyncMock(return_value="code")
     # Refinement fails to stabilize -> Raises ImplementationError -> triggers retry
     mock_stages["refiner"].refine = AsyncMock(return_value=("code", False)) 

@@ -1,5 +1,6 @@
 
 import pytest
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 from app.services.pipeline.animation.generation.generator import ManimGenerator
@@ -41,7 +42,12 @@ async def test_generate_animation_success(generator, mock_deps):
     mock_orchestrator = generator.orchestrator
     mock_orchestrator.generate = AsyncMock(return_value="manim_code")
     
-    mock_deps["create_scene_file"].return_value = "full_code"
+    mock_deps["create_scene_file"].return_value = (
+        "from manim import *\n"
+        "class SectionSec1(Scene):\n"
+        "    def construct(self):\n"
+        "        pass\n"
+    )
     generator.file_manager.prepare_scene_file.return_value = "code_path"
     mock_deps["render_scene"].side_effect = AsyncMock(return_value="video.mp4")
     generator.vision_validator.verify_issues = AsyncMock(return_value=[])
@@ -57,9 +63,46 @@ async def test_generate_animation_success(generator, mock_deps):
     
     # Assert
     assert result["video_path"] == "video.mp4"
-    assert result["manim_code"] == "full_code"
+    assert "class SectionSec1(Scene)" in result["manim_code"]
     mock_orchestrator.generate.assert_called_once()
     mock_deps["render_scene"].assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_generate_animation_persists_choreography(generator, mock_deps):
+    mock_orchestrator = generator.orchestrator
+
+    async def _generate_with_plan(*args, **kwargs):
+        callback = kwargs.get("on_choreography")
+        if callback:
+            callback({"version": "2.0"}, 0)
+        return "manim_code"
+
+    mock_orchestrator.generate = AsyncMock(side_effect=_generate_with_plan)
+    generator.file_manager.save_choreography_plan.return_value = Path("/tmp/out/choreography_plan.json")
+    mock_deps["create_scene_file"].return_value = (
+        "from manim import *\n"
+        "class SectionSec1(Scene):\n"
+        "    def construct(self):\n"
+        "        pass\n"
+    )
+    generator.file_manager.prepare_scene_file.return_value = "code_path"
+    mock_deps["render_scene"].side_effect = AsyncMock(return_value="video.mp4")
+    generator.vision_validator.verify_issues = AsyncMock(return_value=[])
+
+    section = {"id": "sec1", "title": "Section 1"}
+    result = await generator.generate_animation(
+        section=section,
+        output_dir="/tmp/out",
+        section_index=1,
+        audio_duration=10.0
+    )
+
+    generator.file_manager.save_choreography_plan.assert_called_once_with(
+        output_dir="/tmp/out",
+        plan={"version": "2.0"},
+    )
+    assert result["choreography_plan_path"] == "/tmp/out/choreography_plan.json"
 
 @pytest.mark.asyncio
 async def test_generate_animation_orchestrator_failure(generator, mock_deps):
@@ -77,7 +120,12 @@ async def test_generate_animation_orchestrator_failure(generator, mock_deps):
 
 @pytest.mark.asyncio
 async def test_process_code_and_render_rendering_failure(generator, mock_deps):
-    mock_deps["create_scene_file"].return_value = "full_code"
+    mock_deps["create_scene_file"].return_value = (
+        "from manim import *\n"
+        "class SectionSec1(Scene):\n"
+        "    def construct(self):\n"
+        "        pass\n"
+    )
     mock_deps["render_scene"].side_effect = AsyncMock(return_value=None) # Failed to render
     
     with pytest.raises(RenderingError):
@@ -86,6 +134,27 @@ async def test_process_code_and_render_rendering_failure(generator, mock_deps):
             section={"id": "sec1"},
             output_dir="/tmp",
             section_index=1
+        )
+
+
+@pytest.mark.asyncio
+async def test_process_code_and_render_fails_on_multiple_scene_classes(generator, mock_deps):
+    mock_deps["create_scene_file"].return_value = (
+        "from manim import *\n"
+        "class SceneA(Scene):\n"
+        "    def construct(self):\n"
+        "        pass\n"
+        "class SceneB(Scene):\n"
+        "    def construct(self):\n"
+        "        pass\n"
+    )
+
+    with pytest.raises(RenderingError):
+        await generator.process_code_and_render(
+            manim_code="code",
+            section={"id": "sec1"},
+            output_dir="/tmp",
+            section_index=1,
         )
 
 @pytest.mark.asyncio

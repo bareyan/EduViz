@@ -13,11 +13,16 @@ def test_ensure_output_directory(file_manager):
         file_manager.ensure_output_directory("/tmp/test")
         mock_mkdir.assert_called_once_with(parents=True, exist_ok=True)
 
-def test_prepare_scene_file(file_manager):
-    with patch("builtins.open") as mock_open:
-        path = file_manager.prepare_scene_file("/tmp", 1, "code")
-        assert path == Path("/tmp/scene_1.py")
-        mock_open.assert_called_once()
+def test_prepare_scene_file(file_manager, tmp_path):
+    path = file_manager.prepare_scene_file(str(tmp_path), 1, "code")
+    assert path == tmp_path / "scene_1.py"
+    assert path.read_text(encoding="utf-8") == "code"
+
+
+def test_save_choreography_plan(file_manager, tmp_path):
+    path = file_manager.save_choreography_plan(str(tmp_path), {"version": "2.0"})
+    assert path == tmp_path / "choreography_plan.json"
+    assert '"version": "2.0"' in path.read_text(encoding="utf-8")
 
 def test_get_quality_subdir(file_manager):
     # Depending on REAL config, but defaulting to 480p15 usually

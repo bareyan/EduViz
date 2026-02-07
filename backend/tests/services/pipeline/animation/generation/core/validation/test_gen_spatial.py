@@ -20,6 +20,7 @@ class MyScene(Scene):
     assert "filled_shape_dominance" in injected_code
     assert "text_edge_clipping" in injected_code
     assert "stroke_through_text" in injected_code
+    assert "VMobjectFromSVGPath" in injected_code
 
 def test_inject_failure_returns_original():
     injector = SpatialCheckInjector()

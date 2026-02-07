@@ -34,7 +34,7 @@ _MANIM_TECHNICAL_BASE = f"""
 - **VISIBILITY**: Do NOT set object color to background color (#171717). This is a CRITICAL ERROR.
 - **OUTLINES/CONTAINERS**: If using boxes, rounded rectangles, highlights, or frames, ensure the text/element is fully inside with padding. Use .next_to(..., buff=...) or .scale_to_fit_width/height and avoid clipping.
 - Use .scale() to ensure objects fit within bounds.
-- Avoid 3D objects (ThreeDScene, ThreeDVMobject) - use 2D representations.
+- Prefer 2D objects by default; use 3D objects only when choreography `scene.mode` is "3D".
 - Test positioning with .move_to() before animating.
 
 ## TABLE / GROUP LAYOUT (MANDATORY — #1 SOURCE OF LAYOUT BUGS)
@@ -74,6 +74,7 @@ _MANIM_TECHNICAL_BASE = f"""
   .scale_to_fit_width(11) BEFORE positioning to ensure they fit on screen.
 - **Maximum Objects Per Frame**: Limit to ~8-10 visible objects at any time.
   More causes clutter and overlaps.
+- Aim for ~10-12 visible objects only when the composition remains readable and spatially separated.
 - **Long Text**: For text wider than 10 units, either:
   (a) Reduce font_size, or
   (b) Split into multiple lines with `\\n`, or
@@ -111,14 +112,17 @@ Be specific about:
 - Exact timing (start time, duration)
 - Animation style (Create, FadeIn, Transform, etc.)
 - Spatial positioning (center, left, up, etc.)
-- Scene type: 2D or 3D (only allow 3D objects when scene_type is "3D")
+- Scene mode: 2D or 3D (only allow 3D objects when `scene.mode` is "3D")
 
 ## SPATIAL LAYOUT RULES (CRITICAL)
-- Define "relative_to" + "relation" for every object that co-exists with another.
-- Anchor objects use "relative_to": null with explicit position.
-- Subsequent objects MUST reference an anchor: e.g. "relative_to": "title", "relation": "below".
+- For co-existing objects, use `placement.type="relative"` with
+  `placement.relative.relative_to` + `placement.relative.relation`.
+- Anchor objects use `placement.type="absolute"` with explicit `x/y`.
+- Subsequent objects should reference anchors to avoid overlaps.
 - Spacing between 0.3 and 1.0 (larger for distinct sections).
 - NEVER schedule two Text objects without spatial separation.
+- Keep text minimal and label-like; avoid sentence-length text copied from narration.
+- Ensure each segment has at least one non-text visual beat (shape/graph/diagram change).
 - ALWAYS include FadeOut steps when an object is no longer needed — stale objects
   left on screen are the #1 cause of overlap bugs.
 - Maximum ~8 visible objects at any time to avoid clutter.

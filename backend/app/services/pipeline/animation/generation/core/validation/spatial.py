@@ -49,9 +49,9 @@ def _perform_spatial_checks(self):
     GROUP_MAX_WIDTH = 15.0
     GROUP_MAX_HEIGHT = 9.0
     FRAME_AREA = (2 * SCREEN_X) * (2 * SCREEN_Y)
-    FILL_DOMINANCE_AREA_RATIO = 0.42
-    FILL_DOMINANCE_OPACITY = 0.55
-    STROKE_THROUGH_RATIO = 0.55
+    FILL_DOMINANCE_AREA_RATIO = 0.70
+    FILL_DOMINANCE_OPACITY = 0.78
+    STROKE_THROUGH_RATIO = 0.72
     STROKE_MAX_THICKNESS = 0.2
     STROKE_MIN_LENGTH = 0.6
 
@@ -78,9 +78,20 @@ def _perform_spatial_checks(self):
         for m in mobjects:
             if m is None:
                 continue
+            name = type(m).__name__
+            if "VMobjectFromSVGPath" in name:
+                continue
             out.append(m)
             if hasattr(m, "submobjects") and m.submobjects:
-                out.extend(_flat(m.submobjects))
+                if "Text" in name or "Tex" in name:
+                    continue
+                filtered_children = []
+                for child in m.submobjects:
+                    child_name = type(child).__name__
+                    if "VMobjectFromSVGPath" in child_name:
+                        continue
+                    filtered_children.append(child)
+                out.extend(_flat(filtered_children))
         return out
 
     # ── Helper: effective visibility ──
@@ -301,7 +312,7 @@ def _perform_spatial_checks(self):
                 )
                 # Use LOW confidence — let Visual QC decide if it's actually clipped
                 new_issues.append(_issue(
-                    "critical", "high", "out_of_bounds", msg,
+                    "warning", "low", "out_of_bounds", msg,
                     auto_fixable=True,
                     fix_hint="Shift text inward or reduce font_size — risk of edge clipping",
                     object_type=obj_type, text=text_label, center_x=round(x, 2), center_y=round(y, 2),
@@ -422,11 +433,18 @@ def _perform_spatial_checks(self):
     # 2b. TEXT DOMINANCE / OVER-EMPHASIS
     # ═══════════════════════════════════════════════════════════════════
     # Catch oversized non-title Text labels that dominate the frame.
-    DOMINANT_TEXT_WIDTH = 4.8
-    DOMINANT_TEXT_HEIGHT = 1.0
+    DOMINANT_TEXT_WIDTH = 7.0
+    DOMINANT_TEXT_HEIGHT = 1.8
+    DOMINANT_TEXT_AREA_RATIO = 0.22
+    DOMINANT_TEXT_MIN_CHARS = 8
     TITLE_Y_CUTOFF = 2.8
 
-    for _, t in texts:
+    if len(texts) <= 1:
+        texts_for_dominance = []
+    else:
+        texts_for_dominance = texts
+
+    for _, t in texts_for_dominance:
         obj_type = type(t).__name__
         if obj_type != "Text":
             continue
@@ -437,28 +455,31 @@ def _perform_spatial_checks(self):
         except Exception:
             continue
 
-        if tw < DOMINANT_TEXT_WIDTH and th < DOMINANT_TEXT_HEIGHT:
+        text_area_ratio = (tw * th) / FRAME_AREA if FRAME_AREA > 0 else 0.0
+        if tw < DOMINANT_TEXT_WIDTH and th < DOMINANT_TEXT_HEIGHT and text_area_ratio < DOMINANT_TEXT_AREA_RATIO:
             continue
         if ty > TITLE_Y_CUTOFF:
             # Top-edge headline/title area is intentionally larger.
             continue
 
         txt = _trunc(getattr(t, "text", repr(t)))
+        if len(txt.strip()) < DOMINANT_TEXT_MIN_CHARS:
+            continue
         msg = (
             f"Text '{txt}' is visually dominant "
             f"(size {tw:.1f}x{th:.1f} at ({tx:.1f}, {ty:.1f}))"
         )
-        sev = "critical" if tw > 5.6 else "warning"
         new_issues.append(_issue(
-            sev, "high", "visual_quality", msg,
-            auto_fixable=True,
-            fix_hint="Reduce emphasis: lower font_size or cap animate.scale to <= 1.08.",
+            "warning", "low", "visual_quality", msg,
+            auto_fixable=False,
+            fix_hint="If unintentional, lower font_size or cap animate.scale to <= 1.05.",
             object_type=obj_type,
             text=txt,
             width=round(tw, 2),
             height=round(th, 2),
             center_x=round(tx, 2),
             center_y=round(ty, 2),
+            area_ratio=round(text_area_ratio, 2),
             reason="text_dominance",
         ))
 
@@ -491,14 +512,23 @@ def _perform_spatial_checks(self):
         if area_ratio < FILL_DOMINANCE_AREA_RATIO:
             continue
 
+        is_background_like = (
+            obj_type in ("Rectangle", "Square", "ScreenRectangle", "FullScreenRectangle")
+            and abs(ox) < 0.3
+            and abs(oy) < 0.3
+            and area_ratio >= 0.90
+        )
+        if is_background_like:
+            continue
+
         msg = (
             f"Filled {obj_type} dominates frame "
             f"(area {area_ratio:.0%}, opacity {fill_opacity:.2f}, size {ow:.1f}x{oh:.1f})"
         )
         new_issues.append(_issue(
-            "critical", "high", "visual_quality", msg,
-            auto_fixable=True,
-            fix_hint="Reduce fill_opacity or resize/reposition the shape to avoid covering content.",
+            "warning", "low", "visual_quality", msg,
+            auto_fixable=False,
+            fix_hint="If unintentional, reduce fill_opacity or resize/reposition the shape.",
             object_type=obj_type,
             width=round(ow, 2),
             height=round(oh, 2),
@@ -653,7 +683,15 @@ _issues_list = getattr(self, '_spatial_issues', [])
 _seen = set()
 _unique = []
 for _iss in _issues_list:
-    _key = _iss['message']
+    _details = _iss.get('details', {})
+    _key = (
+        _iss.get('category'),
+        _details.get('reason'),
+        _details.get('text'),
+        _details.get('object_type'),
+    )
+    if _key == (None, None, None, None):
+        _key = _iss.get('message')
     if _key not in _seen:
         _seen.add(_key)
         _unique.append(_iss)

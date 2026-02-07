@@ -81,6 +81,16 @@ def test_parse_spatial_warnings(validator):
     assert issues[0].category == IssueCategory.TEXT_OVERLAP
 
 
+def test_parse_spatial_uncertain_issue_is_low_confidence(validator):
+    stderr = (
+        'SPATIAL_ISSUES_JSON:[{"severity":"warning","confidence":"low",'
+        '"category":"out_of_bounds","message":"Text clipped near edge"}]'
+    )
+    issues = validator._parse_spatial_json(stderr)
+    assert len(issues) == 1
+    assert issues[0].is_uncertain is True
+
+
 def test_prepare_media_dir_creates_tex_folder(validator):
     media_dir = Path("manim_dry_run_sample")
     with patch.object(Path, "mkdir") as mock_mkdir:

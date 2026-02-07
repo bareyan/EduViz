@@ -37,7 +37,7 @@ class Implementer:
     async def implement(
         self,
         section: Dict[str, Any],
-        plan: str,
+        plan: Any,
         duration: float,
         context: Optional[Dict[str, Any]] = None,
         temperature: Optional[float] = None
@@ -46,7 +46,7 @@ class Implementer:
         
         Args:
             section: Section dictionary
-            plan: Choreography plan text
+            plan: Choreography plan (v2 dict, legacy dict, or JSON/text string)
             duration: Target animation duration
             context: Optional context
             temperature: Optional temperature override for retries
@@ -64,15 +64,18 @@ class Implementer:
             or section.get("metadata")
         )
         
+        language_name = CodeFormatter.get_language_name(
+            section.get("language", DEFAULT_LANGUAGE)
+        )
         prompt = FULL_IMPLEMENTATION_USER.format(
-            plan=plan,
+            plan=self._format_plan_for_prompt(plan, language_name),
             segment_timings=self.formatter.summarize_segments(section),
             total_duration=duration,
             section_id_title=self.formatter.derive_class_name(section),
             theme_info=section.get("theme_info") or section.get("style", DEFAULT_THEME),
             section_data=self.formatter.serialize_for_prompt(section_data),
             patterns=self._get_patterns(),
-            language_name=CodeFormatter.get_language_name(section.get("language", DEFAULT_LANGUAGE))
+            language_name=language_name,
         )
         
         config = PromptConfig(
@@ -98,6 +101,19 @@ class Implementer:
         logger.info(f"Generated implementation ({len(code)} chars)")
         
         return code
+
+    @staticmethod
+    def _format_plan_for_prompt(plan: Any, language_name: str) -> str:
+        """Serialize incoming choreography payload into canonical v2 JSON text."""
+        if isinstance(plan, str):
+            try:
+                parsed = json.loads(plan)
+            except (TypeError, ValueError):
+                return plan
+            return CodeFormatter.serialize_choreography_plan(parsed, language_name=language_name)
+        if isinstance(plan, dict):
+            return CodeFormatter.serialize_choreography_plan(plan, language_name=language_name)
+        return CodeFormatter.serialize_choreography_plan({}, language_name=language_name)
 
     @staticmethod
     def _get_patterns() -> str:

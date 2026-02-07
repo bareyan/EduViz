@@ -8,6 +8,7 @@ Follows SRP by handling:
 3. Cleanup of temporary artifacts
 """
 
+import json
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -53,6 +54,27 @@ class AnimationFileManager:
             return file_path
         except IOError as e:
             logger.error(f"Failed to write scene file {file_path}: {e}")
+            raise
+
+    def save_choreography_plan(
+        self,
+        output_dir: str,
+        plan: dict,
+        filename: str = "choreography_plan.json",
+    ) -> Path:
+        """Persist choreography plan JSON in the section output directory."""
+        self.ensure_output_directory(output_dir)
+        file_path = Path(output_dir) / filename
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(plan, f, ensure_ascii=False, indent=2)
+            logger.info(
+                f"Choreography plan written: {file_path} ({file_path.stat().st_size} bytes)"
+            )
+            return file_path
+        except (IOError, TypeError, ValueError) as e:
+            logger.error(f"Failed to write choreography plan {file_path}: {e}")
             raise
 
     def get_quality_subdir(self, quality: str) -> str:
