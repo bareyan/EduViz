@@ -105,8 +105,8 @@ class _RuntimePreflightVisitor(ast.NodeVisitor):
         if isinstance(node.func, ast.Attribute):
             attr = node.func.attr
             table_var = self._resolve_name(node.func.value)
-            if attr == "get_grid_lines" and table_var:
-                self._check_duplicate_grid_lines(node, table_var)
+            if attr in {"get_grid_lines", "get_horizontal_lines", "get_vertical_lines"} and table_var:
+                self._check_duplicate_grid_lines(node, table_var, attr)
             elif attr == "get_cell" and table_var:
                 self._check_get_cell_bounds(node, table_var)
             elif attr in {"wait", "_monitored_wait"}:
@@ -281,7 +281,7 @@ class _RuntimePreflightVisitor(ast.NodeVisitor):
         table_var, accessor, first_idx = first
         return table_var, accessor, first_idx, second_idx
 
-    def _check_duplicate_grid_lines(self, node: ast.Call, table_var: str) -> None:
+    def _check_duplicate_grid_lines(self, node: ast.Call, table_var: str, helper_name: str) -> None:
         shape = self._math_tables.get(table_var)
         if not shape or not shape.include_outer_lines:
             return
@@ -290,7 +290,7 @@ class _RuntimePreflightVisitor(ast.NodeVisitor):
             confidence=IssueConfidence.HIGH,
             category=IssueCategory.VISUAL_QUALITY,
             message=(
-                f"{table_var}.get_grid_lines() used with include_outer_lines=True; this often duplicates lines and creates visual artifacts."
+                f"{table_var}.{helper_name}() used with include_outer_lines=True; this often duplicates lines and creates visual artifacts."
             ),
             line=node.lineno,
             fix_hint=(

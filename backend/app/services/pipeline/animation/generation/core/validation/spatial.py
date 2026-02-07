@@ -51,6 +51,9 @@ def _perform_spatial_checks(self):
     FRAME_AREA = (2 * SCREEN_X) * (2 * SCREEN_Y)
     FILL_DOMINANCE_AREA_RATIO = 0.42
     FILL_DOMINANCE_OPACITY = 0.55
+    STROKE_THROUGH_RATIO = 0.55
+    STROKE_MAX_THICKNESS = 0.2
+    STROKE_MIN_LENGTH = 0.6
 
     # ── Types we expect to overlap (not bugs) ──
     EFFECT_TYPES = frozenset({
@@ -131,6 +134,19 @@ def _perform_spatial_checks(self):
         return s[:n] if len(s) > n else s
 
     def _text_label(m):
+        try:
+            if hasattr(m, "get_tex_string"):
+                tex = m.get_tex_string()
+                if isinstance(tex, str) and tex:
+                    return _trunc(tex)
+        except Exception:
+            pass
+        try:
+            tex = getattr(m, "tex_string", "")
+            if isinstance(tex, str) and tex:
+                return _trunc(tex)
+        except Exception:
+            pass
         try:
             txt = getattr(m, "text", "")
             if isinstance(txt, str) and txt:
@@ -492,6 +508,57 @@ def _perform_spatial_checks(self):
             area_ratio=round(area_ratio, 2),
             reason="filled_shape_dominance",
         ))
+
+    # 2d. STROKE-THROUGH-TEXT
+    # Catch thin stroke objects (lines/grid strokes) drawn over text labels.
+    LINE_TYPES = frozenset({
+        "Line", "DashedLine", "Arrow", "DoubleArrow", "Vector", "NumberLine", "Underline"
+    })
+
+    for t_idx, t in texts:
+        for o_idx, o in objects:
+            if o_idx <= t_idx:
+                continue
+            if _is_family(t, o):
+                continue
+
+            obj_type = type(o).__name__
+            try:
+                ow, oh = o.width, o.height
+            except Exception:
+                continue
+
+            thin = min(ow, oh)
+            long_side = max(ow, oh)
+            is_line_like = (
+                obj_type in LINE_TYPES
+                or (thin <= STROKE_MAX_THICKNESS and long_side >= STROKE_MIN_LENGTH)
+            )
+            if not is_line_like:
+                continue
+
+            try:
+                fill_op = o.get_fill_opacity() if hasattr(o, "get_fill_opacity") else 0.0
+            except Exception:
+                fill_op = 0.0
+            if fill_op is not None and fill_op > 0.2:
+                continue
+
+            ratio = _overlap_ratio(t, o)
+            if ratio < STROKE_THROUGH_RATIO:
+                continue
+
+            txt = _text_label(t)
+            msg = f"Stroke '{obj_type}' crosses text '{txt}' ({ratio:.0%} overlap)"
+            new_issues.append(_issue(
+                "critical", "high", "visual_quality", msg,
+                auto_fixable=True,
+                fix_hint="Raise label z-index or reposition text away from grid lines.",
+                object_type=obj_type,
+                text=txt,
+                overlap_ratio=round(ratio, 2),
+                reason="stroke_through_text",
+            ))
 
     # 3. OBJECT-ON-TEXT OCCLUSION (z-order aware)
     # ═══════════════════════════════════════════════════════════════════

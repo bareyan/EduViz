@@ -552,7 +552,9 @@ class TableGridLinesUsageCollector(cst.CSTVisitor):
     def visit_Call(self, node: cst.Call) -> None:
         if not isinstance(node.func, cst.Attribute):
             return
-        if not isinstance(node.func.attr, cst.Name) or node.func.attr.value != "get_grid_lines":
+        if not isinstance(node.func.attr, cst.Name):
+            return
+        if node.func.attr.value not in {"get_grid_lines", "get_horizontal_lines", "get_vertical_lines"}:
             return
         base = node.func.value
         if isinstance(base, cst.Name):
@@ -782,6 +784,53 @@ class FillOpacityClampTransformer(cst.CSTTransformer):
             return float(node.value)
         return None
 
+
+class TextZIndexBoostTransformer(cst.CSTTransformer):
+    """Ensure a text variable renders above strokes/lines."""
+
+    def __init__(self, target_var: str, z_index: int = 10) -> None:
+        self.target_var = target_var
+        self.z_index = z_index
+        self.count = 0
+
+    def _process_body(self, body: Sequence[cst.BaseStatement]) -> List[cst.BaseStatement]:
+        new_body: List[cst.BaseStatement] = []
+        for stmt in body:
+            new_body.append(stmt)
+            if not m.matches(
+                stmt,
+                m.SimpleStatementLine(
+                    body=[m.Assign(targets=[m.AssignTarget(target=m.Name(self.target_var))])]
+                ),
+            ):
+                continue
+
+            z_stmt = cst.SimpleStatementLine(
+                body=[
+                    cst.Expr(
+                        value=cst.Call(
+                            func=cst.Attribute(
+                                value=cst.Name(self.target_var),
+                                attr=cst.Name("set_z_index"),
+                            ),
+                            args=[cst.Arg(value=cst.Integer(value=str(self.z_index)))],
+                        )
+                    )
+                ],
+                trailing_whitespace=cst.TrailingWhitespace(
+                    comment=cst.Comment(value="# auto-fix: keep text above strokes")
+                ),
+            )
+            new_body.append(z_stmt)
+            self.count += 1
+        return new_body
+
+    def leave_IndentedBlock(self, original_node: cst.IndentedBlock, updated_node: cst.IndentedBlock) -> cst.CSTNode:
+        return updated_node.with_changes(body=self._process_body(updated_node.body))
+
+    def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.CSTNode:
+        return updated_node.with_changes(body=self._process_body(updated_node.body))
+
 class CSTFixer:
     """Manages deterministic code fixes using LibCST."""
 
@@ -966,6 +1015,21 @@ class CSTFixer:
                     return updated_module.code
                 return None
 
+            if reason == "stroke_through_text":
+                target_text = details.get("text", "")
+                var_name = self._find_variable_for_text(module, target_text) if target_text else None
+                if not var_name:
+                    return None
+
+                transformer = TextZIndexBoostTransformer(
+                    target_var=var_name,
+                    z_index=10,
+                )
+                updated_module = module.visit(transformer)
+                if updated_module.code != code:
+                    return updated_module.code
+                return None
+
             if reason == "duplicate_grid_lines":
                 table_var = details.get("table_var")
                 target_tables: Set[str] = set()
@@ -1057,9 +1121,10 @@ class CSTFixer:
                 if not node.value.args:
                     return
 
-                first_arg = node.value.args[0].value
-                if isinstance(first_arg, cst.SimpleString) and self.text_needle in first_arg.value:
-                    self.found = target.value
+                for arg in node.value.args:
+                    if isinstance(arg.value, cst.SimpleString) and self.text_needle in arg.value.value:
+                        self.found = target.value
+                        return
 
         visitor = _FindByTextVisitor(needle)
         module.visit(visitor)

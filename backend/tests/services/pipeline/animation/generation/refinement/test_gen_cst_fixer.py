@@ -173,3 +173,24 @@ class Scene(Scene):
     fixed, remaining, count = fixer.fix(code, [issue])
     assert count == 1
     assert "question.shift(RIGHT * 0.6)" in fixed
+
+
+def test_fix_visual_quality_stroke_through_text_boosts_z_index():
+    fixer = CSTFixer()
+    code = """
+class Scene(Scene):
+    def construct(self):
+        headers = MathTex("x_1", "x_2", "x_3")
+"""
+    issue = ValidationIssue(
+        severity=IssueSeverity.CRITICAL,
+        confidence=IssueConfidence.HIGH,
+        category=IssueCategory.VISUAL_QUALITY,
+        message="Stroke crosses x_2",
+        details={"reason": "stroke_through_text", "text": "x_2"},
+        auto_fixable=True,
+    )
+
+    fixed, remaining, count = fixer.fix(code, [issue])
+    assert count == 1
+    assert "headers.set_z_index(10)" in fixed

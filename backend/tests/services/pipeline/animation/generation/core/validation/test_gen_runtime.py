@@ -136,6 +136,29 @@ class SceneA(Scene):
 
 
 @pytest.mark.asyncio
+async def test_validate_preflight_flags_duplicate_math_table_horizontal_lines(validator):
+    code = """
+from manim import *
+class SceneA(Scene):
+    def construct(self):
+        t = MathTable(
+            [["1", "2"], ["3", "4"]],
+            include_outer_lines=True
+        )
+        grid = t.get_horizontal_lines()
+"""
+    with patch("subprocess.run") as mock_run:
+        result = await validator.validate(code)
+        assert result.valid is False
+        assert any(
+            issue.category == IssueCategory.VISUAL_QUALITY
+            and "visual artifacts" in issue.message
+            for issue in result.issues
+        )
+        mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_validate_preflight_detects_get_cell_out_of_bounds(validator):
     code = """
 from manim import *
