@@ -8,7 +8,7 @@ def test_generation_request_defaults():
         selected_topics=[0, 1]
     )
     assert req.style == "3b1b"
-    assert req.voice == "en-US-GuyNeural"
+    assert req.voice == "Charon"  # Gemini TTS default voice
     assert req.pipeline == "default"
 
 def test_generated_video_structure():

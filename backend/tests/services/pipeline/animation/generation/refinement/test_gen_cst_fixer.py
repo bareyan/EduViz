@@ -194,3 +194,26 @@ class Scene(Scene):
     fixed, remaining, count = fixer.fix(code, [issue])
     assert count == 1
     assert "headers.set_z_index(10)" in fixed
+
+
+def test_fix_visual_quality_stroke_through_text_handles_chained_text_and_deemphasizes_stroke():
+    fixer = CSTFixer()
+    code = """
+class Scene(Scene):
+    def construct(self):
+        headers = MathTex("x_1", "x_2", "x_3").scale(0.8).to_edge(UP)
+        guide = Line(LEFT * 4, RIGHT * 4)
+"""
+    issue = ValidationIssue(
+        severity=IssueSeverity.CRITICAL,
+        confidence=IssueConfidence.HIGH,
+        category=IssueCategory.VISUAL_QUALITY,
+        message="Stroke crosses x_2",
+        details={"reason": "stroke_through_text", "text": "x_2", "object_type": "Line"},
+        auto_fixable=True,
+    )
+
+    fixed, remaining, count = fixer.fix(code, [issue])
+    assert count == 1
+    assert "headers.set_z_index(10)" in fixed
+    assert "guide.set_stroke(opacity=0.35)" in fixed or "guide.set_stroke(opacity = 0.35)" in fixed

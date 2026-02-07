@@ -11,7 +11,7 @@ from ..content_analysis import MaterialAnalyzer
 from ..script_generation import ScriptGenerator
 from ..animation import ManimGenerator
 from ..animation.config import normalize_theme_style
-from ..audio import TTSEngine
+from ..audio import TTSEngine, create_tts_engine
 
 from .processor import VideoProcessor
 from .progress import ProgressTracker
@@ -55,7 +55,7 @@ class VideoGenerator:
         self.analyzer = MaterialAnalyzer(pipeline_name=pipeline_name)
         self.script_generator = ScriptGenerator(pipeline_name=pipeline_name)
         self.manim_generator = ManimGenerator(pipeline_name=pipeline_name)
-        self.tts_engine = TTSEngine()
+        self.tts_engine = create_tts_engine()
 
         # Initialize processing components
         self.video_processor = VideoProcessor()

@@ -10,7 +10,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 from ..animation.generation import ManimGenerator
-from ..audio import TTSEngine
+from ..audio import TTSEngine, AnyTTSEngine
 from .sections import (
     clean_narration_for_tts,
     process_single_subsection,
@@ -57,7 +57,7 @@ class SectionOrchestrator:
     def __init__(
         self,
         manim_generator: ManimGenerator,
-        tts_engine: TTSEngine,
+        tts_engine: "AnyTTSEngine",
         progress_tracker: ProgressTracker,
         max_concurrent: int = 3
     ):

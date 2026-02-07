@@ -213,8 +213,24 @@ class Refiner:
             stats["llm_fixes"] += triage_stats["llm"]
             stats["deferred_to_visual_qc"] += triage_stats.get("deferred_to_visual_qc", 0)
             stats["skipped_whitelisted"] += triage_stats.get("skipped_whitelisted", 0)
-            
-            # If triage resolved everything (only uncertain/whitelisted left)
+
+            # Always re-validate when we changed code this turn.
+            if triage_stats.get("deterministic", 0) > 0 or triage_stats.get("llm", 0) > 0:
+                logger.info(
+                    f"Re-running validation after fixes for '{section_title}' (Turn {turn_idx})",
+                    extra={
+                        "section_title": section_title,
+                        "turn": turn_idx,
+                        "deterministic_fixes": triage_stats.get("deterministic", 0),
+                        "llm_fixes": triage_stats.get("llm", 0),
+                        "refinement_stage": "post_fix_revalidate",
+                    },
+                )
+                continue
+
+            # If triage resolved everything without code changes
+            # (e.g., all remaining issues deferred/whitelisted/verified false-positive),
+            # we can proceed.
             if triage_stats.get("unresolved", 0) == 0:
                 logger.info(
                     f"All issues resolved/discarded for '{section_title}' (Turn {turn_idx})",

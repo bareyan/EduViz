@@ -84,6 +84,38 @@ async def test_refine_exhausted(refiner):
 
 
 @pytest.mark.asyncio
+async def test_refine_revalidates_after_deterministic_fix(refiner):
+    code = "orig_code"
+
+    refiner.static_validator.validate = AsyncMock(side_effect=[
+        ValidationResult(True, []),
+        ValidationResult(True, []),
+    ])
+    refiner.deterministic_fixer.fix_known_patterns = Mock(side_effect=lambda c: (c, 0))
+
+    issue = ValidationIssue(
+        IssueSeverity.CRITICAL,
+        IssueConfidence.HIGH,
+        IssueCategory.TEXT_OVERLAP,
+        "Text overlap",
+        auto_fixable=True,
+    )
+    refiner.runtime_validator.validate = AsyncMock(side_effect=[
+        ValidationResult(False, [issue]),
+        ValidationResult(True, []),
+    ])
+    refiner.deterministic_fixer.fix = Mock(return_value=("fixed_code", [], 1))
+    refiner.fixer.run_turn = AsyncMock(return_value=("llm_code_should_not_be_used", {}))
+
+    final_code, stable = await refiner.refine(code, "Title")
+
+    assert stable is True
+    assert final_code == "fixed_code"
+    assert refiner.runtime_validator.validate.call_count == 2
+    refiner.fixer.run_turn.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_triage_routes_verified_real_auto_fixable_to_deterministic(refiner):
     uncertain = ValidationIssue(
         IssueSeverity.WARNING,

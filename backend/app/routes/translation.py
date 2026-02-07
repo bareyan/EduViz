@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from ..config import OUTPUT_DIR
 from ..services.features.translation import get_translation_service
-from ..services.pipeline.audio import TTSEngine
+from ..services.pipeline.audio import TTSEngine, create_tts_engine
 from ..services.pipeline.animation import ManimGenerator
 from ..core import (
     get_media_duration,
@@ -214,7 +214,7 @@ async def generate_translated_video(
     """Generate video from translated script with translated Manim animations"""
     from ..services.features.translation import TranslationService
 
-    tts_engine = TTSEngine()
+    tts_engine = create_tts_engine()
     manim_gen = ManimGenerator()
     translation_service = TranslationService()
 

@@ -71,6 +71,44 @@ TTS_VOICES_BY_LANGUAGE: Dict[str, Dict[str, Any]] = {
 DEFAULT_TTS_LANGUAGE = "en"
 DEFAULT_TRANSLATION_VOICE = "en-US-GuyNeural"
 
+# ---------------------------------------------------------------------------
+# Gemini TTS voice catalog (used when TTS_ENGINE=gemini)
+# ---------------------------------------------------------------------------
+GEMINI_TTS_VOICES: Dict[str, Dict[str, Any]] = {
+    "en": {
+        "name": "English",
+        "voices": {
+            "Charon": {"name": "Charon (Informative)", "gender": "neutral"},
+            "Kore": {"name": "Kore (Firm)", "gender": "neutral"},
+            "Puck": {"name": "Puck (Upbeat)", "gender": "neutral"},
+            "Zephyr": {"name": "Zephyr (Bright)", "gender": "neutral"},
+            "Fenrir": {"name": "Fenrir (Excitable)", "gender": "neutral"},
+            "Aoede": {"name": "Aoede (Breezy)", "gender": "neutral"},
+            "Sulafat": {"name": "Sulafat (Warm)", "gender": "neutral"},
+        },
+        "default": "Charon",
+    },
+}
+
+DEFAULT_GEMINI_TTS_VOICE = "Charon"
+
+
+def get_gemini_tts_default_voice(language: str = "en") -> str:
+    """Get default Gemini TTS voice for a language (Gemini voices are multilingual)."""
+    lang_data = GEMINI_TTS_VOICES.get(language, GEMINI_TTS_VOICES.get("en"))
+    if lang_data and "default" in lang_data:
+        return lang_data["default"]
+    return DEFAULT_GEMINI_TTS_VOICE
+
+
+def get_gemini_tts_voices() -> Dict[str, str]:
+    """Return flat Gemini voice_name -> description map."""
+    return {
+        voice_id: info["name"]
+        for lang_data in GEMINI_TTS_VOICES.values()
+        for voice_id, info in lang_data["voices"].items()
+    }
+
 # Translation defaults by target language.
 TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE: Dict[str, str] = {
     "en": "en-US-GuyNeural",

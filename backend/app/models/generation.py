@@ -14,7 +14,7 @@ class GenerationRequest(BaseModel):
     analysis_id: str  # ID returned by /analyze for this file
     selected_topics: List[int]  # Indices from analysis.suggested_topics
     style: str = "3b1b"
-    voice: str = "en-US-GuyNeural"  # Edge TTS voice
+    voice: str = "Charon"  # Gemini TTS voice (use Edge voice if TTS_ENGINE=edge)
     video_mode: str = "comprehensive"  # "comprehensive" or "overview"
     language: str = "en"  # Language code for narration and content
     content_focus: str = "as_document"  # "practice", "theory", or "as_document"

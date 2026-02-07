@@ -208,41 +208,22 @@ async def process_single_subsection(
     return result
 
 
-async def process_segments_audio_first(
-    manim_generator: "ManimGenerator",
+def _is_whole_section_tts(tts_engine: "TTSEngine") -> bool:
+    """Check if the TTS engine prefers whole-section generation (e.g. Gemini with strict rate limits)."""
+    return getattr(tts_engine, "_whole_section_tts", False)
+
+
+async def _generate_audio_per_segment(
     tts_engine: "TTSEngine",
-    section: Dict[str, Any],
     narration_segments: List[Dict[str, Any]],
     section_dir: Path,
     section_index: int,
     voice: str,
-    style: str,
-    language: str = "en",
-    job_id: Optional[str] = None
-) -> Dict[str, Any]:
-    """Process segments using audio-first approach for precise sync
-    
-    WORKFLOW:
-    1. Generate audio for ALL segments first
-    2. Get actual audio durations for each segment
-    3. Concatenate all audio into one section audio file
-    4. Pass ALL segment timing info to Gemini for ONE cohesive video
-    5. Generate ONE video for the entire section
-    6. Merge audio with video
+) -> tuple[List[Dict[str, Any]], float]:
+    """Original per-segment TTS: generate audio for each segment individually.
+
+    Returns (segment_audio_info, total_duration).
     """
-    result = {
-        "video_path": None,
-        "audio_path": None,
-        "duration": 0
-    }
-
-    num_segments = len(narration_segments)
-    logger.info(f"Section {section_index}: Processing {num_segments} segments (audio-first, unified video)")
-
-    # Status: generating audio
-    write_status(section_dir, "generating_audio")
-
-    # Step 1: Generate audio for ALL segments first
     segment_audio_info = []
     cumulative_time = 0.0
 
@@ -281,20 +262,343 @@ async def process_segments_audio_first(
 
         logger.debug(f"Segment {seg_idx}: {audio_duration:.1f}s (starts at {segment_info['start_time']:.1f}s)")
 
-    total_duration = cumulative_time
+    return segment_audio_info, cumulative_time
+
+
+async def _generate_audio_whole_section(
+    tts_engine: "TTSEngine",
+    narration_segments: List[Dict[str, Any]],
+    section_dir: Path,
+    section_index: int,
+    voice: str,
+) -> tuple[List[Dict[str, Any]], float]:
+    """Whole-section TTS: ONE API call for the entire section, then detect
+    pause markers to extract exact segment timings.
+
+    This is designed for rate-limited engines like Gemini TTS (8 RPM / 100 RPD).
+    Reduces API calls from N-per-section to 1-per-section.
+    
+    Strategy:
+    1. Insert long pause markers between segments
+    2. Generate full audio with Gemini TTS (1 API call)
+    3. Detect pauses in the output audio
+    4. Split audio at pause points to get exact segment boundaries
+    5. Measure actual duration for each segment
+
+    Returns (segment_audio_info, total_duration).
+    """
+    # Build cleaned texts for each segment
+    cleaned_texts = []
+    for seg in narration_segments:
+        cleaned_texts.append(clean_narration_for_tts(seg.get("text", "")))
+
+    # Join segments with special pause marker for detection
+    # Multiple periods create a noticeable pause in TTS output
+    PAUSE_MARKER = ". . . . . . . . . ."
+    full_text = f" {PAUSE_MARKER} ".join(cleaned_texts)
+
+    section_audio_path = section_dir / "section_audio.mp3"
+
+    try:
+        await tts_engine.generate_speech(
+            text=full_text,
+            output_path=str(section_audio_path),
+            voice=voice,
+        )
+        total_duration = await get_audio_duration(str(section_audio_path))
+    except Exception as e:
+        logger.error(f"TTS error for section {section_index} (whole-section): {e}")
+        return [], 0.0
+
+    logger.info(
+        f"Section {section_index}: Generated whole-section audio "
+        f"({total_duration:.1f}s) with 1 API call for {len(narration_segments)} segments"
+    )
+
+    # Detect pauses and split audio to get exact segment boundaries
+    pause_times = await _detect_silence_boundaries(str(section_audio_path))
+    
+    if len(pause_times) >= len(narration_segments) - 1:
+        # Successfully detected pauses between segments
+        logger.info(f"Section {section_index}: Detected {len(pause_times)} pauses, splitting into {len(narration_segments)} segments")
+        segment_audio_info = await _split_audio_at_pauses(
+            section_audio_path=str(section_audio_path),
+            pause_times=pause_times,
+            narration_segments=narration_segments,
+            cleaned_texts=cleaned_texts,
+            section_dir=section_dir,
+            total_duration=total_duration
+        )
+        cumulative_time = sum(s["duration"] for s in segment_audio_info)
+        return segment_audio_info, cumulative_time
+    else:
+        # Fallback: if pause detection failed, use proportional distribution
+        logger.warning(
+            f"Section {section_index}: Only detected {len(pause_times)} pauses "
+            f"for {len(narration_segments)} segments, using proportional timing"
+        )
+        return await _distribute_timing_proportionally(
+            narration_segments=narration_segments,
+            cleaned_texts=cleaned_texts,
+            section_audio_path=str(section_audio_path),
+            section_dir=section_dir,
+            total_duration=total_duration
+        )
+
+
+async def _distribute_timing_proportionally(
+    narration_segments: List[Dict[str, Any]],
+    cleaned_texts: List[str],
+    section_audio_path: str,
+    section_dir: Path,
+    total_duration: float
+) -> tuple[List[Dict[str, Any]], float]:
+    """Fallback: distribute timing proportionally by character count."""
+    char_counts = [max(1, len(t)) for t in cleaned_texts]
+    total_chars = sum(char_counts)
+    cumulative_time = 0.0
+    segment_audio_info = []
+
+    for seg_idx, (segment, clean_text, chars) in enumerate(
+        zip(narration_segments, cleaned_texts, char_counts)
+    ):
+        seg_duration = total_duration * (chars / total_chars)
+
+        segment_info = {
+            "segment_index": seg_idx,
+            "text": clean_text,
+            "audio_path": section_audio_path,
+            "duration": seg_duration,
+            "start_time": cumulative_time,
+            "end_time": cumulative_time + seg_duration,
+            "seg_dir": str(section_dir / f"seg_{seg_idx}"),
+        }
+        segment_audio_info.append(segment_info)
+        cumulative_time += seg_duration
+
+        logger.debug(
+            f"Segment {seg_idx}: ~{seg_duration:.1f}s "
+            f"(proportional, starts at {segment_info['start_time']:.1f}s)"
+        )
+
+    return segment_audio_info, cumulative_time
+
+
+async def _detect_silence_boundaries(audio_path: str, silence_thresh: str = "-40dB", min_silence_duration: float = 0.3) -> List[float]:
+    """Detect silence/pause boundaries in audio file using ffmpeg.
+    
+    Returns list of timestamps (in seconds) where silences occur.
+    These timestamps represent the middle point of each detected silence.
+    """
+    cmd = [
+        "ffmpeg",
+        "-i", audio_path,
+        "-af", f"silencedetect=noise={silence_thresh}:d={min_silence_duration}",
+        "-f", "null",
+        "-"
+    ]
+    
+    try:
+        result = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await result.communicate()
+        output = stderr.decode('utf-8', errors='ignore')
+        
+        # Parse silence_start and silence_end from ffmpeg output
+        silence_starts = []
+        silence_ends = []
+        
+        for line in output.split('\n'):
+            if 'silence_start:' in line:
+                try:
+                    time_str = line.split('silence_start:')[1].strip().split()[0]
+                    silence_starts.append(float(time_str))
+                except (IndexError, ValueError):
+                    pass
+            elif 'silence_end:' in line:
+                try:
+                    time_str = line.split('silence_end:')[1].strip().split()[0]
+                    silence_ends.append(float(time_str))
+                except (IndexError, ValueError):
+                    pass
+        
+        # Calculate midpoint of each silence as the boundary
+        pause_times = []
+        for start, end in zip(silence_starts, silence_ends):
+            midpoint = (start + end) / 2.0
+            pause_times.append(midpoint)
+        
+        logger.debug(f"Detected {len(pause_times)} silence boundaries at: {[f'{t:.2f}s' for t in pause_times]}")
+        return pause_times
+        
+    except Exception as e:
+        logger.error(f"Error detecting silence: {e}")
+        return []
+
+
+async def _split_audio_at_pauses(
+    section_audio_path: str,
+    pause_times: List[float],
+    narration_segments: List[Dict[str, Any]],
+    cleaned_texts: List[str],
+    section_dir: Path,
+    total_duration: float
+) -> List[Dict[str, Any]]:
+    """Split audio file at detected pause boundaries and create individual segment audio files.
+    
+    Returns segment_audio_info with exact timings for each segment.
+    """
+    segment_audio_info = []
+    
+    # Build split points: start, pause1, pause2, ..., pauseN, end
+    split_points = [0.0] + pause_times + [total_duration]
+    
+    # Ensure we have the right number of segments
+    num_segments = len(narration_segments)
+    if len(split_points) - 1 > num_segments:
+        # Too many pauses detected, use only the first N-1
+        split_points = [0.0] + pause_times[:num_segments-1] + [total_duration]
+    elif len(split_points) - 1 < num_segments:
+        # Not enough pauses, this shouldn't happen if we reach here
+        logger.warning(f"Insufficient split points: {len(split_points)-1} for {num_segments} segments")
+        return []
+    
+    # Extract each segment
+    for seg_idx in range(num_segments):
+        start_time = split_points[seg_idx]
+        end_time = split_points[seg_idx + 1]
+        seg_duration = end_time - start_time
+        
+        seg_dir = section_dir / f"seg_{seg_idx}"
+        seg_dir.mkdir(exist_ok=True)
+        seg_audio_path = seg_dir / "audio.mp3"
+        
+        # Extract segment using ffmpeg
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", section_audio_path,
+            "-ss", str(start_time),
+            "-to", str(end_time),
+            "-c", "copy",
+            str(seg_audio_path)
+        ]
+        
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await proc.communicate()
+            
+            # Verify the extracted segment
+            actual_duration = await get_audio_duration(str(seg_audio_path))
+            
+            segment_info = {
+                "segment_index": seg_idx,
+                "text": cleaned_texts[seg_idx] if seg_idx < len(cleaned_texts) else "",
+                "audio_path": str(seg_audio_path),
+                "duration": actual_duration,
+                "start_time": start_time,
+                "end_time": end_time,
+                "seg_dir": str(seg_dir)
+            }
+            segment_audio_info.append(segment_info)
+            
+            logger.debug(f"Segment {seg_idx}: {actual_duration:.2f}s (exact, {start_time:.2f}s - {end_time:.2f}s)")
+            
+        except Exception as e:
+            logger.error(f"Error extracting segment {seg_idx}: {e}")
+            # Fallback: use the full audio with estimated timing
+            segment_info = {
+                "segment_index": seg_idx,
+                "text": cleaned_texts[seg_idx] if seg_idx < len(cleaned_texts) else "",
+                "audio_path": section_audio_path,
+                "duration": seg_duration,
+                "start_time": start_time,
+                "end_time": end_time,
+                "seg_dir": str(seg_dir)
+            }
+            segment_audio_info.append(segment_info)
+    
+    return segment_audio_info
+
+
+async def process_segments_audio_first(
+    manim_generator: "ManimGenerator",
+    tts_engine: "TTSEngine",
+    section: Dict[str, Any],
+    narration_segments: List[Dict[str, Any]],
+    section_dir: Path,
+    section_index: int,
+    voice: str,
+    style: str,
+    language: str = "en",
+    job_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Process segments using audio-first approach for precise sync
+    
+    WORKFLOW:
+    1. Generate audio for ALL segments first
+    2. Get actual audio durations for each segment
+    3. Concatenate all audio into one section audio file
+    4. Pass ALL segment timing info to Gemini for ONE cohesive video
+    5. Generate ONE video for the entire section
+    6. Merge audio with video
+
+    When a whole-section TTS engine (e.g. Gemini TTS) is detected, steps 1-3
+    are replaced with a single API call that generates audio for the entire
+    section narration at once, dramatically reducing API usage.
+    """
+    result = {
+        "video_path": None,
+        "audio_path": None,
+        "duration": 0
+    }
+
+    num_segments = len(narration_segments)
+    use_whole_section = _is_whole_section_tts(tts_engine)
+    mode_label = "whole-section" if use_whole_section else "per-segment"
+    logger.info(f"Section {section_index}: Processing {num_segments} segments (audio-first, {mode_label})")
+
+    # Status: generating audio
+    write_status(section_dir, "generating_audio")
+
+    # Step 1 & 2: Generate audio — strategy depends on engine type
+    if use_whole_section:
+        segment_audio_info, total_duration = await _generate_audio_whole_section(
+            tts_engine, narration_segments, section_dir, section_index, voice,
+        )
+        if not segment_audio_info:
+            logger.warning(f"Section {section_index}: Whole-section TTS failed")
+            return result
+        # Audio file already at section_dir / "section_audio.mp3"
+        section_audio_path = section_dir / "section_audio.mp3"
+    else:
+        segment_audio_info, total_duration = await _generate_audio_per_segment(
+            tts_engine, narration_segments, section_dir, section_index, voice,
+        )
+
     logger.info(f"Section {section_index}: Total audio duration = {total_duration:.1f}s")
 
-    # Step 2: Concatenate all audio segments
+    # Step 3: Handle audio concatenation (per-segment only OR whole-section with split segments)
     section_audio_path = section_dir / "section_audio.mp3"
-    valid_audio_paths = [s["audio_path"] for s in segment_audio_info if s["audio_path"]]
+    
+    if not use_whole_section:
+        # Per-segment mode: Concatenate all audio segments
+        valid_audio_paths = [s["audio_path"] for s in segment_audio_info if s["audio_path"]]
 
-    if len(valid_audio_paths) > 1:
-        await concatenate_audio_files(valid_audio_paths, str(section_audio_path))
-    elif len(valid_audio_paths) == 1:
-        shutil.copy(valid_audio_paths[0], str(section_audio_path))
-    else:
-        logger.warning(f"Section {section_index}: No valid audio segments")
-        return result
+        if len(valid_audio_paths) > 1:
+            await concatenate_audio_files(valid_audio_paths, str(section_audio_path))
+        elif len(valid_audio_paths) == 1:
+            shutil.copy(valid_audio_paths[0], str(section_audio_path))
+        else:
+            logger.warning(f"Section {section_index}: No valid audio segments")
+            return result
+    # else: whole-section mode - section_audio.mp3 already exists from _generate_audio_whole_section
 
     result["audio_path"] = str(section_audio_path)
     result["duration"] = total_duration

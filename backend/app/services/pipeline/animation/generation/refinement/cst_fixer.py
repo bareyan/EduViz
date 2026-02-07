@@ -831,6 +831,181 @@ class TextZIndexBoostTransformer(cst.CSTTransformer):
     def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.CSTNode:
         return updated_node.with_changes(body=self._process_body(updated_node.body))
 
+
+class StrokeOpacityClampTransformer(cst.CSTTransformer):
+    """Reduce stroke dominance for a specific line/path variable."""
+
+    def __init__(self, target_var: str, max_opacity: float = 0.35) -> None:
+        self.target_var = target_var
+        self.max_opacity = max_opacity
+        self.count = 0
+
+    def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.CSTNode:
+        if not isinstance(updated_node.func, cst.Attribute):
+            return updated_node
+        if not isinstance(updated_node.func.value, cst.Name):
+            return updated_node
+        if updated_node.func.value.value != self.target_var:
+            return updated_node
+        if not isinstance(updated_node.func.attr, cst.Name):
+            return updated_node
+        if updated_node.func.attr.value != "set_stroke":
+            return updated_node
+
+        changed = False
+        new_args: List[cst.Arg] = []
+        has_opacity = False
+        for arg in updated_node.args:
+            if arg.keyword and isinstance(arg.keyword, cst.Name) and arg.keyword.value == "opacity":
+                has_opacity = True
+                val = self._to_float(arg.value)
+                if val is None or val > self.max_opacity:
+                    arg = arg.with_changes(value=cst.Float(value=f"{self.max_opacity:.2f}"))
+                    changed = True
+            new_args.append(arg)
+
+        if not has_opacity:
+            if new_args:
+                last = new_args[-1]
+                if last.comma is cst.MaybeSentinel.DEFAULT:
+                    new_args[-1] = last.with_changes(
+                        comma=cst.Comma(whitespace_after=cst.SimpleWhitespace(" "))
+                    )
+            new_args.append(
+                cst.Arg(keyword=cst.Name("opacity"), value=cst.Float(value=f"{self.max_opacity:.2f}"))
+            )
+            changed = True
+
+        if not changed:
+            return updated_node
+        self.count += 1
+        return updated_node.with_changes(args=new_args)
+
+    def _process_body(self, body: Sequence[cst.BaseStatement]) -> List[cst.BaseStatement]:
+        new_body: List[cst.BaseStatement] = []
+        for stmt in body:
+            new_body.append(stmt)
+            if not m.matches(
+                stmt,
+                m.SimpleStatementLine(
+                    body=[m.Assign(targets=[m.AssignTarget(target=m.Name(self.target_var))])]
+                ),
+            ):
+                continue
+
+            clamp_stmt = cst.SimpleStatementLine(
+                body=[
+                    cst.Expr(
+                        value=cst.Call(
+                            func=cst.Attribute(
+                                value=cst.Name(self.target_var),
+                                attr=cst.Name("set_stroke"),
+                            ),
+                            args=[
+                                cst.Arg(
+                                    keyword=cst.Name("opacity"),
+                                    value=cst.Float(value=f"{self.max_opacity:.2f}"),
+                                )
+                            ],
+                        )
+                    )
+                ],
+                trailing_whitespace=cst.TrailingWhitespace(
+                    comment=cst.Comment(value="# auto-fix: de-emphasize stroke crossing text")
+                ),
+            )
+            new_body.append(clamp_stmt)
+            self.count += 1
+        return new_body
+
+    def leave_IndentedBlock(self, original_node: cst.IndentedBlock, updated_node: cst.IndentedBlock) -> cst.CSTNode:
+        return updated_node.with_changes(body=self._process_body(updated_node.body))
+
+    def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.CSTNode:
+        return updated_node.with_changes(body=self._process_body(updated_node.body))
+
+    @staticmethod
+    def _to_float(node: cst.BaseExpression) -> Optional[float]:
+        if isinstance(node, cst.Integer):
+            return float(node.value)
+        if isinstance(node, cst.Float):
+            return float(node.value)
+        return None
+
+
+class TextStrokeAvoidanceTransformer(cst.CSTTransformer):
+    """Nudge text away from crossing strokes as a fallback."""
+
+    def __init__(self, target_var: str, direction: str = "DOWN", distance: float = 0.35) -> None:
+        self.target_var = target_var
+        self.direction = direction
+        self.distance = distance
+        self.count = 0
+
+    def _is_shift_stmt(self, stmt: Optional[cst.BaseStatement]) -> bool:
+        if stmt is None:
+            return False
+        return m.matches(
+            stmt,
+            m.SimpleStatementLine(
+                body=[
+                    m.Expr(
+                        value=m.Call(
+                            func=m.Attribute(value=m.Name(self.target_var), attr=m.Name("shift"))
+                        )
+                    )
+                ]
+            ),
+        )
+
+    def _process_body(self, body: Sequence[cst.BaseStatement]) -> List[cst.BaseStatement]:
+        new_body: List[cst.BaseStatement] = []
+        for idx, stmt in enumerate(body):
+            new_body.append(stmt)
+            if not m.matches(
+                stmt,
+                m.SimpleStatementLine(
+                    body=[m.Assign(targets=[m.AssignTarget(target=m.Name(self.target_var))])]
+                ),
+            ):
+                continue
+
+            next_stmt = body[idx + 1] if idx + 1 < len(body) else None
+            if self._is_shift_stmt(next_stmt):
+                continue
+
+            shift_stmt = cst.SimpleStatementLine(
+                body=[
+                    cst.Expr(
+                        value=cst.Call(
+                            func=cst.Attribute(value=cst.Name(self.target_var), attr=cst.Name("shift")),
+                            args=[
+                                cst.Arg(
+                                    value=cst.BinaryOperation(
+                                        left=cst.Name(self.direction),
+                                        operator=cst.Multiply(),
+                                        right=cst.Float(value=f"{self.distance:.2f}"),
+                                    )
+                                )
+                            ],
+                        )
+                    )
+                ],
+                trailing_whitespace=cst.TrailingWhitespace(
+                    comment=cst.Comment(value="# auto-fix: move text away from crossing stroke")
+                ),
+            )
+            new_body.append(shift_stmt)
+            self.count += 1
+        return new_body
+
+    def leave_IndentedBlock(self, original_node: cst.IndentedBlock, updated_node: cst.IndentedBlock) -> cst.CSTNode:
+        return updated_node.with_changes(body=self._process_body(updated_node.body))
+
+    def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.CSTNode:
+        return updated_node.with_changes(body=self._process_body(updated_node.body))
+
+
 class CSTFixer:
     """Manages deterministic code fixes using LibCST."""
 
@@ -1019,14 +1194,45 @@ class CSTFixer:
                 target_text = details.get("text", "")
                 var_name = self._find_variable_for_text(module, target_text) if target_text else None
                 if not var_name:
-                    return None
+                    # Fallback to any text-like assignment if exact fragment lookup failed.
+                    var_name = (
+                        self._find_variable_for_type(module, "MathTex")
+                        or self._find_variable_for_type(module, "Tex")
+                        or self._find_variable_for_type(module, "Text")
+                    )
 
-                transformer = TextZIndexBoostTransformer(
-                    target_var=var_name,
-                    z_index=10,
-                )
-                updated_module = module.visit(transformer)
-                if updated_module.code != code:
+                updated_module = module
+                changed = False
+                if var_name:
+                    text_transformer = TextZIndexBoostTransformer(
+                        target_var=var_name,
+                        z_index=10,
+                    )
+                    updated_module = updated_module.visit(text_transformer)
+                    changed = changed or text_transformer.count > 0
+
+                obj_type = details.get("object_type", "")
+                if obj_type:
+                    stroke_var = self._find_variable_for_type(updated_module, obj_type)
+                    if stroke_var and stroke_var != var_name:
+                        stroke_transformer = StrokeOpacityClampTransformer(
+                            target_var=stroke_var,
+                            max_opacity=0.35,
+                        )
+                        updated_module = updated_module.visit(stroke_transformer)
+                        changed = changed or stroke_transformer.count > 0
+
+                if var_name and not changed:
+                    # Last-resort fallback if existing z-index/stroke settings already present.
+                    nudge_transformer = TextStrokeAvoidanceTransformer(
+                        target_var=var_name,
+                        direction="DOWN",
+                        distance=0.35,
+                    )
+                    updated_module = updated_module.visit(nudge_transformer)
+                    changed = changed or nudge_transformer.count > 0
+
+                if changed and updated_module.code != code:
                     return updated_module.code
                 return None
 
@@ -1072,15 +1278,8 @@ class CSTFixer:
                 if not isinstance(node.value, cst.Call):
                     return
 
-                func = node.value.func
-                if isinstance(func, cst.Name) and func.value == self.expected_type:
-                    self.found = target.value
-                    return
-                if (
-                    isinstance(func, cst.Attribute)
-                    and isinstance(func.attr, cst.Name)
-                    and func.attr.value == self.expected_type
-                ):
+                constructor_name, _ = CSTFixer._unwrap_constructor_call(node.value)
+                if constructor_name == self.expected_type:
                     self.found = target.value
 
         visitor = _FindByTypeVisitor(obj_type)
@@ -1110,18 +1309,13 @@ class CSTFixer:
                 if not isinstance(node.value, cst.Call):
                     return
 
-                func = node.value.func
-                func_name = None
-                if isinstance(func, cst.Name):
-                    func_name = func.value
-                elif isinstance(func, cst.Attribute) and isinstance(func.attr, cst.Name):
-                    func_name = func.attr.value
+                func_name, constructor_call = CSTFixer._unwrap_constructor_call(node.value)
                 if func_name not in ("Text", "Tex", "MathTex"):
                     return
-                if not node.value.args:
+                if not constructor_call.args:
                     return
 
-                for arg in node.value.args:
+                for arg in constructor_call.args:
                     if isinstance(arg.value, cst.SimpleString) and self.text_needle in arg.value.value:
                         self.found = target.value
                         return
@@ -1129,3 +1323,20 @@ class CSTFixer:
         visitor = _FindByTextVisitor(needle)
         module.visit(visitor)
         return visitor.found
+
+    @staticmethod
+    def _unwrap_constructor_call(call: cst.Call) -> Tuple[Optional[str], cst.Call]:
+        """Resolve chained calls like Text(...).scale(...).next_to(...)."""
+        current = call
+        while (
+            isinstance(current.func, cst.Attribute)
+            and isinstance(current.func.value, cst.Call)
+        ):
+            current = current.func.value
+
+        func = current.func
+        if isinstance(func, cst.Name):
+            return func.value, current
+        if isinstance(func, cst.Attribute) and isinstance(func.attr, cst.Name):
+            return func.attr.value, current
+        return None, current
