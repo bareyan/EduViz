@@ -27,6 +27,16 @@ class SectionGenerator:
             if use_pdf_page_slices is not None
             else os.getenv("ENABLE_SECTION_PDF_SLICES", "").strip().lower() in {"1", "true", "yes", "on"}
         )
+        self.min_pages_for_pdf_slicing = self._read_min_pages_for_slicing()
+
+    @staticmethod
+    def _read_min_pages_for_slicing() -> int:
+        raw = os.getenv("SECTION_PDF_SLICE_MIN_PAGES", "3").strip()
+        try:
+            value = int(raw)
+        except Exception:
+            return 3
+        return max(1, value)
 
     async def generate_sections(
         self,
@@ -88,13 +98,29 @@ class SectionGenerator:
         initial_content_limit = min(25000, max(15000, len(content) // 2)) if content else 0
         initial_content_excerpt = content[:initial_content_limit] if content else ""
 
+        allow_pdf_page_slices = (
+            bool(pdf_path)
+            and bool(self.use_pdf_page_slices)
+            and bool(artifacts_dir)
+            and (
+                total_pages is None
+                or total_pages >= self.min_pages_for_pdf_slicing
+            )
+        )
+
         pdf_slices_dir = None
         full_pdf_part = None
-        if pdf_path and not self.use_pdf_page_slices:
+        if pdf_path and not allow_pdf_page_slices:
             full_pdf_part = self.base.build_pdf_part(pdf_path)
-        if self.use_pdf_page_slices and pdf_path and artifacts_dir:
+        if self.use_pdf_page_slices and pdf_path and not allow_pdf_page_slices:
+            print(
+                f"[SectionGen] PDF slicing bypassed for {total_pages or 'unknown'} pages "
+                f"(min_pages={self.min_pages_for_pdf_slicing}); using full PDF attachment."
+            )
+        if allow_pdf_page_slices and pdf_path and artifacts_dir:
             pdf_slices_dir = Path(artifacts_dir) / "pdf_slices"
             pdf_slices_dir.mkdir(parents=True, exist_ok=True)
+        slice_cache: Dict[tuple, tuple] = {}
 
         for section_idx, section_outline in enumerate(sections_outline):
             # Determine section position and context
@@ -146,20 +172,30 @@ class SectionGenerator:
                     source_pages = {"start": 1, "end": total_pages} if total_pages else None
 
                 slice_path = None
-                if self.use_pdf_page_slices and pdf_slices_dir and page_start and page_end:
-                    slice_filename = f"section_{section_idx + 1}_{page_start}-{page_end}.pdf"
-                    slice_path = self.base.slice_pdf_pages(
-                        source_path=pdf_path,
-                        start_page=page_start,
-                        end_page=page_end,
-                        output_path=str(pdf_slices_dir / slice_filename)
-                    )
+                if allow_pdf_page_slices and pdf_slices_dir and page_start and page_end:
+                    range_key = (page_start, page_end)
+                    cached = slice_cache.get(range_key)
+                    if cached:
+                        slice_path, pdf_part = cached
+                    else:
+                        slice_filename = f"pages_{page_start}-{page_end}.pdf"
+                        slice_path = self.base.slice_pdf_pages(
+                            source_path=pdf_path,
+                            start_page=page_start,
+                            end_page=page_end,
+                            output_path=str(pdf_slices_dir / slice_filename)
+                        )
+                        if slice_path:
+                            pdf_part = self.base.build_pdf_part(slice_path)
+                            if pdf_part:
+                                slice_cache[range_key] = (slice_path, pdf_part)
                 if slice_path:
                     source_pdf_path = slice_path
-                    pdf_part = self.base.build_pdf_part(slice_path)
                 else:
                     source_pdf_path = pdf_path
-                    pdf_part = full_pdf_part if full_pdf_part is not None else self.base.build_pdf_part(pdf_path)
+                    if full_pdf_part is None:
+                        full_pdf_part = self.base.build_pdf_part(pdf_path)
+                    pdf_part = full_pdf_part
 
             # Build prompt for this section
             prompt = self._build_sequential_prompt(

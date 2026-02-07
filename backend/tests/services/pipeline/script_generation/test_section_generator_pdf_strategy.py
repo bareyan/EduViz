@@ -6,21 +6,21 @@ from pathlib import Path
 from app.services.pipeline.script_generation.section_generator import SectionGenerator
 
 
-def _outline():
+def _section(section_id: str, page_start: int = 2, page_end: int = 4):
     return {
-        "sections_outline": [
-            {
-                "id": "s1",
-                "title": "Section 1",
-                "section_type": "content",
-                "content_to_cover": "Topic details",
-                "key_points": ["A", "B"],
-                "estimated_duration_seconds": 30,
-                "page_start": 2,
-                "page_end": 4,
-            }
-        ]
+        "id": section_id,
+        "title": f"Section {section_id}",
+        "section_type": "content",
+        "content_to_cover": "Topic details",
+        "key_points": ["A", "B"],
+        "estimated_duration_seconds": 30,
+        "page_start": page_start,
+        "page_end": page_end,
     }
+
+
+def _outline(sections=None):
+    return {"sections_outline": sections or [_section("s1")]}
 
 
 def _mock_base():
@@ -87,5 +87,54 @@ async def test_pdf_strategy_can_opt_in_to_page_slicing():
     assert len(sections) == 1
     assert sections[0]["source_pdf_path"] == "/tmp/slice.pdf"
     assert base.slice_pdf_pages.call_count == 1
+    (artifacts_dir / "pdf_slices").rmdir()
+    artifacts_dir.rmdir()
+
+
+@pytest.mark.asyncio
+async def test_pdf_strategy_bypasses_slicing_for_small_pdfs():
+    base = _mock_base()
+    generator = SectionGenerator(base=base, use_pdf_page_slices=True)
+    artifacts_dir = Path("test_artifacts_pdf_strategy_small_pdf")
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    sections = await generator.generate_sections(
+        outline=_outline(sections=[_section("s1"), _section("s2")]),
+        content="",
+        language_name="English",
+        language_instruction="Generate in English",
+        pdf_path="C:/doc.pdf",
+        total_pages=2,
+        artifacts_dir=str(artifacts_dir),
+    )
+
+    assert len(sections) == 2
+    assert sections[0]["source_pdf_path"] == "C:/doc.pdf"
+    assert base.slice_pdf_pages.call_count == 0
+    assert base.build_pdf_part.call_count == 1
+    artifacts_dir.rmdir()
+
+
+@pytest.mark.asyncio
+async def test_pdf_strategy_reuses_cached_slice_for_same_page_range():
+    base = _mock_base()
+    generator = SectionGenerator(base=base, use_pdf_page_slices=True)
+    artifacts_dir = Path("test_artifacts_pdf_strategy_cache")
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    sections = await generator.generate_sections(
+        outline=_outline(sections=[_section("s1", 2, 4), _section("s2", 2, 4)]),
+        content="",
+        language_name="English",
+        language_instruction="Generate in English",
+        pdf_path="C:/doc.pdf",
+        total_pages=10,
+        artifacts_dir=str(artifacts_dir),
+    )
+
+    assert len(sections) == 2
+    assert base.slice_pdf_pages.call_count == 1
+    # One build for the slice; no repeated full-PDF attachments.
+    assert base.build_pdf_part.call_count == 1
     (artifacts_dir / "pdf_slices").rmdir()
     artifacts_dir.rmdir()
