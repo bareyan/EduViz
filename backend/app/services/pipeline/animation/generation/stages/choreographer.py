@@ -12,7 +12,12 @@ from typing import Dict, Any, Optional
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig
 
-from ...config import BASE_GENERATION_TEMPERATURE, CHOREOGRAPHY_MAX_OUTPUT_TOKENS
+from ...config import (
+    BASE_GENERATION_TEMPERATURE,
+    CHOREOGRAPHY_MAX_OUTPUT_TOKENS,
+    OVERVIEW_CHOREOGRAPHY_MAX_OUTPUT_TOKENS,
+    OVERVIEW_CHOREOGRAPHY_TIMEOUT,
+)
 from ..constants import DEFAULT_THEME, DEFAULT_VISUAL_HINTS, DEFAULT_SECTION_TITLE, DEFAULT_LANGUAGE
 from ...prompts import (
     CHOREOGRAPHER_SYSTEM,
@@ -84,15 +89,21 @@ class Choreographer:
             language_name=CodeFormatter.get_language_name(section.get("language", DEFAULT_LANGUAGE))
         )
         
+        is_overview = str(section.get("video_mode", "comprehensive")).strip().lower() == "overview"
+
         result = await self.engine.generate(
             prompt=prompt,
             system_prompt=CHOREOGRAPHER_SYSTEM.template,
             config=PromptConfig(
-                enable_thinking=True,
-                timeout=300.0,
+                enable_thinking=not is_overview,
+                timeout=OVERVIEW_CHOREOGRAPHY_TIMEOUT if is_overview else 300.0,
                 temperature=BASE_GENERATION_TEMPERATURE,
                 response_schema=CHOREOGRAPHY_SCHEMA,
-                max_output_tokens=CHOREOGRAPHY_MAX_OUTPUT_TOKENS
+                max_output_tokens=(
+                    OVERVIEW_CHOREOGRAPHY_MAX_OUTPUT_TOKENS
+                    if is_overview
+                    else CHOREOGRAPHY_MAX_OUTPUT_TOKENS
+                ),
             ),
             context=dict(context or {}, stage="choreography")
         )

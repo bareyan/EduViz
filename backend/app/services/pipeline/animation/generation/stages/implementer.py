@@ -12,7 +12,12 @@ from typing import Dict, Any, Optional
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig
 
-from ...config import BASE_GENERATION_TEMPERATURE, IMPLEMENTATION_MAX_OUTPUT_TOKENS
+from ...config import (
+    BASE_GENERATION_TEMPERATURE,
+    IMPLEMENTATION_MAX_OUTPUT_TOKENS,
+    OVERVIEW_IMPLEMENTATION_MAX_OUTPUT_TOKENS,
+    OVERVIEW_IMPLEMENTATION_TIMEOUT,
+)
 from ..constants import DEFAULT_THEME, DEFAULT_LANGUAGE
 from ...prompts import IMPLEMENTER_SYSTEM, FULL_IMPLEMENTATION_USER
 from ..core import clean_code, ImplementationError
@@ -75,11 +80,17 @@ class Implementer:
             language_name=CodeFormatter.get_language_name(section.get("language", DEFAULT_LANGUAGE))
         )
         
+        is_overview = str(section.get("video_mode", "comprehensive")).strip().lower() == "overview"
+
         config = PromptConfig(
-            enable_thinking=True,
-            timeout=300.0,
+            enable_thinking=not is_overview,
+            timeout=OVERVIEW_IMPLEMENTATION_TIMEOUT if is_overview else 300.0,
             temperature=temperature or BASE_GENERATION_TEMPERATURE,
-            max_output_tokens=IMPLEMENTATION_MAX_OUTPUT_TOKENS
+            max_output_tokens=(
+                OVERVIEW_IMPLEMENTATION_MAX_OUTPUT_TOKENS
+                if is_overview
+                else IMPLEMENTATION_MAX_OUTPUT_TOKENS
+            ),
         )
         
         result = await self.engine.generate(

@@ -9,6 +9,7 @@ Also handles narration segmentation and script validation (shared by all modes).
 
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -19,8 +20,13 @@ from .schema_filter import filter_section
 class SectionGenerator:
     """Generates script sections and post-processes narration."""
 
-    def __init__(self, base: BaseScriptGenerator):
+    def __init__(self, base: BaseScriptGenerator, use_pdf_page_slices: Optional[bool] = None):
         self.base = base
+        self.use_pdf_page_slices = (
+            use_pdf_page_slices
+            if use_pdf_page_slices is not None
+            else os.getenv("ENABLE_SECTION_PDF_SLICES", "").strip().lower() in {"1", "true", "yes", "on"}
+        )
 
     async def generate_sections(
         self,
@@ -83,7 +89,10 @@ class SectionGenerator:
         initial_content_excerpt = content[:initial_content_limit] if content else ""
 
         pdf_slices_dir = None
-        if pdf_path and artifacts_dir:
+        full_pdf_part = None
+        if pdf_path and not self.use_pdf_page_slices:
+            full_pdf_part = self.base.build_pdf_part(pdf_path)
+        if self.use_pdf_page_slices and pdf_path and artifacts_dir:
             pdf_slices_dir = Path(artifacts_dir) / "pdf_slices"
             pdf_slices_dir.mkdir(parents=True, exist_ok=True)
 
@@ -137,7 +146,7 @@ class SectionGenerator:
                     source_pages = {"start": 1, "end": total_pages} if total_pages else None
 
                 slice_path = None
-                if pdf_slices_dir and page_start and page_end:
+                if self.use_pdf_page_slices and pdf_slices_dir and page_start and page_end:
                     slice_filename = f"section_{section_idx + 1}_{page_start}-{page_end}.pdf"
                     slice_path = self.base.slice_pdf_pages(
                         source_path=pdf_path,
@@ -150,7 +159,7 @@ class SectionGenerator:
                     pdf_part = self.base.build_pdf_part(slice_path)
                 else:
                     source_pdf_path = pdf_path
-                    pdf_part = self.base.build_pdf_part(pdf_path)
+                    pdf_part = full_pdf_part if full_pdf_part is not None else self.base.build_pdf_part(pdf_path)
 
             # Build prompt for this section
             prompt = self._build_sequential_prompt(

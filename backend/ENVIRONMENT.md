@@ -29,6 +29,7 @@ See `.env.advanced.example` for:
 - LLM logging options
 - Rate limiting and request-size caps
 - Cache size tuning
+- Optional PDF slicing behavior (`ENABLE_SECTION_PDF_SLICES`)
 
 ## Why This Split
 

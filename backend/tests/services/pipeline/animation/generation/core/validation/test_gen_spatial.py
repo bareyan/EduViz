@@ -1,6 +1,9 @@
 
 import pytest
-from app.services.pipeline.animation.generation.core.validation.spatial import SpatialCheckInjector
+from app.services.pipeline.animation.generation.core.validation.spatial import (
+    INJECTED_METHOD,
+    SpatialCheckInjector,
+)
 
 def test_inject_adds_spatial_checks():
     injector = SpatialCheckInjector()
@@ -20,6 +23,7 @@ class MyScene(Scene):
     assert "filled_shape_dominance" in injected_code
     assert "text_edge_clipping" in injected_code
     assert "stroke_through_text" in injected_code
+    assert "long_equation_baseline_collision" in injected_code
 
 def test_inject_failure_returns_original():
     injector = SpatialCheckInjector()
@@ -40,3 +44,14 @@ def test_find_scene_class():
     code2 = "class Foo:\n def construct(self): pass"
     tree2 = injector._parse(code2)
     assert injector._find_scene_class(tree2).name == "Foo"
+
+
+def test_injected_text_oob_is_not_tolerated():
+    assert "TEXT_OVERSHOOT_THRESHOLD = 0.0" in INJECTED_METHOD
+    assert 'sev = "critical" if is_text_obj else "warning"' in INJECTED_METHOD
+
+
+def test_injected_stroke_crossing_is_active():
+    assert "STROKE_THROUGH_RATIO = 0.12" in INJECTED_METHOD
+    assert "def _stroke_path_hits_text" in INJECTED_METHOD
+    assert "path_crosses_text = _stroke_path_hits_text(t, o)" in INJECTED_METHOD

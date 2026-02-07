@@ -42,7 +42,7 @@ def _perform_spatial_checks(self):
     # Text needs extra margin — partial letters at screen edge look broken
     TEXT_EDGE_MARGIN = 0.3
     # Lower threshold for text (0.1) vs general objects (0.3)
-    TEXT_OVERSHOOT_THRESHOLD = 0.1
+    TEXT_OVERSHOOT_THRESHOLD = 0.0
     GENERAL_OVERSHOOT_THRESHOLD = 0.3
     TEXT_CLIP_MARGIN = 0.12
     # Group/table size limits — anything larger is definitely broken
@@ -53,8 +53,8 @@ def _perform_spatial_checks(self):
     # by using non-reachable thresholds until we tighten logic.
     FILL_DOMINANCE_AREA_RATIO = 1.10
     FILL_DOMINANCE_OPACITY = 0.55
-    STROKE_THROUGH_RATIO = 1.10
-    STROKE_MAX_THICKNESS = 0.2
+    STROKE_THROUGH_RATIO = 0.12
+    STROKE_MAX_THICKNESS = 0.25
     STROKE_MIN_LENGTH = 0.6
 
     # ── Types we expect to overlap (not bugs) ──
@@ -120,6 +120,76 @@ def _perform_spatial_checks(self):
             return inter / smaller
         except Exception:
             return 0.0
+
+    def _overlap_metrics(m1, m2):
+        """Return overlap geometry to catch low-area but visibly bad text collisions."""
+        try:
+            c1, c2 = m1.get_center(), m2.get_center()
+            w1, h1 = m1.width, m1.height
+            w2, h2 = m2.width, m2.height
+            ix = max(0, min(c1[0] + w1 / 2, c2[0] + w2 / 2) - max(c1[0] - w1 / 2, c2[0] - w2 / 2))
+            iy = max(0, min(c1[1] + h1 / 2, c2[1] + h2 / 2) - max(c1[1] - h1 / 2, c2[1] - h2 / 2))
+            return ix, iy, min(w1, w2), min(h1, h2)
+        except Exception:
+            return 0.0, 0.0, 0.0, 0.0
+
+    def _bbox(m):
+        try:
+            c = m.get_center()
+            w, h = m.width, m.height
+            left = c[0] - w / 2
+            right = c[0] + w / 2
+            bottom = c[1] - h / 2
+            top = c[1] + h / 2
+            return left, right, bottom, top
+        except Exception:
+            return 0.0, 0.0, 0.0, 0.0
+
+    def _segment_hits_bbox(p1, p2, bbox, pad):
+        left, right, bottom, top = bbox
+        x1, y1 = p1[0], p1[1]
+        x2, y2 = p2[0], p2[1]
+
+        if max(x1, x2) < left - pad or min(x1, x2) > right + pad:
+            return False
+        if max(y1, y2) < bottom - pad or min(y1, y2) > top + pad:
+            return False
+
+        # Coarse sampling is enough for line/polygon stroke crossings.
+        for alpha in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0):
+            x = x1 + (x2 - x1) * alpha
+            y = y1 + (y2 - y1) * alpha
+            if (left - pad) <= x <= (right + pad) and (bottom - pad) <= y <= (top + pad):
+                return True
+        return False
+
+    def _stroke_path_hits_text(text_mobj, stroke_mobj):
+        try:
+            points = stroke_mobj.get_all_points()
+        except Exception:
+            return False
+        if points is None or len(points) < 2:
+            return False
+
+        try:
+            stroke_width = stroke_mobj.get_stroke_width() if hasattr(stroke_mobj, "get_stroke_width") else 0.0
+            # Convert pixel-ish stroke widths to a conservative world-space pad.
+            pad = max(0.05, min(0.20, float(stroke_width) * 0.01))
+        except Exception:
+            pad = 0.08
+
+        text_bbox = _bbox(text_mobj)
+        for i in range(len(points) - 1):
+            if _segment_hits_bbox(points[i], points[i + 1], text_bbox, pad):
+                return True
+
+        try:
+            is_closed = bool(stroke_mobj.is_closed()) if hasattr(stroke_mobj, "is_closed") else False
+        except Exception:
+            is_closed = False
+        if is_closed and _segment_hits_bbox(points[-1], points[0], text_bbox, pad):
+            return True
+        return False
 
     # ── Helper: family-tree relationship ──
     def _is_family(a, b):
@@ -272,7 +342,7 @@ def _perform_spatial_checks(self):
                 f"({x:.1f}, {y:.1f}), size {w:.1f}x{h:.1f}, "
                 f"overshoot {overshoot:.1f}"
             )
-            sev = "critical" if (is_text_obj and overshoot > 0.2) else "warning"
+            sev = "critical" if is_text_obj else "warning"
             conf = "high" if is_text_obj else "medium"
             new_issues.append(_issue(
                 sev, conf, "out_of_bounds", msg,
@@ -388,12 +458,24 @@ def _perform_spatial_checks(self):
                 continue
 
             ratio = _overlap_ratio(t1, t2)
-            if ratio < 0.05:
+            ix, iy, w_min, h_min = _overlap_metrics(t1, t2)
+            # For long formulas/equations, bbox area overlap can be deceptively small
+            # while a baseline collision is still visually severe.
+            baseline_collision = (
+                iy > 0.16 and
+                ix > 0.40 and
+                h_min > 0 and
+                w_min > 0 and
+                (iy / h_min) > 0.28
+            )
+            if ratio < 0.05 and not baseline_collision:
                 continue
 
             txt1 = _trunc(getattr(t1, "text", repr(t1)))
             txt2 = _trunc(getattr(t2, "text", repr(t2)))
             msg = f"Text overlap ({ratio:.0%}): '{txt1}' overlaps '{txt2}'"
+            if baseline_collision and ratio < 0.15:
+                msg += " [baseline collision]"
 
             if ratio > 0.4:
                 # CERTAIN: Major overlap — definitely needs fixing
@@ -410,6 +492,7 @@ def _perform_spatial_checks(self):
                     auto_fixable=True,
                     fix_hint="Visible text overlap: separate labels with .next_to()/.shift()",
                     text1=txt1, text2=txt2, overlap_ratio=round(ratio, 2),
+                    reason=("long_equation_baseline_collision" if baseline_collision else "bbox_overlap"),
                 ))
             else:
                 # UNCERTAIN: Small overlap (5-15%) — let Visual QC decide
@@ -418,6 +501,7 @@ def _perform_spatial_checks(self):
                     auto_fixable=True,
                     fix_hint="Minor text overlap: may need adjustment",
                     text1=txt1, text2=txt2, overlap_ratio=round(ratio, 2),
+                    reason=("long_equation_baseline_collision" if baseline_collision else "bbox_overlap"),
                 ))
 
     # ═══════════════════════════════════════════════════════════════════
@@ -516,6 +600,9 @@ def _perform_spatial_checks(self):
     LINE_TYPES = frozenset({
         "Line", "DashedLine", "Arrow", "DoubleArrow", "Vector", "NumberLine", "Underline"
     })
+    PATH_STROKE_TYPES = frozenset({
+        "Polygon", "Polyline", "Polygram", "VMobject"
+    })
 
     for t_idx, t in texts:
         for o_idx, o in objects:
@@ -536,8 +623,6 @@ def _perform_spatial_checks(self):
                 obj_type in LINE_TYPES
                 or (thin <= STROKE_MAX_THICKNESS and long_side >= STROKE_MIN_LENGTH)
             )
-            if not is_line_like:
-                continue
 
             try:
                 fill_op = o.get_fill_opacity() if hasattr(o, "get_fill_opacity") else 0.0
@@ -546,8 +631,23 @@ def _perform_spatial_checks(self):
             if fill_op is not None and fill_op > 0.2:
                 continue
 
+            try:
+                stroke_op = o.get_stroke_opacity() if hasattr(o, "get_stroke_opacity") else 1.0
+            except Exception:
+                stroke_op = 1.0
+            has_visible_stroke = stroke_op is None or stroke_op > 0.05
+
             ratio = _overlap_ratio(t, o)
-            if ratio < STROKE_THROUGH_RATIO:
+            path_crosses_text = False
+            if (
+                has_visible_stroke and
+                (obj_type in PATH_STROKE_TYPES or "Polygon" in obj_type or "Line" in obj_type)
+            ):
+                path_crosses_text = _stroke_path_hits_text(t, o)
+
+            if not is_line_like and not path_crosses_text:
+                continue
+            if ratio < STROKE_THROUGH_RATIO and not path_crosses_text:
                 continue
 
             txt = _text_label(t)
@@ -559,6 +659,7 @@ def _perform_spatial_checks(self):
                 object_type=obj_type,
                 text=txt,
                 overlap_ratio=round(ratio, 2),
+                path_crosses_text=path_crosses_text,
                 reason="stroke_through_text",
             ))
 

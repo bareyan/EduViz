@@ -53,3 +53,15 @@ async def test_choreographer_plan_includes_practical_visual_strategy(choreograph
     assert "PRACTICAL VISUAL PRIORITY" in prompt
     assert "graphs, tables, timelines" in prompt
     assert "Do not rely on Text/MathTex-only plans" in prompt
+
+
+@pytest.mark.asyncio
+async def test_choreographer_overview_uses_faster_llm_config(choreographer):
+    section = {"title": "Overview", "video_mode": "overview"}
+    choreographer.engine.generate = AsyncMock(return_value={"success": True, "response": "Plan"})
+
+    await choreographer.plan(section, 10.0)
+
+    config = choreographer.engine.generate.await_args.kwargs["config"]
+    assert config.enable_thinking is False
+    assert config.timeout <= 180.0
