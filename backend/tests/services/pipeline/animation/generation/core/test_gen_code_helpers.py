@@ -18,6 +18,12 @@ def test_get_theme_setup_code():
     # Just ensure it returns something valid from the config
     assert len(code) > 0
 
+
+def test_get_theme_setup_code_accepts_aliases():
+    code = get_theme_setup_code("3blue1brown")
+    assert isinstance(code, str)
+    assert len(code) > 0
+
 def test_clean_code_full_markdown():
     markdown = textwrap.dedent("""
     Here is the code:

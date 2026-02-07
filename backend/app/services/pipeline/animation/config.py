@@ -124,5 +124,31 @@ MAX_ERROR_MESSAGE_LENGTH = 2000  # Max chars for runtime error messages (prevent
 THEME_SETUP_CODES = {
     "light": '        self.camera.background_color = "#FFFFFF"\n',
     "3b1b": '        self.camera.background_color = "#171717"  # Slate dark\n',
-    "dark": '        self.camera.background_color = "#171717"  # Slate dark\n'
+    "dark": '        self.camera.background_color = "#171717"  # Slate dark\n',
+    # Frontend selectable styles
+    "clean": '        self.camera.background_color = "#FFFFFF"\n',
+    "dracula": '        self.camera.background_color = "#282A36"\n',
+    "solarized": '        self.camera.background_color = "#002B36"\n',
+    "nord": '        self.camera.background_color = "#2E3440"\n',
 }
+
+# Canonical style aliases to avoid accidental fallback to default theme.
+STYLE_ALIASES = {
+    "3blue1brown": "3b1b",
+    "3b1b": "3b1b",
+    "default": "3b1b",
+    "dark": "3b1b",
+    "light": "clean",
+    "clean": "clean",
+    "dracula": "dracula",
+    "solarized": "solarized",
+    "nord": "nord",
+}
+
+
+def normalize_theme_style(style: str) -> str:
+    """Normalize external style IDs to canonical theme keys."""
+    raw = (style or "").strip().lower()
+    if not raw:
+        return "3b1b"
+    return STYLE_ALIASES.get(raw, raw if raw in THEME_SETUP_CODES else "3b1b")

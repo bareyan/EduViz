@@ -152,6 +152,31 @@ class TestGenerationUseCase:
             )
 
     @pytest.mark.asyncio
+    async def test_run_generation_passes_focus_and_context(self, use_case):
+        request = GenerationRequest(
+            file_id="file-1",
+            pipeline="default",
+            analysis_id="anal-1",
+            selected_topics=[],
+            content_focus="practice",
+            document_context="series",
+        )
+        background_tasks = BackgroundTasks()
+
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+             patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
+            mock_vg = mock_vg_class.return_value
+            mock_vg.generate_video = AsyncMock(return_value={"status": "failed", "error": "x"})
+
+            use_case.start_generation(request, background_tasks)
+            task_func = background_tasks.tasks[0].func
+            await task_func()
+
+            kwargs = mock_vg.generate_video.await_args.kwargs
+            assert kwargs["content_focus"] == "practice"
+            assert kwargs["document_context"] == "series"
+
+    @pytest.mark.asyncio
     async def test_run_generation_execution_failure(self, use_case):
         """Test the actual execution of the background task (failure case)."""
         request = GenerationRequest(

@@ -264,7 +264,9 @@ CONTENT FOCUS: FOLLOW DOCUMENT STRUCTURE
 
     def _build_context_instructions(self, document_context: str) -> str:
         """Build context instructions based on document_context setting."""
-        if document_context == "standalone":
+        context = (document_context or "auto").strip().lower()
+
+        if context == "standalone":
             return (
                 """
 DOCUMENT CONTEXT: STANDALONE
@@ -273,7 +275,7 @@ DOCUMENT CONTEXT: STANDALONE
 - Don't assume viewers have seen related content
 """
             )
-        if document_context == "part-of-series":
+        if context in {"part-of-series", "series"}:
             return (
                 """
 DOCUMENT CONTEXT: PART OF A SERIES
@@ -410,7 +412,7 @@ Respond with ONLY valid JSON:
 {{
     "document_analysis": {{
         "content_type": "[theoretical|practical|factual|problem-solving|mixed]",
-        "content_context": "[standalone|part-of-series]",
+        "content_context": "[standalone|series]",
         "total_theorems": [count],
         "total_proofs": [count],
         "total_definitions": [count],

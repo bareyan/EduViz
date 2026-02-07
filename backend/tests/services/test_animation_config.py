@@ -31,6 +31,8 @@ from app.services.pipeline.animation.config import (
     VISION_QC_TIMEOUT,
     VISION_QC_MAX_OUTPUT_TOKENS,
     VISION_QC_FRAME_DIR_NAME,
+    THEME_SETUP_CODES,
+    normalize_theme_style,
 )
 
 
@@ -186,3 +188,18 @@ class TestConfigConsistency:
         # After max attempts, temperature should still be valid
         max_temp = BASE_GENERATION_TEMPERATURE + (MAX_SURGICAL_FIX_ATTEMPTS * TEMPERATURE_INCREMENT)
         assert max_temp <= 2.0  # Max allowed temperature for most LLMs
+
+
+class TestThemeStyleNormalization:
+    def test_frontend_styles_are_supported(self):
+        for style in ["3b1b", "clean", "dracula", "solarized", "nord"]:
+            normalized = normalize_theme_style(style)
+            assert normalized in THEME_SETUP_CODES
+
+    def test_aliases_normalize_to_canonical(self):
+        assert normalize_theme_style("3blue1brown") == "3b1b"
+        assert normalize_theme_style("default") == "3b1b"
+        assert normalize_theme_style("light") == "clean"
+
+    def test_unknown_style_falls_back_to_default(self):
+        assert normalize_theme_style("unknown-style") == "3b1b"

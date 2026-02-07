@@ -110,3 +110,25 @@ class TestVideoGenerator:
         assert not (job_dir / "sections").exists()
         assert not (job_dir / "script.json").exists()
         assert not (job_dir / "concat_list.txt").exists()
+
+    async def test_generate_script_forwards_focus_and_context(self, generator):
+        """Script generation should receive content focus and document context."""
+        tracker = MagicMock()
+        tracker.report_stage_progress = MagicMock()
+
+        generator.script_generator.generate_script = AsyncMock(return_value={"script": {"sections": []}})
+
+        await generator._generate_script(
+            job_id="job-ctx",
+            material_path="source.pdf",
+            language="en",
+            video_mode="comprehensive",
+            content_focus="theory",
+            document_context="series",
+            tracker=tracker,
+            artifacts_dir="artifacts",
+        )
+
+        kwargs = generator.script_generator.generate_script.await_args.kwargs
+        assert kwargs["content_focus"] == "theory"
+        assert kwargs["document_context"] == "series"

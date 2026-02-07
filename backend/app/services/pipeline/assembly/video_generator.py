@@ -10,12 +10,14 @@ from pathlib import Path
 from ..content_analysis import MaterialAnalyzer
 from ..script_generation import ScriptGenerator
 from ..animation import ManimGenerator
+from ..animation.config import normalize_theme_style
 from ..audio import TTSEngine
 
 from .processor import VideoProcessor
 from .progress import ProgressTracker
 from .orchestrator import SectionOrchestrator
 from app.core import get_logger, set_job_id, LogTimer
+from app.services.pipeline.animation.generation.constants import DEFAULT_THEME_CODE
 
 logger = get_logger(__name__, component="video_generator")
 
@@ -88,9 +90,11 @@ class VideoGenerator:
         job_id: str,
         material_path: Optional[str] = None,
         voice: str = "en-US-Neural2-J",
-        style: str = "default",
+        style: str = DEFAULT_THEME_CODE,
         language: str = "en",
         video_mode: str = "comprehensive",
+        content_focus: str = "as_document",
+        document_context: str = "auto",
         resume: bool = False,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         max_concurrent_sections: int = 3
@@ -114,6 +118,8 @@ class VideoGenerator:
             style: Style identifier for TTS
             language: Language code (e.g., "en", "es")
             video_mode: "comprehensive" for detailed videos, "overview" for short summaries
+            content_focus: "practice", "theory", or "as_document"
+            document_context: "standalone", "series", or "auto"
             resume: Whether to resume from existing progress
             progress_callback: Optional callback for progress updates
             max_concurrent_sections: Maximum sections to process in parallel
@@ -140,13 +146,17 @@ class VideoGenerator:
                 sections_dir.mkdir(parents=True, exist_ok=True)
 
                 tracker = ProgressTracker(job_id, self.output_base_dir, progress_callback)
+                style = normalize_theme_style(style)
 
                 logger.info("Starting video generation", extra={
                     "job_id": job_id,
                     "resume": resume,
                     "voice": voice,
+                    "style": style,
                     "language": language,
                     "video_mode": video_mode,
+                    "content_focus": content_focus,
+                    "document_context": document_context,
                     "max_concurrent": max_concurrent_sections
                 })
 
@@ -176,6 +186,8 @@ class VideoGenerator:
                         material_path=material_path,
                         language=language,
                         video_mode=video_mode,
+                        content_focus=content_focus,
+                        document_context=document_context,
                         tracker=tracker,
                         artifacts_dir=str(sections_dir),
                     )
@@ -293,6 +305,8 @@ class VideoGenerator:
         material_path: Optional[str],
         language: str,
         video_mode: str,
+        content_focus: str,
+        document_context: str,
         tracker: ProgressTracker,
         artifacts_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -306,6 +320,8 @@ class VideoGenerator:
             material_path: Path to source material
             language: Language code
             video_mode: "comprehensive" or "overview"
+            content_focus: "practice", "theory", or "as_document"
+            document_context: "standalone", "series", or "auto"
             tracker: Progress tracker instance
         """
         if not material_path:
@@ -315,7 +331,9 @@ class VideoGenerator:
 
         logger.info("Generating script from material", extra={
             "material_path": material_path,
-            "video_mode": video_mode
+            "video_mode": video_mode,
+            "content_focus": content_focus,
+            "document_context": document_context,
         })
         
         # Generate script directly from material
@@ -325,6 +343,8 @@ class VideoGenerator:
             topic={"title": "Educational Content", "description": ""},
             language=language,
             video_mode=video_mode,
+            content_focus=content_focus,
+            document_context=document_context,
             artifacts_dir=artifacts_dir,
         )
 

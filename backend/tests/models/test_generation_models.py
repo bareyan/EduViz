@@ -7,7 +7,7 @@ def test_generation_request_defaults():
         analysis_id="a1",
         selected_topics=[0, 1]
     )
-    assert req.style == "3blue1brown"
+    assert req.style == "3b1b"
     assert req.max_video_length == 20
     assert req.voice == "en-US-GuyNeural"
     assert req.pipeline == "default"

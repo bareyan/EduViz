@@ -12,6 +12,7 @@ from app.services.infrastructure.parsing.code_parser import (
 from ...config import (
     CONSTRUCT_INDENT_SPACES, 
     THEME_SETUP_CODES,
+    normalize_theme_style,
 )
 from ..constants import DEFAULT_THEME_CODE
 
@@ -24,7 +25,8 @@ def get_theme_setup_code(style: str = DEFAULT_THEME_CODE) -> str:
     Returns:
         A formatted string of Python code to be injected into construct().
     """
-    return THEME_SETUP_CODES.get(style, THEME_SETUP_CODES[DEFAULT_THEME_CODE])
+    normalized = normalize_theme_style(style)
+    return THEME_SETUP_CODES.get(normalized, THEME_SETUP_CODES[DEFAULT_THEME_CODE])
 
 
 def clean_code(code_text: Optional[str]) -> str:

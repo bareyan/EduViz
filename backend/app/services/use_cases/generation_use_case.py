@@ -15,6 +15,7 @@ from fastapi import HTTPException, BackgroundTasks
 from app.config import OUTPUT_DIR
 from app.models import GenerationRequest, JobResponse, ResumeInfo
 from app.services.pipeline.assembly import VideoGenerator
+from app.services.pipeline.animation.config import normalize_theme_style
 from app.services.infrastructure.orchestration import get_job_manager, JobStatus
 from app.core import find_uploaded_file
 
@@ -28,6 +29,23 @@ class GenerationUseCase:
     def _validate_pipeline(self, pipeline_name: str) -> str:
         # Only default pipeline is available now
         return "default"
+
+    @staticmethod
+    def _normalize_content_focus(content_focus: str) -> str:
+        allowed = {"practice", "theory", "as_document"}
+        value = (content_focus or "").strip().lower()
+        return value if value in allowed else "as_document"
+
+    @staticmethod
+    def _normalize_document_context(document_context: str) -> str:
+        value = (document_context or "").strip().lower()
+        aliases = {
+            "part-of-series": "series",
+            "series": "series",
+            "standalone": "standalone",
+            "auto": "auto",
+        }
+        return aliases.get(value, "auto")
 
     def _select_job(self, resume_job_id: Optional[str]) -> tuple[str, bool]:
         """Create or reuse a job id; returns (job_id, resume_mode)."""
@@ -117,9 +135,11 @@ class GenerationUseCase:
                     job_id=job_id,
                     material_path=file_path,
                     voice=request.voice,
-                    style=request.style,
+                    style=normalize_theme_style(request.style),
                     language=request.language,
                     video_mode=request.video_mode,
+                    content_focus=self._normalize_content_focus(request.content_focus),
+                    document_context=self._normalize_document_context(request.document_context),
                     resume=resume_mode,
                     progress_callback=self._get_progress_callback(job_id),
                 )
