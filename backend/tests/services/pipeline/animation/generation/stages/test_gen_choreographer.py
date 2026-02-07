@@ -31,3 +31,25 @@ async def test_choreographer_plan_failure(choreographer):
         await choreographer.plan(section, 5.0)
     
     assert "Planning failed: Model Error" in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_choreographer_plan_includes_practical_visual_strategy(choreographer):
+    section = {
+        "title": "Applied Regression",
+        "narration": "Let's solve a concrete regression task.",
+        "content_focus": "practice",
+        "video_mode": "comprehensive",
+        "document_context": "standalone",
+    }
+    choreographer.engine.generate = AsyncMock(return_value={
+        "success": True,
+        "response": "Detailed Plan"
+    })
+
+    await choreographer.plan(section, 30.0)
+
+    prompt = choreographer.engine.generate.await_args.kwargs["prompt"]
+    assert "PRACTICAL VISUAL PRIORITY" in prompt
+    assert "graphs, tables, timelines" in prompt
+    assert "Do not rely on Text/MathTex-only plans" in prompt

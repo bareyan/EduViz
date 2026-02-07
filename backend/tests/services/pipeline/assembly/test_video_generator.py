@@ -133,3 +133,35 @@ class TestVideoGenerator:
         kwargs = generator.script_generator.generate_script.await_args.kwargs
         assert kwargs["content_focus"] == "theory"
         assert kwargs["document_context"] == "series"
+
+    async def test_generate_video_propagates_focus_context_to_sections(self, generator):
+        """Section payload should carry generation intent into animation pipeline."""
+        with patch.object(
+            generator,
+            "_generate_script",
+            AsyncMock(
+                return_value={
+                    "sections": [{"title": "S1", "narration": "N1"}],
+                }
+            ),
+        ), patch("app.services.pipeline.assembly.video_generator.SectionOrchestrator") as mock_orch_class:
+            mock_orch = mock_orch_class.return_value
+            mock_orch.process_sections_parallel = AsyncMock(return_value=[{}])
+            mock_orch.aggregate_results = MagicMock(
+                return_value=(["v1.mp4"], ["a1.mp3"], [{"duration": 5.0}])
+            )
+            generator.video_processor.combine_sections = AsyncMock()
+            generator._cleanup_intermediate_files = AsyncMock()
+
+            await generator.generate_video(
+                job_id="job-ctx-sections",
+                material_path="source.pdf",
+                content_focus="practice",
+                video_mode="comprehensive",
+                document_context="series",
+            )
+
+            sections_arg = mock_orch.process_sections_parallel.await_args.kwargs["sections"]
+            assert sections_arg[0]["content_focus"] == "practice"
+            assert sections_arg[0]["video_mode"] == "comprehensive"
+            assert sections_arg[0]["document_context"] == "series"

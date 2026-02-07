@@ -19,6 +19,8 @@ CHOREOGRAPHY_USER = PromptTemplate(
 **Duration**: {target_duration}s
 **Theme**: {theme_info}
 **Language**: {language_name}
+**Visual Strategy**:
+{visual_strategy}
 
 **Narration**:
 {narration}

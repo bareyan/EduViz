@@ -20,6 +20,7 @@ from ...prompts import (
     CHOREOGRAPHY_SCHEMA
 )
 from ..core import ChoreographyError
+from ..core.visual_strategy import build_visual_strategy
 from ..formatters import CodeFormatter
 
 
@@ -69,6 +70,12 @@ class Choreographer:
             timing_info=json.dumps(section.get("narration_segments", []), indent=2),
             target_duration=duration,
             theme_info=section.get("theme_info") or section.get("style", DEFAULT_THEME),
+            visual_strategy=build_visual_strategy(
+                content_focus=str(section.get("content_focus", "as_document")),
+                video_mode=str(section.get("video_mode", "comprehensive")),
+                document_context=str(section.get("document_context", "auto")),
+                section=section,
+            ),
             visual_hints=CodeFormatter.serialize_for_prompt(
                 section.get("visual_hints") or section.get("visual_description"),
                 default=DEFAULT_VISUAL_HINTS,

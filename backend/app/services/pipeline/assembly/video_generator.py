@@ -202,6 +202,11 @@ class VideoGenerator:
                 if not sections:
                     raise ValueError("Script has no sections")
 
+                for section in sections:
+                    section.setdefault("content_focus", content_focus)
+                    section.setdefault("video_mode", video_mode)
+                    section.setdefault("document_context", document_context)
+
                 logger.info(f"Processing {len(sections)} sections", extra={
                     "section_count": len(sections)
                 })

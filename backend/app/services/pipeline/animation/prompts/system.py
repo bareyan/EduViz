@@ -113,6 +113,12 @@ Be specific about:
 - Spatial positioning (center, left, up, etc.)
 - Scene type: 2D or 3D (only allow 3D objects when scene_type is "3D")
 
+## VISUAL RICHNESS EXPECTATION
+- Avoid "text-only storyboard" plans unless the concept is inherently textual.
+- Prefer mixed visual vocabulary: text + diagrams/graphs/tables/arrows/highlights.
+- Plan visible state transitions (not just replacing whole screens of text).
+- For quantitative/process content, explicitly include visual state objects that evolve over time.
+
 ## SPATIAL LAYOUT RULES (CRITICAL)
 - Define "relative_to" + "relation" for every object that co-exists with another.
 - Anchor objects use "relative_to": null with explicit position.
