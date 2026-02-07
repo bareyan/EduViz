@@ -7,12 +7,14 @@ from fastapi import APIRouter, HTTPException
 
 from ..models import AnalysisRequest
 from ..services.pipeline.content_analysis import MaterialAnalyzer
+from ..services.infrastructure.storage import FileBasedAnalysisRepository
 from ..core import find_uploaded_file
 
 router = APIRouter(tags=["analysis"])
 
 # Initialize analyzer
 analyzer = MaterialAnalyzer()
+analysis_repo = FileBasedAnalysisRepository()
 
 
 @router.post("/analyze")
@@ -24,6 +26,7 @@ async def analyze_material(request: AnalysisRequest):
 
     try:
         result = await analyzer.analyze(file_path, request.file_id)
+        analysis_repo.save(result)
         return result
     except Exception as e:
         traceback.print_exc()

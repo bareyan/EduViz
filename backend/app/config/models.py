@@ -140,8 +140,12 @@ class PipelineModels:
     ))
 
 
-# Default and only pipeline configuration
+# Built-in pipeline configurations.
+# Keep "default" as the stable baseline and add named variants here when needed.
 DEFAULT_PIPELINE_MODELS = PipelineModels()
+PIPELINE_REGISTRY: dict[str, PipelineModels] = {
+    "default": DEFAULT_PIPELINE_MODELS,
+}
 
 
 def get_model_config(step: str) -> ModelConfig:
@@ -157,6 +161,18 @@ def get_model_config(step: str) -> ModelConfig:
     if hasattr(DEFAULT_PIPELINE_MODELS, step):
         return getattr(DEFAULT_PIPELINE_MODELS, step)
     raise ValueError(f"Unknown pipeline step: {step}")
+
+
+def get_pipeline_models(pipeline_name: str = "default") -> PipelineModels:
+    """Get pipeline configuration by name."""
+    if pipeline_name in PIPELINE_REGISTRY:
+        return PIPELINE_REGISTRY[pipeline_name]
+    raise ValueError(f"Unknown pipeline: {pipeline_name}")
+
+
+def list_available_pipelines() -> dict[str, PipelineModels]:
+    """Return available pipeline configurations."""
+    return dict(PIPELINE_REGISTRY)
 
 
 def get_thinking_config(model_config: ModelConfig):

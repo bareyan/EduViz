@@ -121,6 +121,7 @@ class TestVideoGenerator:
         await generator._generate_script(
             job_id="job-ctx",
             material_path="source.pdf",
+            topic={"title": "Picked Topic"},
             language="en",
             video_mode="comprehensive",
             content_focus="theory",

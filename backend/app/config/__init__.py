@@ -37,8 +37,10 @@ from .models import (
     AVAILABLE_MODELS,
     THINKING_CAPABLE_MODELS,
     get_model_config,
+    get_pipeline_models,
     get_thinking_config,
     list_pipeline_steps,
+    list_available_pipelines,
 )
 
 # Gemini API
@@ -64,6 +66,8 @@ __all__ = [
     "AVAILABLE_MODELS",
     "THINKING_CAPABLE_MODELS",
     "get_model_config",
+    "get_pipeline_models",
     "get_thinking_config",
     "list_pipeline_steps",
+    "list_available_pipelines",
 ]

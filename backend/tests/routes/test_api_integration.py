@@ -106,3 +106,13 @@ def test_delete_job():
             response = client.delete(f"/job/{valid_job_id}")
             assert response.status_code == 200
             mock_repo.delete.assert_called_with(valid_job_id)
+
+
+def test_get_translation_languages():
+    response = client.get("/translation/languages")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "languages" in data
+    assert isinstance(data["languages"], list)
+    assert any(lang["code"] == "en" for lang in data["languages"])

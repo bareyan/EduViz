@@ -89,6 +89,7 @@ class VideoGenerator:
         self,
         job_id: str,
         material_path: Optional[str] = None,
+        topic: Optional[Dict[str, Any]] = None,
         voice: str = "en-US-Neural2-J",
         style: str = DEFAULT_THEME_CODE,
         language: str = "en",
@@ -114,6 +115,7 @@ class VideoGenerator:
         Args:
             job_id: Unique job identifier
             material_path: Path to source material (PDF, image, etc.)
+            topic: Topic payload derived from selected analysis topics
             voice: Voice identifier for TTS
             style: Style identifier for TTS
             language: Language code (e.g., "en", "es")
@@ -184,6 +186,7 @@ class VideoGenerator:
                     script = await self._generate_script(
                         job_id=job_id,
                         material_path=material_path,
+                        topic=topic,
                         language=language,
                         video_mode=video_mode,
                         content_focus=content_focus,
@@ -303,6 +306,7 @@ class VideoGenerator:
         self,
         job_id: str,
         material_path: Optional[str],
+        topic: Optional[Dict[str, Any]],
         language: str,
         video_mode: str,
         content_focus: str,
@@ -318,6 +322,7 @@ class VideoGenerator:
         Args:
             job_id: Unique job identifier
             material_path: Path to source material
+            topic: Selected-topic context payload from analysis
             language: Language code
             video_mode: "comprehensive" or "overview"
             content_focus: "practice", "theory", or "as_document"
@@ -340,7 +345,7 @@ class VideoGenerator:
         # The script generator handles content extraction and processing internally
         script = await self.script_generator.generate_script(
             file_path=material_path,
-            topic={"title": "Educational Content", "description": ""},
+            topic=topic or {"title": "Educational Content", "description": ""},
             language=language,
             video_mode=video_mode,
             content_focus=content_focus,

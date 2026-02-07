@@ -33,5 +33,5 @@ See `.env.advanced.example` for:
 ## Why This Split
 
 - Keeps default setup simple and less error-prone.
-- Avoids “config sprawl” for new developers.
+- Avoids "config sprawl" for new developers.
 - Preserves full control for production tuning.

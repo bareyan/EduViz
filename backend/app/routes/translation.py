@@ -18,6 +18,7 @@ from ..core import (
     get_media_duration,
     load_script,
     load_script_raw,
+    get_language_name,
     job_intermediate_artifacts_available,
     job_is_final_only,
     assert_runtime_tools_available,
@@ -39,8 +40,8 @@ class TranslationResponse(BaseModel):
     message: str
 
 
-# Voice mapping for languages
-VOICE_MAP = {
+# Default translation voice by language code.
+TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE = {
     "en": "en-US-GuyNeural",
     "fr": "fr-FR-HenriNeural",
     "es": "es-ES-AlvaroNeural",
@@ -62,7 +63,17 @@ VOICE_MAP = {
 
 def get_voice_for_language(language: str) -> str:
     """Get appropriate TTS voice for a language"""
-    return VOICE_MAP.get(language, "en-US-GuyNeural")
+    return TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE.get(language, "en-US-GuyNeural")
+
+
+@router.get("/translation/languages")
+async def get_translation_languages():
+    """Get supported target languages for video translation."""
+    languages = [
+        {"code": code, "name": get_language_name(code)}
+        for code in sorted(TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE.keys())
+    ]
+    return {"languages": languages}
 
 
 def _cleanup_translation_artifacts(translation_dir: str) -> None:

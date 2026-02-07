@@ -40,7 +40,7 @@ export interface AnalysisResult {
 export interface VideoChapter {
   title: string
   start_time: number
-  duration: number  // Changed from end_time to match backend
+  duration: number
 }
 
 export interface GeneratedVideo {
@@ -119,6 +119,8 @@ export interface PipelineInfo {
     script_generation: string
     manim_generation: string
     visual_script_generation: string
+    analysis?: string
+    animation_refinement?: string
   }
 }
 
@@ -155,13 +157,12 @@ export async function generateVideos(params: {
   analysis_id: string
   selected_topics: number[]
   style?: string
-  max_video_length?: number
   voice?: string
   video_mode?: 'comprehensive' | 'overview'
   language?: string
   content_focus?: 'practice' | 'theory' | 'as_document'
   document_context?: 'standalone' | 'series' | 'auto'
-  pipeline?: string  // Pipeline configuration: "default", "high_quality", "cost_optimized"
+  pipeline?: string  // Pipeline name returned by GET /pipelines (currently "default")
   resume_job_id?: string  // If provided, resume this job instead of creating a new one
 }): Promise<JobResponse> {
   const response = await api.post('/generate', params)
@@ -315,6 +316,15 @@ export interface TranslationResponse {
   message: string
 }
 
+export interface TranslationLanguage {
+  code: string
+  name: string
+}
+
+export interface TranslationLanguagesResponse {
+  languages: TranslationLanguage[]
+}
+
 export async function getJobTranslations(jobId: string): Promise<TranslationsResponse> {
   const response = await api.get(`/job/${jobId}/translations`)
   return response.data
@@ -328,32 +338,9 @@ export async function createTranslation(jobId: string, targetLanguage: string, v
   return response.data
 }
 
-// Available languages for translation
-export const AVAILABLE_LANGUAGES = [
-  { code: 'en', name: 'English' },
-  { code: 'fr', name: 'French' },
-  { code: 'es', name: 'Spanish' },
-  { code: 'de', name: 'German' },
-  { code: 'it', name: 'Italian' },
-  { code: 'pt', name: 'Portuguese' },
-  { code: 'zh', name: 'Chinese' },
-  { code: 'ja', name: 'Japanese' },
-  { code: 'ko', name: 'Korean' },
-  { code: 'ar', name: 'Arabic' },
-  { code: 'ru', name: 'Russian' },
-  { code: 'ua', name: 'Ukrainian' },
-  { code: 'hy', name: 'Armenian' },
-  { code: 'hi', name: 'Hindi' },
-  { code: 'tr', name: 'Turkish' },
-  { code: 'pl', name: 'Polish' },
-  { code: 'nl', name: 'Dutch' },
-]
-
-// Multilingual voices for translation (simplified)
-export const MULTILINGUAL_VOICES = [
-  { id: 'en-US-EmmaMultilingualNeural', name: 'Emma (Multilingual)', gender: 'female' },
-  { id: 'fr-FR-VivienneMultilingualNeural', name: 'Vivienne (Multilingual)', gender: 'female' },
-  { id: 'en-US-BrianMultilingualNeural', name: 'Brian (Multilingual)', gender: 'male' },
-]
+export async function getTranslationLanguages(): Promise<TranslationLanguagesResponse> {
+  const response = await api.get('/translation/languages')
+  return response.data
+}
 
 export default api

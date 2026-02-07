@@ -8,15 +8,17 @@ HTTP to request objects and schedule work.
 
 import uuid
 import traceback
-from typing import Callable, Optional, Dict, Any
+from typing import Callable, Optional, Dict, Any, List
 
 from fastapi import HTTPException, BackgroundTasks
 
 from app.config import OUTPUT_DIR
+from app.config.models import list_available_pipelines
 from app.models import GenerationRequest, JobResponse, ResumeInfo
 from app.services.pipeline.assembly import VideoGenerator
 from app.services.pipeline.animation.config import normalize_theme_style
 from app.services.infrastructure.orchestration import get_job_manager, JobStatus
+from app.services.infrastructure.storage import FileBasedAnalysisRepository
 from app.core import find_uploaded_file
 
 
@@ -25,10 +27,17 @@ class GenerationUseCase:
 
     def __init__(self):
         self.job_manager = get_job_manager()
+        self.analysis_repo = FileBasedAnalysisRepository()
 
     def _validate_pipeline(self, pipeline_name: str) -> str:
-        # Only default pipeline is available now
-        return "default"
+        available = list_available_pipelines()
+        name = (pipeline_name or "default").strip()
+        if name in available:
+            return name
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown pipeline '{pipeline_name}'. Available: {', '.join(sorted(available.keys()))}",
+        )
 
     @staticmethod
     def _normalize_content_focus(content_focus: str) -> str:
@@ -58,6 +67,83 @@ class GenerationUseCase:
         job_id = str(uuid.uuid4())
         self.job_manager.create_job(job_id)
         return job_id, resume_mode
+
+    def _resolve_selected_topic_payload(self, request: GenerationRequest) -> Dict[str, Any]:
+        """
+        Resolve selected topics from persisted analysis and build script topic payload.
+        """
+        analysis = self.analysis_repo.get(request.analysis_id)
+        if not analysis:
+            raise HTTPException(
+                status_code=400,
+                detail="Analysis not found for provided analysis_id. Please analyze the file again before generating.",
+            )
+
+        analysis_file_id = str(analysis.get("file_id", ""))
+        if analysis_file_id != request.file_id:
+            raise HTTPException(
+                status_code=400,
+                detail="analysis_id does not match file_id",
+            )
+
+        if not request.selected_topics:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one topic must be selected for generation.",
+            )
+
+        suggested = analysis.get("suggested_topics")
+        if not isinstance(suggested, list) or not suggested:
+            raise HTTPException(
+                status_code=400,
+                detail="Analysis result does not contain suggested topics.",
+            )
+
+        index_to_topic: Dict[int, Dict[str, Any]] = {}
+        for i, topic in enumerate(suggested):
+            if not isinstance(topic, dict):
+                continue
+            idx = topic.get("index", i)
+            try:
+                idx_int = int(idx)
+            except (TypeError, ValueError):
+                continue
+            index_to_topic[idx_int] = topic
+
+        selected_items: List[Dict[str, Any]] = []
+        for idx in request.selected_topics:
+            topic = index_to_topic.get(int(idx))
+            if topic:
+                selected_items.append(topic)
+
+        if not selected_items:
+            raise HTTPException(
+                status_code=400,
+                detail="Selected topic indices are invalid for this analysis.",
+            )
+
+        titles = [str(t.get("title", f"Topic {i + 1}")).strip() for i, t in enumerate(selected_items)]
+        descriptions = [str(t.get("description", "")).strip() for t in selected_items if str(t.get("description", "")).strip()]
+        estimated_total = 0
+        for topic in selected_items:
+            try:
+                estimated_total += int(topic.get("estimated_duration", 0))
+            except (TypeError, ValueError):
+                continue
+
+        title_head = " + ".join(titles[:3])
+        if len(titles) > 3:
+            title_head = f"{title_head} + {len(titles) - 3} more"
+
+        return {
+            "title": title_head or "Selected Topics",
+            "description": " ".join(descriptions) if descriptions else analysis.get("summary", ""),
+            "estimated_duration": estimated_total,
+            "subject_area": analysis.get("subject_area") or analysis.get("main_subject", "general"),
+            "selected_topic_indices": [int(i) for i in request.selected_topics],
+            "selected_topic_titles": titles,
+            "analysis_id": request.analysis_id,
+        }
 
     def _get_progress_callback(self, job_id: str) -> Callable[[Dict[str, Any]], None]:
         """Create a progress callback for the video generator."""
@@ -111,6 +197,16 @@ class GenerationUseCase:
         else:
             file_path = find_uploaded_file(request.file_id)
 
+        # Topic payload is required when generating a fresh script.
+        topic_payload: Optional[Dict[str, Any]] = None
+        if not resume_mode:
+            topic_payload = self._resolve_selected_topic_payload(request)
+        else:
+            # For resume jobs with existing script we can skip this.
+            progress = video_generator.check_existing_progress(job_id)
+            if not progress.get("has_script", False):
+                topic_payload = self._resolve_selected_topic_payload(request)
+
         async def run_generation():
             try:
                 print(f"[Generation] Using pipeline: {pipeline_name} (video_mode: {request.video_mode})")
@@ -120,10 +216,6 @@ class GenerationUseCase:
                 else:
                     self.job_manager.update_job(job_id, JobStatus.ANALYZING, 0, "Analyzing material...")
 
-                # Note: selected_topics is used for UI display but the video generator
-                # processes the entire document. The selection filters what gets analyzed.
-                # For now, we generate a single comprehensive video from the document.
-                
                 self.job_manager.update_job(
                     job_id,
                     JobStatus.GENERATING_SCRIPT,
@@ -134,6 +226,7 @@ class GenerationUseCase:
                 result = await video_generator.generate_video(
                     job_id=job_id,
                     material_path=file_path,
+                    topic=topic_payload,
                     voice=request.voice,
                     style=normalize_theme_style(request.style),
                     language=request.language,

@@ -15,14 +15,31 @@ class TestGenerationUseCase:
 
     @pytest.fixture
     def use_case(self):
-        with patch("app.services.use_cases.generation_use_case.get_job_manager") as mock_get_mgr:
+        with patch("app.services.use_cases.generation_use_case.get_job_manager") as mock_get_mgr, \
+             patch("app.services.use_cases.generation_use_case.FileBasedAnalysisRepository") as mock_analysis_repo_cls:
             self.job_manager = MagicMock()
             mock_get_mgr.return_value = self.job_manager
+            self.analysis_repo = mock_analysis_repo_cls.return_value
+            self.analysis_repo.get.return_value = {
+                "analysis_id": "anal-1",
+                "file_id": "file-1",
+                "summary": "summary",
+                "subject_area": "math",
+                "suggested_topics": [
+                    {"index": 0, "title": "Topic A", "description": "A", "estimated_duration": 120},
+                    {"index": 1, "title": "Topic B", "description": "B", "estimated_duration": 60},
+                ],
+            }
             return GenerationUseCase()
 
     def test_validate_pipeline_success(self, use_case):
-        assert use_case._validate_pipeline("p1") == "default"
+        assert use_case._validate_pipeline("default") == "default"
         assert use_case._validate_pipeline(None) == "default"
+
+    def test_validate_pipeline_invalid(self, use_case):
+        with pytest.raises(HTTPException) as exc:
+            use_case._validate_pipeline("unknown")
+        assert exc.value.status_code == 400
 
     def test_select_job_new(self, use_case):
         job_id, resume = use_case._select_job(None)
@@ -44,7 +61,7 @@ class TestGenerationUseCase:
             file_id="file-1", 
             pipeline="default", 
             analysis_id="anal-1", 
-            selected_topics=[]
+            selected_topics=[0]
         )
         background_tasks = MagicMock(spec=BackgroundTasks)
         
@@ -67,7 +84,7 @@ class TestGenerationUseCase:
             file_id="missing-file",
             pipeline="default",
             analysis_id="anal-1",
-            selected_topics=[],
+            selected_topics=[0],
             resume_job_id=existing_id,
         )
         background_tasks = MagicMock(spec=BackgroundTasks)
@@ -89,7 +106,7 @@ class TestGenerationUseCase:
             file_id="missing-file",
             pipeline="default",
             analysis_id="anal-1",
-            selected_topics=[],
+            selected_topics=[0],
             resume_job_id=existing_id,
         )
         background_tasks = MagicMock(spec=BackgroundTasks)
@@ -110,7 +127,7 @@ class TestGenerationUseCase:
             file_id="file-1", 
             pipeline="default", 
             analysis_id="anal-1", 
-            selected_topics=[]
+            selected_topics=[0]
         )
         background_tasks = BackgroundTasks()
         
@@ -157,7 +174,7 @@ class TestGenerationUseCase:
             file_id="file-1",
             pipeline="default",
             analysis_id="anal-1",
-            selected_topics=[],
+            selected_topics=[0],
             content_focus="practice",
             document_context="series",
         )
@@ -183,8 +200,14 @@ class TestGenerationUseCase:
             file_id="file-1", 
             pipeline="default",
             analysis_id="dummy-analysis",
-            selected_topics=[]
+            selected_topics=[0]
         )
+        self.analysis_repo.get.return_value = {
+            "analysis_id": "dummy-analysis",
+            "file_id": "file-1",
+            "summary": "summary",
+            "suggested_topics": [{"index": 0, "title": "Topic A", "description": "A", "estimated_duration": 120}],
+        }
         background_tasks = BackgroundTasks()
         
         with patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
@@ -249,3 +272,23 @@ class TestGenerationUseCase:
             assert info.can_resume is True
             assert info.completed_sections == 2
             assert info.total_sections == 5
+
+    def test_start_generation_requires_analysis_match(self, use_case):
+        request = GenerationRequest(
+            file_id="file-1",
+            pipeline="default",
+            analysis_id="anal-1",
+            selected_topics=[0],
+        )
+        background_tasks = MagicMock(spec=BackgroundTasks)
+        self.analysis_repo.get.return_value = {
+            "analysis_id": "anal-1",
+            "file_id": "another-file",
+            "suggested_topics": [{"index": 0, "title": "Topic A"}],
+        }
+
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+             patch("app.services.use_cases.generation_use_case.VideoGenerator"):
+            with pytest.raises(HTTPException) as exc:
+                use_case.start_generation(request, background_tasks)
+            assert exc.value.status_code == 400

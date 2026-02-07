@@ -11,16 +11,15 @@ from typing import List, Optional
 class GenerationRequest(BaseModel):
     """Request to generate video(s) from analyzed content"""
     file_id: str
-    analysis_id: str
-    selected_topics: List[int]  # List of topic indices to generate
+    analysis_id: str  # ID returned by /analyze for this file
+    selected_topics: List[int]  # Indices from analysis.suggested_topics
     style: str = "3b1b"
-    max_video_length: int = 20  # Max minutes per video
     voice: str = "en-US-GuyNeural"  # Edge TTS voice
     video_mode: str = "comprehensive"  # "comprehensive" or "overview"
     language: str = "en"  # Language code for narration and content
     content_focus: str = "as_document"  # "practice", "theory", or "as_document"
     document_context: str = "auto"  # "standalone", "series" (alias: "part-of-series"), or "auto"
-    pipeline: str = "default"  # Pipeline configuration
+    pipeline: str = "default"  # Named pipeline from GET /pipelines
     resume_job_id: Optional[str] = None  # If provided, resume this job
 
 

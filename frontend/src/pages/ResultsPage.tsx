@@ -21,11 +21,13 @@ import {
   GeneratedVideo, 
   getVideoUrl, 
   API_BASE,
+  getVoices,
   getJobTranslations,
   createTranslation,
+  getTranslationLanguages,
   TranslationsResponse,
-  AVAILABLE_LANGUAGES,
-  MULTILINGUAL_VOICES,
+  TranslationLanguage,
+  Voice,
   getResumeInfo,
   ResumeInfo,
   DetailedProgress,
@@ -45,7 +47,9 @@ export default function ResultsPage() {
   const [translations, setTranslations] = useState<TranslationsResponse | null>(null)
   const [showTranslationModal, setShowTranslationModal] = useState(false)
   const [selectedLanguage, setSelectedLanguage] = useState('')
-  const [selectedVoice, setSelectedVoice] = useState(MULTILINGUAL_VOICES[0].id)
+  const [selectedVoice, setSelectedVoice] = useState('')
+  const [translationLanguages, setTranslationLanguages] = useState<TranslationLanguage[]>([])
+  const [translationVoices, setTranslationVoices] = useState<Voice[]>([])
   const [isTranslating, setIsTranslating] = useState(false)
   
   // Resume state
@@ -54,11 +58,43 @@ export default function ResultsPage() {
   
   // High quality compile state
   const [isCompilingHQ, setIsCompilingHQ] = useState(false)
-  const [hqJobId, setHqJobId] = useState<string | null>(null)
 
   // Detailed progress state
   const [detailedProgress, setDetailedProgress] = useState<DetailedProgress | null>(null)
   const [selectedSection, setSelectedSection] = useState<SectionProgress | null>(null)
+
+  const getLanguageLabel = (code: string) =>
+    translationLanguages.find(l => l.code === code)?.name || code
+
+  useEffect(() => {
+    let isMounted = true
+
+    const loadTranslationOptions = async () => {
+      try {
+        const [languageData, voiceData] = await Promise.all([
+          getTranslationLanguages(),
+          getVoices('auto'),
+        ])
+        if (!isMounted) return
+
+        setTranslationLanguages(languageData.languages)
+        setTranslationVoices(voiceData.voices)
+
+        if (voiceData.default_voice) {
+          setSelectedVoice(voiceData.default_voice)
+        } else if (voiceData.voices.length > 0) {
+          setSelectedVoice(voiceData.voices[0].id)
+        }
+      } catch (err) {
+        console.error('Failed to load translation options:', err)
+      }
+    }
+
+    loadTranslationOptions()
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   useEffect(() => {
     if (!jobId) return
@@ -155,7 +191,7 @@ export default function ResultsPage() {
     setIsTranslating(true)
     try {
       await createTranslation(jobId, selectedLanguage, selectedVoice)
-      toast.success(`Translation to ${AVAILABLE_LANGUAGES.find(l => l.code === selectedLanguage)?.name || selectedLanguage} started!`)
+      toast.success(`Translation to ${getLanguageLabel(selectedLanguage)} started!`)
       setShowTranslationModal(false)
       setSelectedLanguage('')
       
@@ -202,7 +238,6 @@ export default function ResultsPage() {
       if (!response.ok) throw new Error('Failed to start high quality compilation')
       
       const data = await response.json()
-      setHqJobId(data.hq_job_id)
       toast.success(`${quality.toUpperCase()} quality compilation started!`)
       
       // Navigate to the new HQ job
@@ -505,7 +540,7 @@ export default function ResultsPage() {
             {/* Original Language */}
             {translations && (
               <p className="text-sm text-gray-500 mb-3">
-                Original: {AVAILABLE_LANGUAGES.find(l => l.code === translations.original_language)?.name || translations.original_language}
+                Original: {getLanguageLabel(translations.original_language)}
               </p>
             )}
             
@@ -518,7 +553,7 @@ export default function ResultsPage() {
                 >
                   <div className="flex items-center gap-2">
                     <Globe className="w-4 h-4 text-gray-400" />
-                    <span>{AVAILABLE_LANGUAGES.find(l => l.code === t.language)?.name || t.language}</span>
+                    <span>{getLanguageLabel(t.language)}</span>
                   </div>
                   {t.has_video ? (
                     <a 
@@ -584,7 +619,7 @@ export default function ResultsPage() {
             {/* Language Selection */}
             <label className="block text-sm font-medium text-gray-300 mb-2">Target Language</label>
             <div className="space-y-2 max-h-40 overflow-y-auto mb-4">
-              {AVAILABLE_LANGUAGES
+              {translationLanguages
                 .filter(lang => lang.code !== translations?.original_language)
                 .filter(lang => !translations?.translations.some(t => t.language === lang.code))
                 .map(lang => (
@@ -610,7 +645,7 @@ export default function ResultsPage() {
               className="w-full p-3 rounded-lg bg-gray-800 border border-gray-700 text-white mb-4
                          focus:outline-none focus:border-math-purple"
             >
-              {MULTILINGUAL_VOICES.map(voice => (
+              {translationVoices.map(voice => (
                 <option key={voice.id} value={voice.id}>
                   {voice.name} ({voice.gender})
                 </option>

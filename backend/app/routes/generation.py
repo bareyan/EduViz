@@ -27,25 +27,30 @@ async def get_resume_info(job_id: str):
 @router.get("/pipelines")
 async def get_available_pipelines():
     """Get available pipeline configurations"""
-    from ..config.models import DEFAULT_PIPELINE_MODELS
+    from ..config.models import list_available_pipelines
 
-    pipeline = DEFAULT_PIPELINE_MODELS
-    pipelines = [
-        {
-            "name": "default",
-            "description": "Default pipeline with optimized models for each stage",
-            "is_active": True,
-            "models": {
-                "analysis": pipeline.analysis.model_name,
-                "script_generation": pipeline.script_generation.model_name,
-                "animation_choreography": pipeline.animation_choreography.model_name,
-                "animation_implementation": pipeline.animation_implementation.model_name,
-                "animation_refinement": pipeline.animation_refinement.model_name,
+    available = list_available_pipelines()
+    active = "default"
+    pipelines = []
+    for name, pipeline in available.items():
+        pipelines.append(
+            {
+                "name": name,
+                "description": "Pipeline configuration for generation",
+                "is_active": name == active,
+                "models": {
+                    # Frontend-compatible keys
+                    "script_generation": pipeline.script_generation.model_name,
+                    "visual_script_generation": pipeline.animation_choreography.model_name,
+                    "manim_generation": pipeline.animation_implementation.model_name,
+                    # Extended detail keys (optional for UI)
+                    "analysis": pipeline.analysis.model_name,
+                    "animation_refinement": pipeline.animation_refinement.model_name,
+                },
             }
-        }
-    ]
+        )
 
     return {
         "pipelines": pipelines,
-        "active": "default"
+        "active": active,
     }
