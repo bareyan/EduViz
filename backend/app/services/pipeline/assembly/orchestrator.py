@@ -31,7 +31,6 @@ class SectionResult:
     duration: float
     title: str
     manim_code_path: Optional[str] = None
-    manim_code: Optional[str] = None
     error: Optional[str] = None
 
     def is_successful(self) -> bool:
@@ -292,8 +291,6 @@ class SectionOrchestrator:
                 if subsection_results.get("manim_code_path"):
                     result.manim_code_path = subsection_results["manim_code_path"]
                     section["manim_code_path"] = subsection_results["manim_code_path"]
-                if subsection_results.get("manim_code"):
-                    result.manim_code = subsection_results["manim_code"]
 
             else:
                 # Multi-segment processing
@@ -320,8 +317,6 @@ class SectionOrchestrator:
                 if segment_result.get("manim_code_path"):
                     result.manim_code_path = segment_result["manim_code_path"]
                     section["manim_code_path"] = segment_result["manim_code_path"]
-                if segment_result.get("manim_code"):
-                    result.manim_code = segment_result["manim_code"]
 
             # Mark as complete and report progress
             self.progress_tracker.mark_section_complete(section_index)

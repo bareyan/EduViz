@@ -5,6 +5,7 @@ Translation routes
 import os
 import json
 import asyncio
+import shutil
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
@@ -13,7 +14,14 @@ from ..config import OUTPUT_DIR
 from ..services.features.translation import get_translation_service
 from ..services.pipeline.audio import TTSEngine
 from ..services.pipeline.animation import ManimGenerator
-from ..core import get_media_duration, load_script, load_script_raw
+from ..core import (
+    get_media_duration,
+    load_script,
+    load_script_raw,
+    job_intermediate_artifacts_available,
+    job_is_final_only,
+    assert_runtime_tools_available,
+)
 
 router = APIRouter(tags=["translation"])
 
@@ -57,6 +65,28 @@ def get_voice_for_language(language: str) -> str:
     return VOICE_MAP.get(language, "en-US-GuyNeural")
 
 
+def _cleanup_translation_artifacts(translation_dir: str) -> None:
+    """
+    Keep only final_video.mp4 in a translation output directory.
+    """
+    path = os.path.abspath(translation_dir)
+    if not os.path.isdir(path):
+        return
+
+    for name in os.listdir(path):
+        if name == "final_video.mp4":
+            continue
+
+        entry = os.path.join(path, name)
+        if os.path.isdir(entry):
+            shutil.rmtree(entry, ignore_errors=True)
+        else:
+            try:
+                os.remove(entry)
+            except FileNotFoundError:
+                pass
+
+
 @router.get("/job/{job_id}/translations")
 async def get_job_translations(job_id: str):
     """Get all available translations for a job"""
@@ -98,13 +128,30 @@ async def get_job_translations(job_id: str):
 @router.post("/job/{job_id}/translate", response_model=TranslationResponse)
 async def create_translation(job_id: str, request: TranslationRequest, background_tasks: BackgroundTasks):
     """Start translation of a completed video to a new language"""
+    assert_runtime_tools_available(("manim", "ffmpeg", "ffprobe"), context="translation generation")
+
     job_dir = OUTPUT_DIR / job_id
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="Job not found")
 
+    final_video = job_dir / "final_video.mp4"
+    if not final_video.exists():
+        raise HTTPException(status_code=400, detail="Original video not yet generated")
+
+    if not job_intermediate_artifacts_available(job_id):
+        if job_is_final_only(job_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This job was cleaned to final-video-only retention. "
+                    "Translation requires script and section artifacts."
+                ),
+            )
+        raise HTTPException(status_code=400, detail="Job artifacts are incomplete for translation")
+
     script_path = job_dir / "script.json"
     if not script_path.exists():
-        raise HTTPException(status_code=400, detail="Original video not yet generated")
+        raise HTTPException(status_code=400, detail="Script not found for this job")
 
     target_language = request.target_language
     translation_id = f"{job_id}_{target_language}"
@@ -176,7 +223,7 @@ async def generate_translated_video(
     voice: str
 ):
     """Generate video from translated script with translated Manim animations"""
-    from ..services.translation_service import TranslationService
+    from ..services.features.translation import TranslationService
 
     tts_engine = TTSEngine()
     manim_gen = ManimGenerator()
@@ -367,4 +414,6 @@ async def generate_translated_video(
         )
         await process.communicate()
 
-        print(f"[Translation] Final video created: {final_video}")
+        if os.path.exists(final_video):
+            _cleanup_translation_artifacts(output_dir)
+            print(f"[Translation] Final video created: {final_video}")

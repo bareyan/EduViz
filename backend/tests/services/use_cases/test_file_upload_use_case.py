@@ -21,7 +21,7 @@ class TestFileUploadUseCase:
         file = MagicMock(spec=UploadFile)
         file.filename = "test.pdf"
         file.content_type = "application/pdf"
-        file.read = AsyncMock(return_value=b"test content")
+        file.read = AsyncMock(side_effect=[b"test content", b""])
         return file
 
     async def test_upload_success(self, use_case, mock_file, tmp_path):
@@ -66,3 +66,13 @@ class TestFileUploadUseCase:
                 await use_case.execute(request)
             assert exc.value.status_code == 500
             assert "Disk Full" in str(exc.value.detail)
+
+    async def test_upload_too_large(self, use_case, mock_file, tmp_path):
+        """Test upload rejected when file exceeds configured max size."""
+        request = FileUploadRequest(file=mock_file, max_size_bytes=4)
+
+        with patch("app.services.use_cases.file_upload_use_case.UPLOAD_DIR", tmp_path), \
+             patch("app.services.use_cases.file_upload_use_case.validate_file_type", return_value=".pdf"):
+            with pytest.raises(HTTPException) as exc:
+                await use_case.execute(request)
+            assert exc.value.status_code == 413

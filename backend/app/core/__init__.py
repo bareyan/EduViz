@@ -64,6 +64,18 @@ from .validation import (
     validate_upload_path,
     validate_job_path,
     find_uploaded_file,
+    job_intermediate_artifacts_available,
+    job_is_final_only,
+)
+
+# Runtime guards
+from .runtime import (
+    REQUIRED_RENDER_TOOLS,
+    parse_bool_env,
+    missing_runtime_tools,
+    assert_runtime_tools_available,
+    assert_directory_writable,
+    run_startup_runtime_checks,
 )
 
 # Constants
@@ -105,6 +117,15 @@ __all__ = [
     "validate_upload_path",
     "validate_job_path",
     "find_uploaded_file",
+    "job_intermediate_artifacts_available",
+    "job_is_final_only",
+    # Runtime guards
+    "REQUIRED_RENDER_TOOLS",
+    "parse_bool_env",
+    "missing_runtime_tools",
+    "assert_runtime_tools_available",
+    "assert_directory_writable",
+    "run_startup_runtime_checks",
     # Constants
     "LANGUAGE_NAMES",
     "get_language_name",

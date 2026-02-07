@@ -72,14 +72,26 @@ class GenerationUseCase:
         """Validate input, enqueue generation work, and return initial response."""
         pipeline_name = self._validate_pipeline(request.pipeline)
 
-        # Resolve uploaded file path (raises HTTPException if missing)
-        file_path = find_uploaded_file(request.file_id)
+        job_id, resume_mode = self._select_job(request.resume_job_id)
 
         # Instantiate video generator (pipeline-scoped)
         video_generator = VideoGenerator(str(OUTPUT_DIR), pipeline_name=pipeline_name)
 
-        job_id, resume_mode = self._select_job(request.resume_job_id)
-
+        # Resolve uploaded file path.
+        # For resume flows with existing script, source file is optional.
+        file_path: Optional[str] = None
+        if resume_mode:
+            try:
+                file_path = find_uploaded_file(request.file_id)
+            except HTTPException:
+                progress = video_generator.check_existing_progress(job_id)
+                if not progress.get("has_script", False):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Cannot resume without source file: upload the file again or use a job with existing script.",
+                    )
+        else:
+            file_path = find_uploaded_file(request.file_id)
 
         async def run_generation():
             try:

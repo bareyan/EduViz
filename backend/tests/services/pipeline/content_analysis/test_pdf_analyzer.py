@@ -71,7 +71,7 @@ class TestPDFAnalyzer:
             assert result["total_content_pages"] == 0  # No page count without fitz
             assert result["summary"] == "Test summary"
 
-    def test_representative_sample(self, analyzer):
+    async def test_representative_sample(self, analyzer):
         """Test sampling logic in BaseAnalyzer."""
         long_text = "A" * 20000
         sample = analyzer._get_representative_sample(long_text, max_chars=100)

@@ -100,7 +100,7 @@ class ManimGenerator:
             job_id: Optional job identifier for logging context.
             
         Returns:
-            Dict containing video_path, manim_code.
+            Dict containing render artifacts (video path + code path metadata).
             
         Raises:
             AnimationError or its subclasses: if any stage fails.

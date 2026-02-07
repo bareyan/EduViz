@@ -334,43 +334,40 @@ class VideoGenerator:
 
     async def _cleanup_intermediate_files(self, sections_dir: Path) -> None:
         """
-        Remove intermediate files after successful generation
-        
-        Preserves:
-        - Final .mp4 files
-        - Final .mp3 files
-        - Manim .py source code
-        
+        Remove all generation intermediates after a successful run.
+
+        Keeps:
+        - final_video.mp4
+        - translations/ (if it exists)
+
         Removes:
-        - Manim media folders
-        - Fallback files
-        - __pycache__
+        - sections/
+        - script.json
+        - all other temporary artifacts in the job directory
         """
         try:
+            job_dir = sections_dir.parent
+            keep_entries = {"final_video.mp4", "translations"}
+
             logger.info("Cleaning up intermediate files", extra={
-                "sections_dir": str(sections_dir)
+                "sections_dir": str(sections_dir),
+                "job_dir": str(job_dir)
             })
 
             cleanup_count = 0
-            for section_path in sections_dir.iterdir():
-                if not section_path.is_dir():
+            if sections_dir.exists():
+                shutil.rmtree(sections_dir)
+                cleanup_count += 1
+
+            for entry in job_dir.iterdir():
+                if entry.name in keep_entries:
                     continue
 
-                # Remove manim media folders
-                media_dir = section_path / "media"
-                if media_dir.exists():
-                    shutil.rmtree(media_dir)
+                if entry.is_dir():
+                    shutil.rmtree(entry)
                     cleanup_count += 1
-
-                # Remove fallback files
-                for f in section_path.glob("fallback_*.py"):
-                    f.unlink()
-                    cleanup_count += 1
-
-                # Remove __pycache__
-                pycache_dir = section_path / "__pycache__"
-                if pycache_dir.exists():
-                    shutil.rmtree(pycache_dir)
+                else:
+                    entry.unlink(missing_ok=True)
                     cleanup_count += 1
 
             logger.info("Cleanup complete", extra={

@@ -123,7 +123,7 @@ class TestTTSEngine:
             idx = args.index("-t")
             assert args[idx+1] == "2.0"
 
-    def test_voice_helpers(self):
+    async def test_voice_helpers(self):
         """Test voice metadata helpers."""
         assert len(TTSEngine.get_available_voices()) > 0
         assert "en" in TTSEngine.get_available_languages()[0]["code"] or "auto" in str(TTSEngine.get_available_languages())
@@ -132,7 +132,7 @@ class TestTTSEngine:
         assert len(voices) >= 2
         assert voices[0]["gender"] in ["male", "female"]
 
-    def test_default_voice(self):
+    async def test_default_voice(self):
         assert TTSEngine.get_default_voice_for_language("en") == "en-GB-RyanNeural"
         # Should fallback to auto/multilingual for unknown
         assert "Multilingual" in TTSEngine.get_default_voice_for_language("klingon")

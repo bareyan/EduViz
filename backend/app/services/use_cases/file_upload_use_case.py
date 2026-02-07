@@ -19,6 +19,7 @@ Classes:
 import uuid
 from dataclasses import dataclass
 from typing import Optional
+import os
 from fastapi import UploadFile, HTTPException
 
 from app.config import UPLOAD_DIR
@@ -37,6 +38,7 @@ class FileUploadRequest:
     """
     file: UploadFile
     file_id: Optional[str] = None  # If None, generates new ID
+    max_size_bytes: Optional[int] = None
 
 
 @dataclass
@@ -116,13 +118,29 @@ class FileUploadUseCase(UseCase[FileUploadRequest, FileUploadResponse]):
         # Step 4: Ensure upload directory exists
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+        total_size = 0
+        chunk_size = 1024 * 1024
         try:
-            # Step 5: Save file to disk
-            # Read entire content and write to target location
-            content = await request.file.read()
+            # Step 5: Stream file to disk in chunks to avoid large in-memory buffers
             with open(saved_path, "wb") as f:
-                f.write(content)
+                while True:
+                    chunk = await request.file.read(chunk_size)
+                    if not chunk:
+                        break
+                    total_size += len(chunk)
+                    if request.max_size_bytes and total_size > request.max_size_bytes:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"File too large. Maximum size: {request.max_size_bytes / (1024*1024):.0f}MB"
+                        )
+                    f.write(chunk)
+        except HTTPException:
+            if saved_path.exists():
+                os.remove(saved_path)
+            raise
         except IOError as e:
+            if saved_path.exists():
+                os.remove(saved_path)
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to save file: {str(e)}"
@@ -133,6 +151,6 @@ class FileUploadUseCase(UseCase[FileUploadRequest, FileUploadResponse]):
             file_id=file_id,
             filename=request.file.filename,
             file_path=str(saved_path),
-            size=len(content),
+            size=total_size,
             content_type=request.file.content_type,
         )

@@ -32,11 +32,14 @@ Usage:
 import logging
 import json
 import time
+import os
+import re
 from typing import Any, Dict, Optional, Union, List
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, UTC
 from dataclasses import dataclass, asdict
 import uuid
+from logging.handlers import RotatingFileHandler
 
 from .logging import get_logger
 
@@ -148,7 +151,7 @@ class LLMLogger:
     def __init__(
         self,
         max_prompt_length: int = 500,
-        max_response_length: Optional[int] = None,
+        max_response_length: Optional[int] = 4000,
         max_system_length: int = 500,
         log_file: Optional[Path] = None,
         full_log_file: Optional[Path] = None,
@@ -174,11 +177,19 @@ class LLMLogger:
         self.logger = get_logger(__name__, component="llm_logger")
         
         # Set up regular truncated file logging if requested
+        llm_log_max_bytes = int(os.getenv("LLM_LOG_MAX_BYTES", str(20 * 1024 * 1024)))
+        llm_log_backup_count = int(os.getenv("LLM_LOG_BACKUP_COUNT", "5"))
+
         if log_file:
             log_file = Path(log_file)
             log_file.parent.mkdir(parents=True, exist_ok=True)
             
-            file_handler = logging.FileHandler(log_file, encoding="utf-8")
+            file_handler = RotatingFileHandler(
+                log_file,
+                maxBytes=llm_log_max_bytes,
+                backupCount=llm_log_backup_count,
+                encoding="utf-8",
+            )
             file_handler.setLevel(logging.INFO)
             
             from .logging import StructuredFormatter
@@ -197,7 +208,12 @@ class LLMLogger:
             full_log_file = Path(full_log_file)
             full_log_file.parent.mkdir(parents=True, exist_ok=True)
             
-            full_file_handler = logging.FileHandler(full_log_file, encoding="utf-8")
+            full_file_handler = RotatingFileHandler(
+                full_log_file,
+                maxBytes=llm_log_max_bytes,
+                backupCount=llm_log_backup_count,
+                encoding="utf-8",
+            )
             full_file_handler.setLevel(logging.INFO)
             
             full_file_handler.setFormatter(LLMHumanFormatter())
@@ -211,11 +227,31 @@ class LLMLogger:
         
         # Track active requests for timing
         self._active_requests: Dict[str, float] = {}
+
+    @staticmethod
+    def _redact_sensitive_text(text: Any) -> str:
+        if not text:
+            return ""
+        if not isinstance(text, str):
+            text = str(text)
+
+        patterns = [
+            (r"(?i)(api[_-]?key\s*[:=]\s*)([^\s\"']+)", r"\1***REDACTED***"),
+            (r"(?i)(authorization\s*[:=]\s*bearer\s+)([^\s\"']+)", r"\1***REDACTED***"),
+            (r"AIza[0-9A-Za-z\-_]{20,}", "***REDACTED_GEMINI_KEY***"),
+            (r"(?i)(x-goog-api-key\s*[:=]\s*)([^\s\"']+)", r"\1***REDACTED***"),
+        ]
+
+        redacted = text
+        for pattern, replacement in patterns:
+            redacted = re.sub(pattern, replacement, redacted)
+        return redacted
     
     def _truncate_text(self, text: Optional[str], max_length: Optional[int]) -> str:
         """Truncate text to specified length"""
         if text is None:
             return ""
+        text = self._redact_sensitive_text(text)
         if max_length is None or len(text) <= max_length:
             return text
         return text[:max_length] + f"... [truncated, total: {len(text)} chars]"
@@ -299,7 +335,7 @@ class LLMLogger:
             Request ID for correlation with response
         """
         request_id = str(uuid.uuid4())
-        timestamp = datetime.utcnow().isoformat() + "Z"
+        timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         
         # Extract and truncate prompt
         full_prompt = self._extract_prompt_text(contents)
@@ -381,7 +417,7 @@ class LLMLogger:
             metadata: Additional metadata (tokens, etc.)
             context: Additional context to log
         """
-        timestamp = datetime.utcnow().isoformat() + "Z"
+        timestamp = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         
         # Calculate duration
         duration = 0.0
@@ -501,8 +537,10 @@ def get_llm_logger() -> LLMLogger:
     
     Configuration via environment variables:
     - LLM_LOG_MAX_PROMPT_LENGTH: Max prompt chars to log (default: 500)
-    - LLM_LOG_MAX_RESPONSE_LENGTH: Max response chars to log (default: None/unlimited)
+    - LLM_LOG_MAX_RESPONSE_LENGTH: Max response chars to log (default: 4000)
     - LLM_LOG_MAX_SYSTEM_LENGTH: Max system instruction chars to log (default: 500)
+    - LLM_LOG_MAX_BYTES: Rotated log file max size in bytes (default: 20MB)
+    - LLM_LOG_BACKUP_COUNT: Rotated log file backup count (default: 5)
     - LLM_LOG_FILE: Path to dedicated LLM log file (default: None)
     - LLM_LOG_FULL_FILE: Path to full log file with truncated content (default: None)
     - LLM_LOG_CONSOLE: Enable console logging (default: true)
@@ -510,11 +548,18 @@ def get_llm_logger() -> LLMLogger:
     global _default_logger
     
     if _default_logger is None:
-        import os
-        
-        max_prompt = int(os.getenv("LLM_LOG_MAX_PROMPT_LENGTH", "100000"))
-        max_response = os.getenv("LLM_LOG_MAX_RESPONSE_LENGTH")
-        max_response = int(max_response) if max_response else None
+        max_prompt = int(
+            os.getenv(
+                "LLM_LOG_MAX_PROMPT_LENGTH",
+                os.getenv("LLM_LOG_MAX_CHARS", "4000"),
+            )
+        )
+        max_response = int(
+            os.getenv(
+                "LLM_LOG_MAX_RESPONSE_LENGTH",
+                os.getenv("LLM_LOG_MAX_CHARS", "4000"),
+            )
+        )
         max_system = int(os.getenv("LLM_LOG_MAX_SYSTEM_LENGTH", "500"))
         
         log_file = os.getenv("LLM_LOG_FILE")

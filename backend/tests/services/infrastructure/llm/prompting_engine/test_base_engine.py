@@ -4,11 +4,11 @@ Tests for app.services.infrastructure.llm.prompting_engine.base_engine
 
 import pytest
 import asyncio
+import time
 from unittest.mock import MagicMock, patch, AsyncMock
 from app.services.infrastructure.llm.prompting_engine.base_engine import PromptingEngine, PromptConfig
 
 
-@pytest.mark.asyncio
 class TestPromptingEngine:
     """Test PromptingEngine functionality."""
 
@@ -31,6 +31,7 @@ class TestPromptingEngine:
     def engine(self):
         return PromptingEngine(config_key="test_key")
 
+    @pytest.mark.asyncio
     async def test_generate_success(self, engine):
         """Test successful generation."""
         mock_response = MagicMock()
@@ -48,6 +49,7 @@ class TestPromptingEngine:
         assert result["usage"]["input_tokens"] == 10
         self.client.models.generate_content.assert_called_once()
 
+    @pytest.mark.asyncio
     async def test_generate_retry_on_failure(self, engine):
         """Test that generate retries on exception."""
         self.client.models.generate_content.side_effect = [
@@ -63,10 +65,11 @@ class TestPromptingEngine:
             assert result["response"] == "Second Success"
             assert self.client.models.generate_content.call_count == 2
 
+    @pytest.mark.asyncio
     async def test_generate_timeout(self, engine):
         """Test timeout handling."""
-        async def slow_call(*args, **kwargs):
-            await asyncio.sleep(1)
+        def slow_call(*args, **kwargs):
+            time.sleep(0.1)
             return MagicMock()
             
         self.client.models.generate_content.side_effect = slow_call
@@ -77,6 +80,7 @@ class TestPromptingEngine:
         assert result["success"] is False
         assert "timed out" in result["error"].lower()
 
+    @pytest.mark.asyncio
     async def test_generate_json_parsing(self, engine):
         """Test JSON response parsing."""
         mock_response = MagicMock()
@@ -89,6 +93,7 @@ class TestPromptingEngine:
         assert result["success"] is True
         assert result["parsed_json"] == {"key": "value"}
 
+    @pytest.mark.asyncio
     async def test_generate_json_invalid_fails(self, engine):
         """Test invalid JSON returns failure when strict validation is enabled."""
         mock_response = MagicMock()

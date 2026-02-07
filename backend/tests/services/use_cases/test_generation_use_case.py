@@ -59,6 +59,50 @@ class TestGenerationUseCase:
             # Verify VideoGenerator was instantiated
             mock_vg_class.assert_called_once()
 
+    def test_start_generation_resume_without_file_when_script_exists(self, use_case):
+        existing_id = "job-123"
+        self.job_manager.get_job.return_value = MagicMock(id=existing_id)
+
+        request = GenerationRequest(
+            file_id="missing-file",
+            pipeline="default",
+            analysis_id="anal-1",
+            selected_topics=[],
+            resume_job_id=existing_id,
+        )
+        background_tasks = MagicMock(spec=BackgroundTasks)
+
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", side_effect=HTTPException(status_code=404, detail="missing")), \
+             patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
+            mock_vg_class.return_value.check_existing_progress.return_value = {"has_script": True}
+
+            response = use_case.start_generation(request, background_tasks)
+
+            assert response.status == "resuming"
+            background_tasks.add_task.assert_called_once()
+
+    def test_start_generation_resume_without_file_and_script_raises(self, use_case):
+        existing_id = "job-456"
+        self.job_manager.get_job.return_value = MagicMock(id=existing_id)
+
+        request = GenerationRequest(
+            file_id="missing-file",
+            pipeline="default",
+            analysis_id="anal-1",
+            selected_topics=[],
+            resume_job_id=existing_id,
+        )
+        background_tasks = MagicMock(spec=BackgroundTasks)
+
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", side_effect=HTTPException(status_code=404, detail="missing")), \
+             patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
+            mock_vg_class.return_value.check_existing_progress.return_value = {"has_script": False}
+
+            with pytest.raises(HTTPException) as exc:
+                use_case.start_generation(request, background_tasks)
+
+            assert exc.value.status_code == 400
+
     @pytest.mark.asyncio
     async def test_run_generation_execution_success(self, use_case):
         """Test the actual execution of the background task (success case)."""

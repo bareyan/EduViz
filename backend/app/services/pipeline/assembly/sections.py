@@ -150,8 +150,7 @@ async def process_single_subsection(
     result = {
         "video_path": None,
         "audio_path": None,
-        "duration": 30,
-        "manim_code": None
+        "duration": 30
     }
 
     audio_path = section_dir / "audio.mp3"
@@ -198,8 +197,6 @@ async def process_single_subsection(
         if isinstance(manim_result, dict):
             if manim_result.get("manim_code_path"):
                 result["manim_code_path"] = manim_result["manim_code_path"]
-            if manim_result.get("manim_code"):
-                result["manim_code"] = manim_result["manim_code"]
     except Exception as e:
         import traceback
         logger.error(f"Manim error for section {section_index}: {e}")
@@ -234,8 +231,7 @@ async def process_segments_audio_first(
     result = {
         "video_path": None,
         "audio_path": None,
-        "duration": 0,
-        "manim_code": None
+        "duration": 0
     }
 
     num_segments = len(narration_segments)
@@ -354,8 +350,6 @@ async def process_segments_audio_first(
     write_status(section_dir, "generating_manim")
 
     video_path = None
-    manim_code = None
-
     try:
         manim_result = await manim_generator.generate_animation(
             section=unified_section,
@@ -366,8 +360,8 @@ async def process_segments_audio_first(
             job_id=job_id
         )
         video_path = manim_result.get("video_path")
-        if isinstance(manim_result, dict) and manim_result.get("manim_code"):
-            manim_code = manim_result["manim_code"]
+        if isinstance(manim_result, dict) and manim_result.get("manim_code_path"):
+            result["manim_code_path"] = manim_result["manim_code_path"]
     except Exception as e:
         logger.error(f"Manim error for unified section {section_index}: {e}")
         import traceback
@@ -379,8 +373,6 @@ async def process_segments_audio_first(
         logger.error(f"Section {section_index}: Failed to process unified video")
         write_status(section_dir, "fixing_error", "No video generated")
         return result
-
-    result["manim_code"] = manim_code
 
     # Step 4: Finalize audio
     final_audio_path = section_audio_path

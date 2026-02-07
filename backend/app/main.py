@@ -5,9 +5,13 @@ FastAPI application for generating 3Blue1Brown-style educational videos
 This is the main entry point that wires together all routes and services.
 """
 
+import asyncio
 import os
 import uuid
 import shutil
+from collections import defaultdict, deque
+from contextlib import asynccontextmanager
+from time import monotonic
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,7 +22,8 @@ from .config import (
     API_DESCRIPTION,
     API_VERSION,
     CORS_ORIGINS,
-    OUTPUT_DIR
+    OUTPUT_DIR,
+    UPLOAD_DIR,
 )
 from .routes import (
     upload_router,
@@ -28,7 +33,14 @@ from .routes import (
     sections_router,
     translation_router,
 )
-from .core import setup_logging, get_logger, set_request_id, clear_context
+from .core import (
+    setup_logging,
+    get_logger,
+    set_request_id,
+    clear_context,
+    parse_bool_env,
+    run_startup_runtime_checks,
+)
 
 # Initialize logging
 log_level = os.getenv("LOG_LEVEL", "INFO")
@@ -49,37 +61,164 @@ logger.info("Starting MathViz Backend API", extra={
     "json_logs": use_json_logs
 })
 
+# Runtime protection controls
+MAX_REQUEST_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(2 * 1024 * 1024)))
+RATE_LIMIT_ENABLED = parse_bool_env(os.getenv("RATE_LIMIT_ENABLED"), default=True)
+RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS_PER_MINUTE", "600"))
+RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+RATE_LIMIT_EXEMPT_PATHS = {"/", "/health"}
+_rate_limit_buckets: dict[str, deque[float]] = defaultdict(deque)
+
+async def _run_startup() -> None:
+    """Handle startup tasks like resuming interrupted jobs."""
+    from .services.infrastructure.orchestration import get_job_manager
+    from .services.infrastructure.storage import OutputCleanupService
+    from .services.pipeline.assembly import VideoGenerator
+    from app.models.status import JobStatus
+
+    job_manager = get_job_manager()
+    video_generator = VideoGenerator(str(OUTPUT_DIR))
+    cleanup_service = OutputCleanupService(OUTPUT_DIR, job_manager, upload_dir=UPLOAD_DIR)
+
+    strict_runtime = parse_bool_env(
+        os.getenv("STARTUP_STRICT_RUNTIME_CHECKS"),
+        default=os.getenv("ENV", "").lower() == "production",
+    )
+    runtime_report = run_startup_runtime_checks(
+        output_dir=OUTPUT_DIR,
+        upload_dir=UPLOAD_DIR,
+        strict_tools=strict_runtime,
+        strict_dirs=True,
+    )
+    app.state.runtime_report = runtime_report
+    logger.info("Startup runtime checks complete", extra={"runtime_report": runtime_report})
+
+    app.state.output_cleanup_task = None
+    try:
+        cleanup_service.run_once()
+        app.state.output_cleanup_task = asyncio.create_task(cleanup_service.run_periodic())
+    except Exception as exc:
+        logger.error("Failed to initialize output cleanup", extra={"error": str(exc)}, exc_info=True)
+
+    # Track jobs being resumed to avoid duplicate processing
+    resuming_jobs = set()
+
+    # Find and resume interrupted jobs
+    interrupted_jobs = job_manager.get_interrupted_jobs()
+
+    for job in interrupted_jobs:
+        job_id = job.id
+
+        if job_id in resuming_jobs:
+            continue
+        resuming_jobs.add(job_id)
+
+        # Check what progress exists
+        progress = video_generator.check_existing_progress(job_id)
+
+        if progress["has_script"] and progress["completed_sections"]:
+            print(f"[Startup] Found interrupted job {job_id} with {len(progress['completed_sections'])}/{progress['total_sections']} sections")
+
+            # Check if all sections are complete
+            if len(progress["completed_sections"]) == progress["total_sections"] and progress["total_sections"] > 0:
+                # All sections done, just need to combine
+                print(f"[Startup] Job {job_id} has all sections, attempting to combine...")
+                await _try_combine_job(job_id, job_manager, video_generator, progress)
+            else:
+                # Some sections incomplete - mark for manual resume
+                job_manager.update_job(
+                    job_id,
+                    JobStatus.FAILED,
+                    message=f"Interrupted: {len(progress['completed_sections'])}/{progress['total_sections']} sections complete. Use resume to continue."
+                )
+
+
+async def _run_shutdown() -> None:
+    """Stop background services gracefully."""
+    cleanup_task = getattr(app.state, "output_cleanup_task", None)
+    if cleanup_task:
+        cleanup_task.cancel()
+        try:
+            await cleanup_task
+        except asyncio.CancelledError:
+            pass
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    await _run_startup()
+    try:
+        yield
+    finally:
+        await _run_shutdown()
+
+
 # Create FastAPI app
 app = FastAPI(
     title=API_TITLE,
     description=API_DESCRIPTION,
-    version=API_VERSION
+    version=API_VERSION,
+    lifespan=lifespan,
 )
 
 
 @app.middleware("http")
 async def add_request_correlation(request: Request, call_next):
-    """Add correlation ID to all requests for tracing"""
+    """Add correlation ID, enforce request limits, and attach security headers."""
     request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
     set_request_id(request_id)
+    path = request.url.path
+    client_ip = request.client.host if request.client else "unknown"
 
-    logger.info(f"{request.method} {request.url.path}", extra={
+    logger.info(f"{request.method} {path}", extra={
         "method": request.method,
-        "path": request.url.path,
-        "client": request.client.host if request.client else None
+        "path": path,
+        "client": client_ip,
     })
 
-    response = await call_next(request)
-    response.headers["X-Request-ID"] = request_id
+    try:
+        # Upload route has its own streaming file-size guard.
+        if path != "/upload":
+            content_length = request.headers.get("content-length")
+            if content_length:
+                try:
+                    size = int(content_length)
+                    if size > MAX_REQUEST_BODY_BYTES:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=(
+                                f"Request body too large. Max allowed: "
+                                f"{MAX_REQUEST_BODY_BYTES // (1024 * 1024)}MB"
+                            ),
+                        )
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Invalid Content-Length header")
 
-    logger.info(f"Response: {response.status_code}", extra={
-        "status_code": response.status_code,
-        "method": request.method,
-        "path": request.url.path
-    })
+        if RATE_LIMIT_ENABLED and path not in RATE_LIMIT_EXEMPT_PATHS and not path.startswith("/outputs/"):
+            now = monotonic()
+            bucket = _rate_limit_buckets[client_ip]
+            window_start = now - RATE_LIMIT_WINDOW_SECONDS
+            while bucket and bucket[0] < window_start:
+                bucket.popleft()
+            if len(bucket) >= RATE_LIMIT_REQUESTS:
+                raise HTTPException(status_code=429, detail="Rate limit exceeded. Please retry later.")
+            bucket.append(now)
 
-    clear_context()
-    return response
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+
+        logger.info(f"Response: {response.status_code}", extra={
+            "status_code": response.status_code,
+            "method": request.method,
+            "path": path,
+        })
+
+        return response
+    finally:
+        clear_context()
 
 # CORS middleware for frontend
 app.add_middleware(
@@ -117,8 +256,8 @@ async def health_check():
     Health check endpoint for container orchestration.
     
     Validates all critical system dependencies:
-    - External tools (manim, ffmpeg, ruff, pyright)
-    - API credentials (GEMINI_API_KEY)
+    - External tools (manim, ffmpeg, ffprobe)
+    - Backend credentials (Gemini API key OR Vertex AI project config)
     - Disk space availability
     
     Returns 200 if healthy, 503 if any check fails.
@@ -135,7 +274,7 @@ async def health_check():
         "manim": {"command": "manim", "required": True},
         "ffmpeg": {"command": "ffmpeg", "required": True},
         "ffprobe": {"command": "ffprobe", "required": True},
-        "ruff": {"command": "ruff", "required": True},
+        "ruff": {"command": "ruff", "required": False},
         "pyright": {"command": "pyright", "required": False}  # Optional (requires Node.js)
     }
     
@@ -157,19 +296,36 @@ async def health_check():
             else:
                 logger.info(f"Health check: {tool_name} not found in PATH (optional - type checking disabled)")
     
-    # Check API credentials
-    gemini_key_exists = bool(os.getenv("GEMINI_API_KEY"))
-    checks["checks"]["gemini_api_key"] = {
-        "configured": gemini_key_exists
+    # Check backend credentials
+    use_vertex_ai = os.getenv("USE_VERTEX_AI", "false").lower() == "true"
+    checks["checks"]["llm_backend"] = {
+        "use_vertex_ai": use_vertex_ai,
+        "backend": "vertex_ai" if use_vertex_ai else "gemini_api",
     }
-    if not gemini_key_exists:
-        all_healthy = False
-        logger.warning("Health check: GEMINI_API_KEY not configured")
+
+    if use_vertex_ai:
+        gcp_project_id = os.getenv("GCP_PROJECT_ID")
+        gcp_location = os.getenv("GCP_LOCATION", "us-central1")
+        checks["checks"]["vertex_ai"] = {
+            "project_id_configured": bool(gcp_project_id),
+            "location": gcp_location,
+        }
+        if not gcp_project_id:
+            all_healthy = False
+            logger.warning("Health check: GCP_PROJECT_ID not configured (USE_VERTEX_AI=true)")
+    else:
+        gemini_key_exists = bool(os.getenv("GEMINI_API_KEY"))
+        checks["checks"]["gemini_api_key"] = {
+            "configured": gemini_key_exists
+        }
+        if not gemini_key_exists:
+            all_healthy = False
+            logger.warning("Health check: GEMINI_API_KEY not configured (USE_VERTEX_AI=false)")
     
-    # Check disk space (warn if < 1GB available)
+    # Check disk space (warn if < 1GB available) - cross-platform implementation
     try:
-        stat = os.statvfs(OUTPUT_DIR)
-        free_space_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+        disk_stats = shutil.disk_usage(OUTPUT_DIR)
+        free_space_gb = disk_stats.free / (1024 ** 3)
         checks["checks"]["disk_space"] = {
             "available_gb": round(free_space_gb, 2),
             "sufficient": free_space_gb > 1.0
@@ -182,6 +338,10 @@ async def health_check():
             "sufficient": False
         }
         logger.error(f"Health check: Failed to check disk space: {e}")
+
+    runtime_report = getattr(app.state, "runtime_report", None)
+    if runtime_report is not None:
+        checks["checks"]["runtime_startup"] = runtime_report
     
     # Set overall status
     if not all_healthy:
@@ -192,49 +352,6 @@ async def health_check():
         )
     
     return checks
-
-
-@app.on_event("startup")
-async def startup_event():
-    """Handle startup tasks like resuming interrupted jobs"""
-    from .services.infrastructure.orchestration import get_job_manager
-    from .services.pipeline.assembly import VideoGenerator
-    from app.models.status import JobStatus
-
-    job_manager = get_job_manager()
-    video_generator = VideoGenerator(str(OUTPUT_DIR))
-
-    # Track jobs being resumed to avoid duplicate processing
-    resuming_jobs = set()
-
-    # Find and resume interrupted jobs
-    interrupted_jobs = job_manager.get_interrupted_jobs()
-
-    for job in interrupted_jobs:
-        job_id = job.id
-
-        if job_id in resuming_jobs:
-            continue
-        resuming_jobs.add(job_id)
-
-        # Check what progress exists
-        progress = video_generator.check_existing_progress(job_id)
-
-        if progress["has_script"] and progress["completed_sections"]:
-            print(f"[Startup] Found interrupted job {job_id} with {len(progress['completed_sections'])}/{progress['total_sections']} sections")
-
-            # Check if all sections are complete
-            if len(progress["completed_sections"]) == progress["total_sections"] and progress["total_sections"] > 0:
-                # All sections done, just need to combine
-                print(f"[Startup] Job {job_id} has all sections, attempting to combine...")
-                await _try_combine_job(job_id, job_manager, video_generator, progress)
-            else:
-                # Some sections incomplete - mark for manual resume
-                job_manager.update_job(
-                    job_id,
-                    JobStatus.FAILED,
-                    message=f"Interrupted: {len(progress['completed_sections'])}/{progress['total_sections']} sections complete. Use resume to continue."
-                )
 
 
 async def _try_combine_job(job_id: str, job_manager, video_generator, progress):
@@ -252,16 +369,36 @@ async def _try_combine_job(job_id: str, job_manager, video_generator, progress):
         script = progress["script"]
         sections = script.get("sections", [])
 
-        with open(concat_list_path, "w") as f:
+        added_videos = 0
+        with open(concat_list_path, "w", encoding="utf-8") as f:
             for i, section in enumerate(sections):
                 section_id = section.get("id", f"section_{i}")
-                section_path = sections_dir / section_id
-                if section_path.exists():
-                    for file in os.listdir(section_path):
-                        if file.endswith(".mp4"):
-                            video_path = section_path / file
-                            f.write(f"file '{video_path}'\n")
-                            break
+                # Section directories are index-based in the pipeline, with section_id as legacy fallback.
+                candidate_dirs = [sections_dir / str(i), sections_dir / section_id]
+                section_path = next((p for p in candidate_dirs if p.exists() and p.is_dir()), None)
+                if not section_path:
+                    continue
+
+                video_path = None
+                preferred = section_path / "final_section.mp4"
+                legacy_merged = sections_dir / f"merged_{i}.mp4"
+
+                if preferred.exists():
+                    video_path = preferred
+                elif legacy_merged.exists():
+                    video_path = legacy_merged
+                else:
+                    mp4_files = sorted([p for p in section_path.iterdir() if p.suffix.lower() == ".mp4"])
+                    if mp4_files:
+                        video_path = mp4_files[0]
+
+                if video_path:
+                    escaped = str(video_path).replace("'", "'\\''")
+                    f.write(f"file '{escaped}'\n")
+                    added_videos += 1
+
+        if added_videos == 0:
+            raise RuntimeError("No section videos found for startup combine")
 
         # Run ffmpeg
         final_video_path = job_output_dir / "final_video.mp4"
@@ -309,6 +446,12 @@ async def _try_combine_job(job_id: str, job_manager, video_generator, progress):
     except Exception as e:
         print(f"[Startup] Error combining job {job_id}: {e}")
         job_manager.update_job(job_id, JobStatus.FAILED, message=f"Failed to combine: {str(e)}")
+    finally:
+        try:
+            if concat_list_path.exists():
+                concat_list_path.unlink()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

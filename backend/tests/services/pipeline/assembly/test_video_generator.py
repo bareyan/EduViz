@@ -89,3 +89,24 @@ class TestVideoGenerator:
                 
                 generator._generate_script.assert_not_called()
                 mock_tracker.load_script.assert_called_once()
+
+    async def test_cleanup_keeps_only_final_and_translations(self, generator, tmp_path):
+        """Completed jobs should keep only final video artifacts."""
+        job_dir = tmp_path / "job-keep-final"
+        sections_dir = job_dir / "sections"
+        sections_dir.mkdir(parents=True)
+
+        (job_dir / "final_video.mp4").write_text("video")
+        (job_dir / "script.json").write_text("{}")
+        (job_dir / "concat_list.txt").write_text("tmp")
+        (sections_dir / "0").mkdir(parents=True)
+        (sections_dir / "0" / "scene.py").write_text("code")
+        (job_dir / "translations").mkdir()
+
+        await generator._cleanup_intermediate_files(sections_dir)
+
+        assert (job_dir / "final_video.mp4").exists()
+        assert (job_dir / "translations").exists()
+        assert not (job_dir / "sections").exists()
+        assert not (job_dir / "script.json").exists()
+        assert not (job_dir / "concat_list.txt").exists()
