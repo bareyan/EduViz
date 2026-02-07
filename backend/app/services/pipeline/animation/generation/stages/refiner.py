@@ -138,105 +138,105 @@ class Refiner:
         for turn_idx in range(1, self.max_attempts + 1):
             with tempfile.TemporaryDirectory() as frames_dir_str:
                 frames_dir = Path(frames_dir_str)
-                
+
                 stats["attempts"] += 1
 
-            # ── Phase 1: Static validation ───────────────────────────
-            static_result = await self.static_validator.validate(current_code)
+                # ── Phase 1: Static validation ───────────────────────────
+                static_result = await self.static_validator.validate(current_code)
 
-            if not static_result.valid:
-                stats["static_failures"] += 1
-                self._log_issues("static", turn_idx, static_result.issues, section_title)
-                error_context = static_result.error_summary()
-                self._report_status(status_callback, "fixing_manim", section_title, turn_idx)
-                current_code = await self._apply_llm_fix(
-                    current_code, error_context, turn_idx, context
+                if not static_result.valid:
+                    stats["static_failures"] += 1
+                    self._log_issues("static", turn_idx, static_result.issues, section_title)
+                    error_context = static_result.error_summary()
+                    self._report_status(status_callback, "fixing_manim", section_title, turn_idx)
+                    current_code = await self._apply_llm_fix(
+                        current_code, error_context, turn_idx, context
+                    )
+                    stats["llm_fixes"] += 1
+                    continue
+
+                logger.info(f"Static validation PASSED (Turn {turn_idx})")
+
+                # ── Phase 2: Known-pattern deterministic fixes ───────────
+                current_code, pattern_fixes = (
+                    self.deterministic_fixer.fix_known_patterns(current_code)
                 )
-                stats["llm_fixes"] += 1
-                continue
+                stats["deterministic_fixes"] += pattern_fixes
+                if pattern_fixes:
+                    logger.info(
+                        f"Applied {pattern_fixes} known-pattern fixes",
+                        extra={
+                            "section_title": section_title,
+                            "turn": turn_idx,
+                            "refinement_stage": "pattern_fix",
+                            "fixes": pattern_fixes,
+                        },
+                    )
 
-            logger.info(f"Static validation PASSED (Turn {turn_idx})")
-
-            # ── Phase 2: Known-pattern deterministic fixes ───────────
-            current_code, pattern_fixes = (
-                self.deterministic_fixer.fix_known_patterns(current_code)
-            )
-            stats["deterministic_fixes"] += pattern_fixes
-            if pattern_fixes:
-                logger.info(
-                    f"Applied {pattern_fixes} known-pattern fixes",
-                    extra={
-                        "section_title": section_title,
-                        "turn": turn_idx,
-                        "refinement_stage": "pattern_fix",
-                        "fixes": pattern_fixes,
-                    },
+                # ── Phase 3: Runtime validation (with spatial checks) ────
+                runtime_result = await self.runtime_validator.validate(
+                    current_code, enable_spatial_checks=True, frames_dir=frames_dir
                 )
 
-            # ── Phase 3: Runtime validation (with spatial checks) ────
-            runtime_result = await self.runtime_validator.validate(
-                current_code, enable_spatial_checks=True, frames_dir=frames_dir
-            )
+                # Resolve frame paths for verification
+                for issue in runtime_result.issues:
+                    if issue.details and issue.details.get("frame_file"):
+                        frame_path = frames_dir / issue.details["frame_file"]
+                        if frame_path.exists():
+                            issue.details["frame_path"] = str(frame_path)
 
-            # Resolve frame paths for verification
-            for issue in runtime_result.issues:
-                if issue.details and issue.details.get("frame_file"):
-                    frame_path = frames_dir / issue.details["frame_file"]
-                    if frame_path.exists():
-                        issue.details["frame_path"] = str(frame_path)
+                self.last_runtime_issues = runtime_result.issues
 
-            self.last_runtime_issues = runtime_result.issues
+                if runtime_result.valid:
+                    logger.info(
+                        f"Refinement successful for '{section_title}' "
+                        f"(Turn {turn_idx})",
+                        extra={**stats, "refinement_stage": "success"},
+                    )
+                    return current_code, True
 
-            if runtime_result.valid:
-                logger.info(
-                    f"Refinement successful for '{section_title}' "
-                    f"(Turn {turn_idx})",
-                    extra={**stats, "refinement_stage": "success"},
+                # ── Phase 4: Smart triage ────────────────────────────────
+                stats["runtime_failures"] += 1
+                self._log_issues(
+                    "runtime", turn_idx, runtime_result.issues, section_title
                 )
-                return current_code, True
 
-            # ── Phase 4: Smart triage ────────────────────────────────
-            stats["runtime_failures"] += 1
-            self._log_issues(
-                "runtime", turn_idx, runtime_result.issues, section_title
-            )
-
-            current_code, triage_stats = await self._triage_issues(
-                current_code,
-                runtime_result.issues,
-                turn_idx,
-                section_title,
-                context,
-                status_callback=status_callback,
-            )
-            stats["deterministic_fixes"] += triage_stats["deterministic"]
-            stats["llm_fixes"] += triage_stats["llm"]
-            stats["deferred_to_visual_qc"] += triage_stats.get("deferred_to_visual_qc", 0)
-            stats["skipped_whitelisted"] += triage_stats.get("skipped_whitelisted", 0)
-
-            # Always re-validate when we changed code this turn.
-            if triage_stats.get("deterministic", 0) > 0 or triage_stats.get("llm", 0) > 0:
-                logger.info(
-                    f"Re-running validation after fixes for '{section_title}' (Turn {turn_idx})",
-                    extra={
-                        "section_title": section_title,
-                        "turn": turn_idx,
-                        "deterministic_fixes": triage_stats.get("deterministic", 0),
-                        "llm_fixes": triage_stats.get("llm", 0),
-                        "refinement_stage": "post_fix_revalidate",
-                    },
+                current_code, triage_stats = await self._triage_issues(
+                    current_code,
+                    runtime_result.issues,
+                    turn_idx,
+                    section_title,
+                    context,
+                    status_callback=status_callback,
                 )
-                continue
+                stats["deterministic_fixes"] += triage_stats["deterministic"]
+                stats["llm_fixes"] += triage_stats["llm"]
+                stats["deferred_to_visual_qc"] += triage_stats.get("deferred_to_visual_qc", 0)
+                stats["skipped_whitelisted"] += triage_stats.get("skipped_whitelisted", 0)
 
-            # If triage resolved everything without code changes
-            # (e.g., all remaining issues deferred/whitelisted/verified false-positive),
-            # we can proceed.
-            if triage_stats.get("unresolved", 0) == 0:
-                logger.info(
-                    f"All issues resolved/discarded for '{section_title}' (Turn {turn_idx})",
-                    extra={**stats, "refinement_stage": "triage_resolved"},
-                )
-                return current_code, True
+                # Always re-validate when we changed code this turn.
+                if triage_stats.get("deterministic", 0) > 0 or triage_stats.get("llm", 0) > 0:
+                    logger.info(
+                        f"Re-running validation after fixes for '{section_title}' (Turn {turn_idx})",
+                        extra={
+                            "section_title": section_title,
+                            "turn": turn_idx,
+                            "deterministic_fixes": triage_stats.get("deterministic", 0),
+                            "llm_fixes": triage_stats.get("llm", 0),
+                            "refinement_stage": "post_fix_revalidate",
+                        },
+                    )
+                    continue
+
+                # If triage resolved everything without code changes
+                # (e.g., all remaining issues deferred/whitelisted/verified false-positive),
+                # we can proceed.
+                if triage_stats.get("unresolved", 0) == 0:
+                    logger.info(
+                        f"All issues resolved/discarded for '{section_title}' (Turn {turn_idx})",
+                        extra={**stats, "refinement_stage": "triage_resolved"},
+                    )
+                    return current_code, True
 
         # ── Exhausted ────────────────────────────────────────────────
         logger.warning(
@@ -308,6 +308,13 @@ class Refiner:
 
         # Tier 1: Verify uncertain issues first (if verifier available)
         if partitions["uncertain"]:
+            # Always defer uncertain issues to Visual QC for post-render
+            # verification against the actual rendered video frames.
+            # The IssueVerifier (code-only analysis) may also process them
+            # inline, but Visual QC is the authoritative visual check.
+            self.pending_uncertain_issues.extend(partitions["uncertain"])
+            triage_stats["deferred_to_visual_qc"] = len(partitions["uncertain"])
+
             if self.issue_verifier:
                 logger.info(
                     f"Verifying {len(partitions['uncertain'])} uncertain issues with IssueVerifier"
@@ -335,10 +342,6 @@ class Refiner:
                     )
                     self.whitelist.add_all(verification_result.false_positives)
                     triage_stats["verified_false_positive"] = len(verification_result.false_positives)
-            else:
-                # No verifier available - defer all uncertain issues to Visual QC
-                self.pending_uncertain_issues.extend(partitions["uncertain"])
-                triage_stats["deferred_to_visual_qc"] = len(partitions["uncertain"])
 
         # Tier 2: Deterministic fixes for all auto-fixable real issues
         deterministic_batch = list(partitions["certain_auto_fixable"])

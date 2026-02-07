@@ -53,5 +53,11 @@ def test_injected_text_oob_is_not_tolerated():
 
 def test_injected_stroke_crossing_is_active():
     assert "STROKE_THROUGH_RATIO = 0.12" in INJECTED_METHOD
+    assert "STROKE_TEXT_NEAR_GAP = 0.08" in INJECTED_METHOD
     assert "def _stroke_path_hits_text" in INJECTED_METHOD
+    assert "def _bbox_distance" in INJECTED_METHOD
     assert "path_crosses_text = _stroke_path_hits_text(t, o)" in INJECTED_METHOD
+    assert "near_collision = (" in INJECTED_METHOD
+    assert "if fill_op is not None and fill_op > 0.2 and not is_line_like:" in INJECTED_METHOD
+    assert "\"Arrow\" in obj_type" in INJECTED_METHOD
+    assert "\"Axes\" in obj_type" in INJECTED_METHOD

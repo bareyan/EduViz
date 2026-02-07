@@ -5,6 +5,7 @@ Section processor - handles individual section and segment processing
 import os
 import re
 import asyncio
+import struct
 import subprocess
 import shutil
 from typing import Dict, Any, List, Optional, TYPE_CHECKING
@@ -292,9 +293,15 @@ async def _generate_audio_whole_section(
     for seg in narration_segments:
         cleaned_texts.append(clean_narration_for_tts(seg.get("text", "")))
 
-    # Join segments with special pause marker for detection
-    # Multiple periods create a noticeable pause in TTS output
-    PAUSE_MARKER = ". . . . . . . . . ."
+    # Join segments with a very long pause marker so Gemini TTS produces
+    # an unmistakable ~3-5 s silence between segments.  Short dot sequences
+    # (the old marker) sometimes cause Gemini to produce breathy "haaah"
+    # artifacts instead of silence; a much longer marker guarantees a
+    # reliably long pause that we detect and trim after generation.
+    PAUSE_MARKER = (
+        "...... ...... ...... ...... ...... "
+        "...... ...... ...... ...... ......"
+    )
     full_text = f" {PAUSE_MARKER} ".join(cleaned_texts)
 
     section_audio_path = section_dir / "section_audio.mp3"
@@ -315,35 +322,64 @@ async def _generate_audio_whole_section(
         f"({total_duration:.1f}s) with 1 API call for {len(narration_segments)} segments"
     )
 
-    # Detect pauses and split audio to get exact segment boundaries
-    pause_times = await _detect_silence_boundaries(str(section_audio_path))
-    
-    if len(pause_times) >= len(narration_segments) - 1:
-        # Successfully detected pauses between segments
-        logger.info(f"Section {section_index}: Detected {len(pause_times)} pauses, splitting into {len(narration_segments)} segments")
+    num_boundaries = len(narration_segments) - 1
+
+    if num_boundaries == 0:
+        # Single segment — no splitting needed
+        seg_dir = section_dir / "seg_0"
+        seg_dir.mkdir(exist_ok=True)
+        shutil.copy2(str(section_audio_path), str(seg_dir / "audio.mp3"))
+        return [
+            {
+                "segment_index": 0,
+                "text": cleaned_texts[0] if cleaned_texts else "",
+                "audio_path": str(seg_dir / "audio.mp3"),
+                "duration": total_duration,
+                "start_time": 0.0,
+                "end_time": total_duration,
+                "seg_dir": str(seg_dir),
+            }
+        ], total_duration
+
+    # ---- Find segment boundaries via energy-valley analysis ----
+    # This always finds exactly N-1 boundaries regardless of whether
+    # Gemini produced clean silence, breathing, or other artifacts.
+    pause_regions = await _find_energy_valleys(
+        str(section_audio_path),
+        num_valleys=num_boundaries,
+    )
+
+    if len(pause_regions) >= num_boundaries:
+        logger.info(
+            f"Section {section_index}: Found {len(pause_regions)} energy valleys, "
+            f"splitting into {len(narration_segments)} segments"
+        )
         segment_audio_info = await _split_audio_at_pauses(
             section_audio_path=str(section_audio_path),
-            pause_times=pause_times,
+            pause_regions=pause_regions,
             narration_segments=narration_segments,
             cleaned_texts=cleaned_texts,
             section_dir=section_dir,
-            total_duration=total_duration
+            total_duration=total_duration,
         )
-        cumulative_time = sum(s["duration"] for s in segment_audio_info)
-        return segment_audio_info, cumulative_time
-    else:
-        # Fallback: if pause detection failed, use proportional distribution
-        logger.warning(
-            f"Section {section_index}: Only detected {len(pause_times)} pauses "
-            f"for {len(narration_segments)} segments, using proportional timing"
-        )
-        return await _distribute_timing_proportionally(
-            narration_segments=narration_segments,
-            cleaned_texts=cleaned_texts,
-            section_audio_path=str(section_audio_path),
-            section_dir=section_dir,
-            total_duration=total_duration
-        )
+        if segment_audio_info:
+            cumulative_time = sum(s["duration"] for s in segment_audio_info)
+            return segment_audio_info, cumulative_time
+
+    # Last-resort fallback (should be very rare — only if the audio
+    # file is corrupt or contains pure silence/noise).
+    logger.warning(
+        f"Section {section_index}: Energy-valley detection failed "
+        f"({len(pause_regions)}/{num_boundaries} found), "
+        f"using proportional timing"
+    )
+    return await _distribute_timing_proportionally(
+        narration_segments=narration_segments,
+        cleaned_texts=cleaned_texts,
+        section_audio_path=str(section_audio_path),
+        section_dir=section_dir,
+        total_duration=total_duration,
+    )
 
 
 async def _distribute_timing_proportionally(
@@ -384,11 +420,161 @@ async def _distribute_timing_proportionally(
     return segment_audio_info, cumulative_time
 
 
-async def _detect_silence_boundaries(audio_path: str, silence_thresh: str = "-40dB", min_silence_duration: float = 0.3) -> List[float]:
-    """Detect silence/pause boundaries in audio file using ffmpeg.
-    
-    Returns list of timestamps (in seconds) where silences occur.
-    These timestamps represent the middle point of each detected silence.
+# ---------------------------------------------------------------------------
+# Energy-valley segment boundary detection
+# ---------------------------------------------------------------------------
+
+_VALLEY_SAMPLE_RATE = 16000  # Hz — low is fine, we only need the energy envelope
+_VALLEY_WINDOW_SEC = 0.05    # 50 ms windows for RMS computation
+_VALLEY_SMOOTH_SEC = 0.5     # smoothing kernel
+
+
+async def _find_energy_valleys(
+    audio_path: str,
+    num_valleys: int,
+    window_sec: float = _VALLEY_WINDOW_SEC,
+    smooth_sec: float = _VALLEY_SMOOTH_SEC,
+    min_valley_sec: float = 0.3,
+) -> List[tuple[float, float]]:
+    """Find the *num_valleys* quietest regions in *audio_path*.
+
+    Unlike threshold-based ``silencedetect``, this approach **always** finds
+    exactly *num_valleys* boundaries regardless of absolute volume levels.
+    It works reliably even when Gemini TTS inserts breathing artifacts
+    ("haaah") instead of clean silence, because the energy in a breathy
+    pause is still significantly lower than normal speech.
+
+    Algorithm
+    ---------
+    1. Decode audio → raw mono 16-bit PCM via ffmpeg (cheap).
+    2. Compute RMS energy per 50 ms window.
+    3. Smooth with a ½-second rolling average.
+    4. Find contiguous regions whose energy is below the median.
+    5. Score each region by ``depth × width`` (wider & deeper = better).
+    6. Return the top *num_valleys* regions sorted by time.
+
+    Returns ``[(start_sec, end_sec), ...]``.
+    """
+    if num_valleys <= 0:
+        return []
+
+    try:
+        energy, window_sec_actual = await _extract_energy_envelope(
+            audio_path, window_sec, smooth_sec
+        )
+    except Exception as e:
+        logger.error(f"Energy extraction failed: {e}")
+        return []
+
+    if len(energy) < 3:
+        return []
+
+    # --- Find valleys: contiguous regions below the median ---
+    median_e = sorted(energy)[len(energy) // 2]
+    min_valley_windows = max(1, int(min_valley_sec / window_sec_actual))
+
+    regions: list[tuple[float, float, float]] = []  # (start_t, end_t, score)
+    in_valley = False
+    v_start = 0
+
+    for i, e in enumerate(energy):
+        if e < median_e and not in_valley:
+            v_start = i
+            in_valley = True
+        elif (e >= median_e or i == len(energy) - 1) and in_valley:
+            v_end = i if e >= median_e else i + 1
+            width = v_end - v_start
+            if width >= min_valley_windows:
+                depth = median_e - min(energy[v_start:v_end])
+                score = depth * (width ** 1.5)  # favour wider valleys
+                t_start = v_start * window_sec_actual
+                t_end = v_end * window_sec_actual
+                regions.append((t_start, t_end, score))
+            in_valley = False
+
+    # Take top N by score, then sort chronologically
+    regions.sort(key=lambda r: r[2], reverse=True)
+    top = regions[:num_valleys]
+    top.sort(key=lambda r: r[0])
+
+    result = [(s, e) for s, e, _ in top]
+    logger.info(
+        f"Energy-valley: found {len(regions)} candidate valleys, "
+        f"selected top {len(result)}: "
+        f"{[(f'{s:.2f}', f'{e:.2f}') for s, e in result]}"
+    )
+    return result
+
+
+async def _extract_energy_envelope(
+    audio_path: str,
+    window_sec: float = _VALLEY_WINDOW_SEC,
+    smooth_sec: float = _VALLEY_SMOOTH_SEC,
+) -> tuple[list[float], float]:
+    """Decode *audio_path* to mono PCM and return a smoothed energy envelope.
+
+    Returns ``(energy_list, actual_window_sec)``.
+    """
+    cmd = [
+        "ffmpeg", "-i", audio_path,
+        "-ac", "1",
+        "-ar", str(_VALLEY_SAMPLE_RATE),
+        "-f", "s16le",
+        "-acodec", "pcm_s16le",
+        "pipe:1",
+    ]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    raw_pcm, _ = await proc.communicate()
+
+    if not raw_pcm:
+        raise RuntimeError("ffmpeg returned no PCM data")
+
+    num_samples = len(raw_pcm) // 2
+    samples = struct.unpack(f"<{num_samples}h", raw_pcm)
+
+    # --- RMS per window ---
+    win_samples = max(1, int(_VALLEY_SAMPLE_RATE * window_sec))
+    num_windows = num_samples // win_samples
+
+    energy: list[float] = []
+    for i in range(num_windows):
+        start = i * win_samples
+        chunk = samples[start : start + win_samples]
+        rms = (sum(s * s for s in chunk) / len(chunk)) ** 0.5
+        energy.append(rms)
+
+    if not energy:
+        raise RuntimeError("Audio too short to analyse")
+
+    # --- Smooth with rolling average ---
+    smooth_w = max(1, int(smooth_sec / window_sec))
+    half = smooth_w // 2
+    smoothed: list[float] = []
+    for i in range(len(energy)):
+        lo = max(0, i - half)
+        hi = min(len(energy), i + half + 1)
+        smoothed.append(sum(energy[lo:hi]) / (hi - lo))
+
+    return smoothed, window_sec
+
+
+async def _detect_silence_boundaries(
+    audio_path: str,
+    silence_thresh: str = "-35dB",
+    min_silence_duration: float = 0.8,
+    merge_gap: float = 1.0,
+) -> List[tuple[float, float]]:
+    """Detect silence/pause regions in audio using ffmpeg ``silencedetect``.
+
+    Returns a list of ``(start, end)`` tuples marking each detected silence
+    region.  Nearby silences separated by less than *merge_gap* seconds are
+    merged into a single region — this handles intermittent breathing /
+    "haaah" artifacts that Gemini TTS sometimes produces inside what should
+    be a long pause.
     """
     cmd = [
         "ffmpeg",
@@ -397,7 +583,7 @@ async def _detect_silence_boundaries(audio_path: str, silence_thresh: str = "-40
         "-f", "null",
         "-"
     ]
-    
+
     try:
         result = await asyncio.create_subprocess_exec(
             *cmd,
@@ -406,11 +592,11 @@ async def _detect_silence_boundaries(audio_path: str, silence_thresh: str = "-40
         )
         stdout, stderr = await result.communicate()
         output = stderr.decode('utf-8', errors='ignore')
-        
+
         # Parse silence_start and silence_end from ffmpeg output
-        silence_starts = []
-        silence_ends = []
-        
+        silence_starts: list[float] = []
+        silence_ends: list[float] = []
+
         for line in output.split('\n'):
             if 'silence_start:' in line:
                 try:
@@ -424,79 +610,161 @@ async def _detect_silence_boundaries(audio_path: str, silence_thresh: str = "-40
                     silence_ends.append(float(time_str))
                 except (IndexError, ValueError):
                     pass
-        
-        # Calculate midpoint of each silence as the boundary
-        pause_times = []
-        for start, end in zip(silence_starts, silence_ends):
-            midpoint = (start + end) / 2.0
-            pause_times.append(midpoint)
-        
-        logger.debug(f"Detected {len(pause_times)} silence boundaries at: {[f'{t:.2f}s' for t in pause_times]}")
-        return pause_times
-        
+
+        raw_regions: list[tuple[float, float]] = list(zip(silence_starts, silence_ends))
+
+        # ---- merge nearby silences ----
+        # When Gemini inserts a breathy artifact inside a long pause the
+        # silence detector sees two (or more) separate silence chunks with
+        # a brief noisy gap between them.  Merging turns them back into one
+        # contiguous pause region.
+        if not raw_regions:
+            return []
+
+        merged: list[tuple[float, float]] = [raw_regions[0]]
+        for start, end in raw_regions[1:]:
+            prev_start, prev_end = merged[-1]
+            if start - prev_end <= merge_gap:
+                merged[-1] = (prev_start, end)  # extend
+            else:
+                merged.append((start, end))
+
+        logger.debug(
+            f"Detected {len(raw_regions)} raw silences, merged into "
+            f"{len(merged)} pause regions: "
+            f"{[(f'{s:.2f}', f'{e:.2f}') for s, e in merged]}"
+        )
+        return merged
+
     except Exception as e:
         logger.error(f"Error detecting silence: {e}")
         return []
 
 
+async def _trim_segment_edges(
+    input_path: str,
+    output_path: str,
+    threshold: str = "-35dB",
+    min_silence: float = 0.1,
+) -> None:
+    """Trim leading and trailing silence from an audio segment.
+
+    Uses ffmpeg's ``silenceremove`` filter with the *reverse* trick so
+    that both the head and tail of the file are cleaned in one pass.
+    Falls back to a raw copy if the filter fails.
+    """
+    af_filter = (
+        f"silenceremove=start_periods=1:start_silence={min_silence}:start_threshold={threshold},"
+        f"areverse,"
+        f"silenceremove=start_periods=1:start_silence={min_silence}:start_threshold={threshold},"
+        f"areverse"
+    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", input_path,
+        "-af", af_filter,
+        "-acodec", "libmp3lame", "-ab", "192k",
+        output_path,
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            logger.warning(f"Edge trim failed, using raw segment: {stderr.decode()[:200]}")
+            shutil.copy2(input_path, output_path)
+    except Exception as e:
+        logger.warning(f"Edge trim error, using raw: {e}")
+        shutil.copy2(input_path, output_path)
+    finally:
+        # Clean up the raw intermediate file
+        try:
+            if os.path.abspath(input_path) != os.path.abspath(output_path):
+                os.remove(input_path)
+        except OSError:
+            pass
+
+
 async def _split_audio_at_pauses(
     section_audio_path: str,
-    pause_times: List[float],
+    pause_regions: List[tuple[float, float]],
     narration_segments: List[Dict[str, Any]],
     cleaned_texts: List[str],
     section_dir: Path,
-    total_duration: float
+    total_duration: float,
 ) -> List[Dict[str, Any]]:
-    """Split audio file at detected pause boundaries and create individual segment audio files.
-    
-    Returns segment_audio_info with exact timings for each segment.
+    """Split audio at detected pause regions, extracting speech-only segments.
+
+    Each segment spans from the *end* of the previous pause to the *start*
+    of the next pause, so the long Gemini pauses (and any breathy artifacts
+    inside them) are excluded from the individual segment files.
+
+    After extraction each segment's leading/trailing silence is trimmed to
+    produce clean audio.
     """
     segment_audio_info = []
-    
-    # Build split points: start, pause1, pause2, ..., pauseN, end
-    split_points = [0.0] + pause_times + [total_duration]
-    
-    # Ensure we have the right number of segments
     num_segments = len(narration_segments)
-    if len(split_points) - 1 > num_segments:
-        # Too many pauses detected, use only the first N-1
-        split_points = [0.0] + pause_times[:num_segments-1] + [total_duration]
-    elif len(split_points) - 1 < num_segments:
-        # Not enough pauses, this shouldn't happen if we reach here
-        logger.warning(f"Insufficient split points: {len(split_points)-1} for {num_segments} segments")
+
+    # Trim excess pause regions
+    regions = pause_regions[:num_segments - 1] if len(pause_regions) >= num_segments else pause_regions
+
+    if len(regions) < num_segments - 1:
+        logger.warning(f"Insufficient pause regions: {len(regions)} for {num_segments} segments")
         return []
-    
-    # Extract each segment
+
+    # Build speech-only boundaries:
+    #   seg 0  →  [0, regions[0].start]
+    #   seg i  →  [regions[i-1].end, regions[i].start]
+    #   seg N  →  [regions[-1].end, total_duration]
+    speech_boundaries: list[tuple[float, float]] = []
     for seg_idx in range(num_segments):
-        start_time = split_points[seg_idx]
-        end_time = split_points[seg_idx + 1]
+        if seg_idx == 0:
+            start = 0.0
+            end = regions[0][0] if regions else total_duration
+        elif seg_idx == num_segments - 1:
+            start = regions[-1][1]
+            end = total_duration
+        else:
+            start = regions[seg_idx - 1][1]
+            end = regions[seg_idx][0]
+        speech_boundaries.append((start, end))
+
+    # Extract each segment
+    for seg_idx, (start_time, end_time) in enumerate(speech_boundaries):
         seg_duration = end_time - start_time
-        
+
         seg_dir = section_dir / f"seg_{seg_idx}"
         seg_dir.mkdir(exist_ok=True)
+        raw_seg_path = seg_dir / "audio_raw.mp3"
         seg_audio_path = seg_dir / "audio.mp3"
-        
-        # Extract segment using ffmpeg
+
+        # Extract the speech region from the full audio
         cmd = [
             "ffmpeg", "-y",
             "-i", section_audio_path,
             "-ss", str(start_time),
             "-to", str(end_time),
             "-c", "copy",
-            str(seg_audio_path)
+            str(raw_seg_path),
         ]
-        
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
             )
             await proc.communicate()
-            
-            # Verify the extracted segment
+
+            # Trim any residual silence at segment edges
+            await _trim_segment_edges(str(raw_seg_path), str(seg_audio_path))
+
             actual_duration = await get_audio_duration(str(seg_audio_path))
-            
+
             segment_info = {
                 "segment_index": seg_idx,
                 "text": cleaned_texts[seg_idx] if seg_idx < len(cleaned_texts) else "",
@@ -504,12 +772,15 @@ async def _split_audio_at_pauses(
                 "duration": actual_duration,
                 "start_time": start_time,
                 "end_time": end_time,
-                "seg_dir": str(seg_dir)
+                "seg_dir": str(seg_dir),
             }
             segment_audio_info.append(segment_info)
-            
-            logger.debug(f"Segment {seg_idx}: {actual_duration:.2f}s (exact, {start_time:.2f}s - {end_time:.2f}s)")
-            
+
+            logger.debug(
+                f"Segment {seg_idx}: {actual_duration:.2f}s "
+                f"(speech {start_time:.2f}s–{end_time:.2f}s)"
+            )
+
         except Exception as e:
             logger.error(f"Error extracting segment {seg_idx}: {e}")
             # Fallback: use the full audio with estimated timing
@@ -520,10 +791,10 @@ async def _split_audio_at_pauses(
                 "duration": seg_duration,
                 "start_time": start_time,
                 "end_time": end_time,
-                "seg_dir": str(seg_dir)
+                "seg_dir": str(seg_dir),
             }
             segment_audio_info.append(segment_info)
-    
+
     return segment_audio_info
 
 

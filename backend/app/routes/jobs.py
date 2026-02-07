@@ -8,6 +8,7 @@ Extracted helper functions handle complex logic like building section progress
 to keep routes focused on HTTP handling.
 """
 
+import os
 import shutil
 import json
 from pathlib import Path
@@ -148,13 +149,31 @@ async def get_section_video(job_id: str, section_index: int):
 
 @router.get("/voices")
 async def get_available_voices(language: str = "en"):
-    """Get list of available TTS voices"""
-
+    """Get list of available TTS voices based on configured TTS engine"""
+    from ..core.voice_catalog import (
+        get_gemini_tts_voices_for_language,
+        get_gemini_tts_available_languages,
+        get_gemini_tts_default_voice
+    )
+    
+    tts_engine = os.getenv("TTS_ENGINE", "edge").lower().strip()
+    
+    if tts_engine == "gemini":
+        return {
+            "voices": get_gemini_tts_voices_for_language(language),
+            "languages": get_gemini_tts_available_languages(),
+            "current_language": language,
+            "default_voice": get_gemini_tts_default_voice(language),
+            "engine": "gemini"
+        }
+    
+    # Default: Edge TTS
     return {
         "voices": TTSEngine.get_voices_for_language(language),
         "languages": TTSEngine.get_available_languages(),
         "current_language": language,
-        "default_voice": TTSEngine.get_default_voice_for_language(language)
+        "default_voice": TTSEngine.get_default_voice_for_language(language),
+        "engine": "edge"
     }
 
 

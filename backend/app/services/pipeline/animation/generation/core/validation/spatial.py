@@ -56,6 +56,8 @@ def _perform_spatial_checks(self):
     STROKE_THROUGH_RATIO = 0.12
     STROKE_MAX_THICKNESS = 0.25
     STROKE_MIN_LENGTH = 0.6
+    STROKE_TEXT_PROXIMITY_PAD = 0.10
+    STROKE_TEXT_NEAR_GAP = 0.08
 
     # ── Types we expect to overlap (not bugs) ──
     EFFECT_TYPES = frozenset({
@@ -145,6 +147,14 @@ def _perform_spatial_checks(self):
         except Exception:
             return 0.0, 0.0, 0.0, 0.0
 
+    def _bbox_distance(m1, m2):
+        """Euclidean distance between two axis-aligned bboxes (0 if touching/overlapping)."""
+        l1, r1, b1, t1 = _bbox(m1)
+        l2, r2, b2, t2 = _bbox(m2)
+        dx = max(0.0, l2 - r1, l1 - r2)
+        dy = max(0.0, b2 - t1, b1 - t2)
+        return (dx * dx + dy * dy) ** 0.5
+
     def _segment_hits_bbox(p1, p2, bbox, pad):
         left, right, bottom, top = bbox
         x1, y1 = p1[0], p1[1]
@@ -174,9 +184,9 @@ def _perform_spatial_checks(self):
         try:
             stroke_width = stroke_mobj.get_stroke_width() if hasattr(stroke_mobj, "get_stroke_width") else 0.0
             # Convert pixel-ish stroke widths to a conservative world-space pad.
-            pad = max(0.05, min(0.20, float(stroke_width) * 0.01))
+            pad = max(STROKE_TEXT_PROXIMITY_PAD, min(0.24, float(stroke_width) * 0.01))
         except Exception:
-            pad = 0.08
+            pad = STROKE_TEXT_PROXIMITY_PAD
 
         text_bbox = _bbox(text_mobj)
         for i in range(len(points) - 1):
@@ -198,6 +208,33 @@ def _perform_spatial_checks(self):
                 return True
             if hasattr(a, "get_family") and b in a.get_family():
                 return True
+        except Exception:
+            pass
+        return False
+
+    # Table/group types whose internal Lines naturally cross cell text.
+    _TABLE_TYPES = frozenset({
+        "Table", "MobjectTable", "IntegerTable", "DecimalTable", "MathTable",
+    })
+
+    def _shares_table_ancestor(a, b):
+        """True when a and b are both descendants of the same Table object."""
+        try:
+            for top in self.mobjects:
+                if type(top).__name__ not in _TABLE_TYPES:
+                    if not hasattr(top, "get_family"):
+                        continue
+                    # Check nested tables inside top-level groups
+                    fam = top.get_family()
+                    for member in fam:
+                        if type(member).__name__ in _TABLE_TYPES:
+                            table_fam = member.get_family()
+                            if a in table_fam and b in table_fam:
+                                return True
+                    continue
+                fam = top.get_family()
+                if a in fam and b in fam:
+                    return True
         except Exception:
             pass
         return False
@@ -601,7 +638,8 @@ def _perform_spatial_checks(self):
         "Line", "DashedLine", "Arrow", "DoubleArrow", "Vector", "NumberLine", "Underline"
     })
     PATH_STROKE_TYPES = frozenset({
-        "Polygon", "Polyline", "Polygram", "VMobject"
+        "Polygon", "Polyline", "Polygram", "VMobject",
+        "Axes", "ThreeDAxes", "NumberPlane", "ComplexPlane"
     })
 
     for t_idx, t in texts:
@@ -609,6 +647,10 @@ def _perform_spatial_checks(self):
             if o_idx <= t_idx:
                 continue
             if _is_family(t, o):
+                continue
+            # Suppress table grid lines crossing their own cell text —
+            # this is normal Table layout, not a bug.
+            if _shares_table_ancestor(t, o):
                 continue
 
             obj_type = type(o).__name__
@@ -628,7 +670,9 @@ def _perform_spatial_checks(self):
                 fill_op = o.get_fill_opacity() if hasattr(o, "get_fill_opacity") else 0.0
             except Exception:
                 fill_op = 0.0
-            if fill_op is not None and fill_op > 0.2:
+            # Do not suppress line-like objects just because they have filled tips
+            # (e.g., Arrow heads can have fill_opacity > 0).
+            if fill_op is not None and fill_op > 0.2 and not is_line_like:
                 continue
 
             try:
@@ -641,25 +685,45 @@ def _perform_spatial_checks(self):
             path_crosses_text = False
             if (
                 has_visible_stroke and
-                (obj_type in PATH_STROKE_TYPES or "Polygon" in obj_type or "Line" in obj_type)
+                (
+                    obj_type in PATH_STROKE_TYPES
+                    or obj_type in LINE_TYPES
+                    or "Polygon" in obj_type
+                    or "Line" in obj_type
+                    or "Arrow" in obj_type
+                    or "Axes" in obj_type
+                )
             ):
                 path_crosses_text = _stroke_path_hits_text(t, o)
 
+            near_gap = _bbox_distance(t, o)
+            near_collision = (
+                has_visible_stroke and
+                near_gap <= STROKE_TEXT_NEAR_GAP and
+                long_side >= STROKE_MIN_LENGTH
+            )
+
             if not is_line_like and not path_crosses_text:
                 continue
-            if ratio < STROKE_THROUGH_RATIO and not path_crosses_text:
+            if ratio < STROKE_THROUGH_RATIO and not path_crosses_text and not near_collision:
                 continue
 
             txt = _text_label(t)
             msg = f"Stroke '{obj_type}' crosses text '{txt}' ({ratio:.0%} overlap)"
+            if not path_crosses_text and near_collision:
+                msg = f"Stroke '{obj_type}' is too close to text '{txt}' (gap {near_gap:.2f})"
+            # Stroke-through-text is inherently ambiguous (could be a
+            # legitimate grid line, axis tick, or decoration).  Route as
+            # uncertain so Visual QC can verify against the rendered frame.
             new_issues.append(_issue(
-                "critical", "high", "visual_quality", msg,
+                "warning", "low", "visual_quality", msg,
                 auto_fixable=True,
                 fix_hint="Raise label z-index or reposition text away from grid lines.",
                 object_type=obj_type,
                 text=txt,
                 overlap_ratio=round(ratio, 2),
                 path_crosses_text=path_crosses_text,
+                near_gap=round(near_gap, 3),
                 reason="stroke_through_text",
             ))
 

@@ -141,11 +141,12 @@ async def test_run_vision_verification(generator, mock_deps):
     generator.vision_validator.verify_issues = AsyncMock(return_value=[issue])
     
     # Execute
-    msgs = await generator._run_vision_verification("vid.mp4", "/tmp", 1)
+    msgs, confirmed = await generator._run_vision_verification("vid.mp4", "/tmp", 1)
     
     # Assert
     assert len(msgs) == 1
     assert msgs[0] == "Overlap"
+    assert confirmed == [issue]
     mock_orchestrator.refiner.mark_as_real_issues.assert_called_once()
     mock_orchestrator.refiner.mark_as_false_positives.assert_not_called()
 
@@ -170,8 +171,36 @@ async def test_run_vision_verification_false_positives(generator, mock_deps):
     generator.vision_validator.verify_issues = AsyncMock(return_value=[]) # None confirmed
     
     # Execute
-    await generator._run_vision_verification("vid.mp4", "/tmp", 1)
+    msgs, confirmed = await generator._run_vision_verification("vid.mp4", "/tmp", 1)
     
     # Assert
+    assert msgs == []
+    assert confirmed == []
     mock_orchestrator.refiner.mark_as_real_issues.assert_not_called()
     mock_orchestrator.refiner.mark_as_false_positives.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_process_code_and_render_rerenders_after_visual_qc_confirmed_issue(generator, mock_deps):
+    mock_deps["create_scene_file"].return_value = "full_code"
+    mock_deps["render_scene"].side_effect = AsyncMock(side_effect=["video_1.mp4", "video_2.mp4"])
+    generator.file_manager.prepare_scene_file.return_value = "code_path"
+
+    issue = Mock()
+    generator._run_vision_verification = AsyncMock(side_effect=[(["Overlap"], [issue]), ([], [])])
+
+    mock_refiner = Mock()
+    mock_refiner.apply_issues = AsyncMock(return_value=("fixed_full_code", {"deterministic": 1, "llm": 0}))
+    generator.orchestrator.refiner = mock_refiner
+
+    result = await generator.process_code_and_render(
+        manim_code="code",
+        section={"id": "sec1", "title": "Section 1"},
+        output_dir="/tmp",
+        section_index=1
+    )
+
+    assert result["video_path"] == "video_2.mp4"
+    assert result["manim_code"] == "fixed_full_code"
+    assert mock_deps["render_scene"].call_count == 2
+    generator.orchestrator.refiner.apply_issues.assert_called_once()

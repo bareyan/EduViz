@@ -8,7 +8,7 @@ Handles the multi-stage animation generation workflow:
 4. Render: Produce final video sections
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 
 from app.core import get_logger
@@ -25,6 +25,7 @@ from .core import (
     AnimationFileManager
 )
 from .core.validation import VisionValidator
+from .core.validation.models import ValidationIssue
 from ..config import (
     ENABLE_VISION_QC,
     MAX_CLEAN_RETRIES,
@@ -249,12 +250,60 @@ class ManimGenerator:
             logger.error(f"Rendering stage failed to produce output for section {section_index}")
             raise RenderingError(f"Manim failed to render video for section {section_index}")
 
+        confirmed_vision_issues: List[ValidationIssue] = []
         if ENABLE_VISION_QC:
-            vision_messages = await self._run_vision_verification(
+            vision_messages, confirmed_vision_issues = await self._run_vision_verification(
                 output_video=output_video,
                 output_dir=output_dir,
                 section_index=section_index,
             )
+
+            # One-pass recovery loop: if Visual QC confirms real issues, try
+            # applying fixes and re-rendering once.
+            if confirmed_vision_issues:
+                logger.warning(
+                    f"Applying post-render fixes for {len(confirmed_vision_issues)} "
+                    f"Visual QC-confirmed issues in section {section_index}"
+                )
+                try:
+                    fixed_code, triage_stats = await self.orchestrator.refiner.apply_issues(
+                        code=full_code,
+                        issues=confirmed_vision_issues,
+                        section_title=section.get("title", f"section_{section_index}"),
+                        context={"section_index": section_index, "stage": "visual_qc_post_render"},
+                    )
+                except Exception as exc:
+                    logger.warning(f"Post-render fix application failed: {exc}")
+                    triage_stats = {"deterministic": 0, "llm": 0}
+                    fixed_code = full_code
+
+                if (
+                    fixed_code != full_code
+                    and (triage_stats.get("deterministic", 0) > 0 or triage_stats.get("llm", 0) > 0)
+                ):
+                    full_code = fixed_code
+                    code_file = self.file_manager.prepare_scene_file(
+                        output_dir=output_dir,
+                        section_index=section_index,
+                        code_content=full_code
+                    )
+                    rerendered_video = await render_scene(
+                        self,
+                        code_file,
+                        scene_name,
+                        output_dir,
+                        section_index,
+                        file_manager=self.file_manager,
+                        section=section,
+                        clean_retry=0
+                    )
+                    if rerendered_video:
+                        output_video = rerendered_video
+                        vision_messages, _ = await self._run_vision_verification(
+                            output_video=output_video,
+                            output_dir=output_dir,
+                            section_index=section_index,
+                        )
         else:
             vision_messages = []
 
@@ -270,7 +319,7 @@ class ManimGenerator:
         output_video: str,
         output_dir: str,
         section_index: int,
-    ) -> list[str]:
+    ) -> Tuple[List[str], List[ValidationIssue]]:
         """Run Visual QC to verify uncertain spatial issues.
 
         Architecture (Certain vs. Uncertain model):
@@ -287,7 +336,7 @@ class ManimGenerator:
         uncertain_issues = self.orchestrator.refiner.get_pending_uncertain_issues()
 
         if not uncertain_issues:
-            return []
+            return [], []
 
         logger.info(
             f"Visual QC: verifying {len(uncertain_issues)} uncertain "
@@ -324,7 +373,7 @@ class ManimGenerator:
             self.orchestrator.refiner.mark_as_real_issues(confirmed)
             logger.warning(
                 f"Visual QC confirmed {len(confirmed)} issues in section "
-                f"{section_index} (not auto-fixed — would require re-render)"
+                f"{section_index} (queued for post-render fix/re-render)"
             )
             logger.warning(
                 "Visual QC confirmed issues",
@@ -376,7 +425,7 @@ class ManimGenerator:
                 },
             )
 
-        return [issue.message for issue in confirmed]
+        return [issue.message for issue in confirmed], confirmed
 
     async def render_from_code(
         self,

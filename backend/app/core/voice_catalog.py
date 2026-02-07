@@ -109,6 +109,28 @@ def get_gemini_tts_voices() -> Dict[str, str]:
         for voice_id, info in lang_data["voices"].items()
     }
 
+
+def get_gemini_tts_available_languages() -> List[Dict[str, str]]:
+    """Return Gemini TTS language list."""
+    return [
+        {"code": code, "name": data["name"]}
+        for code, data in GEMINI_TTS_VOICES.items()
+    ]
+
+
+def get_gemini_tts_voices_for_language(language: str) -> List[Dict[str, str]]:
+    """Return Gemini voice options for a language (falls back to English).
+    
+    Note: Gemini TTS voices are multilingual and work with any language,
+    but we organize them by language for UI consistency.
+    """
+    lang_data = GEMINI_TTS_VOICES.get(language, GEMINI_TTS_VOICES["en"])
+    return [
+        {"id": voice_id, "name": info["name"], "gender": info["gender"]}
+        for voice_id, info in lang_data["voices"].items()
+    ]
+
+
 # Translation defaults by target language.
 TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE: Dict[str, str] = {
     "en": "en-US-GuyNeural",
