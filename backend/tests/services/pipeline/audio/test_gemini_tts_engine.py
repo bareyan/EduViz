@@ -1,12 +1,10 @@
-"""
-Tests for app.services.pipeline.audio.gemini_tts_engine
-"""
+"""Tests for app.services.pipeline.audio.gemini."""
 
 import asyncio
 import pytest
 from unittest.mock import MagicMock, patch, AsyncMock
 
-from app.services.pipeline.audio.gemini_tts_engine import (
+from app.services.pipeline.audio.gemini import (
     GeminiTTSEngine,
     _RateLimiter,
     GEMINI_VOICES,
@@ -48,7 +46,7 @@ class TestRateLimiter:
 @pytest.fixture
 def mock_genai():
     """Patch google.genai so we don't need the real SDK."""
-    with patch("app.services.pipeline.audio.gemini_tts_engine.os.getenv") as mock_env:
+    with patch("app.services.pipeline.audio.gemini.engine.os.getenv") as mock_env:
         mock_env.side_effect = lambda key, default=None: {
             "GEMINI_API_KEY": "fake-key",
             "GEMINI_TTS_RPM": "100",  # high limit to avoid waits in tests
@@ -74,7 +72,7 @@ class TestGeminiTTSEngine:
             patch.object(engine, "_convert_wav_to_mp3", AsyncMock()),
             patch.object(engine, "_get_audio_duration", AsyncMock(return_value=5.2)),
             patch(
-                "app.services.pipeline.audio.gemini_tts_engine._rate_limiter",
+                "app.services.pipeline.audio.gemini.engine._rate_limiter",
                 AsyncMock(acquire=AsyncMock()),
             ),
         ):
@@ -89,7 +87,7 @@ class TestGeminiTTSEngine:
             patch.object(engine, "_call_gemini_tts", AsyncMock(return_value=None)),
             patch.object(engine, "_create_placeholder_audio", AsyncMock(return_value=6.0)),
             patch(
-                "app.services.pipeline.audio.gemini_tts_engine._rate_limiter",
+                "app.services.pipeline.audio.gemini.engine._rate_limiter",
                 AsyncMock(acquire=AsyncMock()),
             ),
         ):
@@ -106,7 +104,7 @@ class TestGeminiTTSEngine:
             patch.object(engine, "_convert_wav_to_mp3", AsyncMock()),
             patch.object(engine, "_get_audio_duration", AsyncMock(return_value=1.0)),
             patch(
-                "app.services.pipeline.audio.gemini_tts_engine._rate_limiter",
+                "app.services.pipeline.audio.gemini.engine._rate_limiter",
                 AsyncMock(acquire=AsyncMock()),
             ),
         ):

@@ -29,6 +29,28 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__, component="section_processor")
 
+# ---------------------------------------------------------------------------
+# Whole-section TTS configuration
+# ---------------------------------------------------------------------------
+
+PAUSE_MARKERS: tuple[str, str] = ("(pause)", "(pause)")
+"""Marker pair inserted between segments.  Gemini TTS reads the literal word
+'pause' and produces clean silence — unlike dot-sequences ('......') which
+often trigger breathy 'haaah' artefacts."""
+
+_ESTIMATE_WEIGHT = 0.35
+"""Balance between silence-duration score (0.0) and proximity-to-estimate
+score (1.0) when selecting boundary silences via DP."""
+
+_BOUNDARY_KEEP_SEC = 0.5
+"""Seconds of silence retained at each side of a boundary cut so that
+individual segments don't start/end with an abrupt jump."""
+
+
+def _count_words(text: str) -> int:
+    """Count words in *text*."""
+    return len(re.findall(r"\b[\w']+\b", text))
+
 
 def clean_narration_for_tts(narration: str) -> str:
     """Clean narration text for TTS - remove pause markers that would be spoken"""
@@ -293,16 +315,8 @@ async def _generate_audio_whole_section(
     for seg in narration_segments:
         cleaned_texts.append(clean_narration_for_tts(seg.get("text", "")))
 
-    # Join segments with a very long pause marker so Gemini TTS produces
-    # an unmistakable ~3-5 s silence between segments.  Short dot sequences
-    # (the old marker) sometimes cause Gemini to produce breathy "haaah"
-    # artifacts instead of silence; a much longer marker guarantees a
-    # reliably long pause that we detect and trim after generation.
-    PAUSE_MARKER = (
-        "...... ...... ...... ...... ...... "
-        "...... ...... ...... ...... ......"
-    )
-    full_text = f" {PAUSE_MARKER} ".join(cleaned_texts)
+    boundary = f" {PAUSE_MARKERS[0]}\n\n{PAUSE_MARKERS[1]} "
+    full_text = boundary.join(cleaned_texts)
 
     section_audio_path = section_dir / "section_audio.mp3"
 
@@ -341,36 +355,72 @@ async def _generate_audio_whole_section(
             }
         ], total_duration
 
-    # ---- Find segment boundaries via energy-valley analysis ----
-    # This always finds exactly N-1 boundaries regardless of whether
-    # Gemini produced clean silence, breathing, or other artifacts.
-    pause_regions = await _find_energy_valleys(
-        str(section_audio_path),
-        num_valleys=num_boundaries,
-    )
+    # ---- Boundary detection: energy-valley candidates + DP assignment ----
+    # 1. Find ALL candidate valleys via energy-envelope analysis.
+    all_candidates = await _find_valley_candidates(str(section_audio_path))
 
-    if len(pause_regions) >= num_boundaries:
-        logger.info(
-            f"Section {section_index}: Found {len(pause_regions)} energy valleys, "
-            f"splitting into {len(narration_segments)} segments"
+    # 2. Estimate where boundaries *should* fall from word counts.
+    estimated_positions = _estimate_boundary_positions(cleaned_texts, total_duration)
+
+    # 3. Use dynamic programming to select the optimal N-1 boundaries
+    #    that balance silence quality with proximity to estimates.
+    try:
+        boundaries = _select_boundary_silences(
+            candidates=all_candidates,
+            expected_positions=estimated_positions,
+            total_duration=total_duration,
         )
-        segment_audio_info = await _split_audio_at_pauses(
-            section_audio_path=str(section_audio_path),
-            pause_regions=pause_regions,
+    except Exception as e:
+        logger.warning(
+            f"Section {section_index}: DP boundary selection failed ({e}), "
+            f"falling back to proportional timing"
+        )
+        return await _distribute_timing_proportionally(
             narration_segments=narration_segments,
             cleaned_texts=cleaned_texts,
+            section_audio_path=str(section_audio_path),
             section_dir=section_dir,
             total_duration=total_duration,
         )
-        if segment_audio_info:
-            cumulative_time = sum(s["duration"] for s in segment_audio_info)
-            return segment_audio_info, cumulative_time
 
-    # Last-resort fallback (should be very rare — only if the audio
-    # file is corrupt or contains pure silence/noise).
+    if len(boundaries) < num_boundaries:
+        logger.warning(
+            f"Section {section_index}: Only {len(boundaries)}/{num_boundaries} "
+            f"boundaries found from {len(all_candidates)} candidates, "
+            f"using proportional timing"
+        )
+        return await _distribute_timing_proportionally(
+            narration_segments=narration_segments,
+            cleaned_texts=cleaned_texts,
+            section_audio_path=str(section_audio_path),
+            section_dir=section_dir,
+            total_duration=total_duration,
+        )
+
+    # 4. Derive segment ranges keeping some silence at edges for naturalness.
+    segment_ranges = _derive_segment_ranges(total_duration, boundaries)
+
+    logger.info(
+        f"Section {section_index}: Selected {len(boundaries)} boundaries "
+        f"from {len(all_candidates)} candidates, "
+        f"splitting into {len(narration_segments)} segments"
+    )
+
+    # 5. Split audio at computed ranges, trim edges.
+    segment_audio_info = await _split_audio_at_ranges(
+        section_audio_path=str(section_audio_path),
+        segment_ranges=segment_ranges,
+        narration_segments=narration_segments,
+        cleaned_texts=cleaned_texts,
+        section_dir=section_dir,
+    )
+    if segment_audio_info:
+        cumulative_time = sum(s["duration"] for s in segment_audio_info)
+        return segment_audio_info, cumulative_time
+
+    # Last-resort fallback (should be very rare — only if ffmpeg extraction fails).
     logger.warning(
-        f"Section {section_index}: Energy-valley detection failed "
-        f"({len(pause_regions)}/{num_boundaries} found), "
+        f"Section {section_index}: Audio splitting failed, "
         f"using proportional timing"
     )
     return await _distribute_timing_proportionally(
@@ -421,43 +471,34 @@ async def _distribute_timing_proportionally(
 
 
 # ---------------------------------------------------------------------------
-# Energy-valley segment boundary detection
+# Energy-valley candidate detection
 # ---------------------------------------------------------------------------
 
 _VALLEY_SAMPLE_RATE = 16000  # Hz — low is fine, we only need the energy envelope
 _VALLEY_WINDOW_SEC = 0.05    # 50 ms windows for RMS computation
 _VALLEY_SMOOTH_SEC = 0.5     # smoothing kernel
+_MIN_VALLEY_SEC = 0.3        # minimum width for a valid valley candidate
 
 
-async def _find_energy_valleys(
+async def _find_valley_candidates(
     audio_path: str,
-    num_valleys: int,
     window_sec: float = _VALLEY_WINDOW_SEC,
     smooth_sec: float = _VALLEY_SMOOTH_SEC,
-    min_valley_sec: float = 0.3,
+    min_valley_sec: float = _MIN_VALLEY_SEC,
 ) -> List[tuple[float, float]]:
-    """Find the *num_valleys* quietest regions in *audio_path*.
+    """Find **all** energy-valley regions in *audio_path*.
 
-    Unlike threshold-based ``silencedetect``, this approach **always** finds
-    exactly *num_valleys* boundaries regardless of absolute volume levels.
-    It works reliably even when Gemini TTS inserts breathing artifacts
-    ("haaah") instead of clean silence, because the energy in a breathy
-    pause is still significantly lower than normal speech.
+    This is the candidate generation step.  It returns every contiguous
+    region whose smoothed RMS energy is below the median — sorted
+    chronologically.  The DP boundary assignment step later picks the
+    optimal subset.
 
-    Algorithm
-    ---------
-    1. Decode audio → raw mono 16-bit PCM via ffmpeg (cheap).
-    2. Compute RMS energy per 50 ms window.
-    3. Smooth with a ½-second rolling average.
-    4. Find contiguous regions whose energy is below the median.
-    5. Score each region by ``depth × width`` (wider & deeper = better).
-    6. Return the top *num_valleys* regions sorted by time.
+    The approach is threshold-free: it works even when Gemini TTS inserts
+    breathing artefacts ('haaah') instead of clean silence, because the
+    energy in a breathy pause is still significantly lower than speech.
 
     Returns ``[(start_sec, end_sec), ...]``.
     """
-    if num_valleys <= 0:
-        return []
-
     try:
         energy, window_sec_actual = await _extract_energy_envelope(
             audio_path, window_sec, smooth_sec
@@ -469,11 +510,10 @@ async def _find_energy_valleys(
     if len(energy) < 3:
         return []
 
-    # --- Find valleys: contiguous regions below the median ---
     median_e = sorted(energy)[len(energy) // 2]
     min_valley_windows = max(1, int(min_valley_sec / window_sec_actual))
 
-    regions: list[tuple[float, float, float]] = []  # (start_t, end_t, score)
+    candidates: List[tuple[float, float]] = []
     in_valley = False
     v_start = 0
 
@@ -483,27 +523,17 @@ async def _find_energy_valleys(
             in_valley = True
         elif (e >= median_e or i == len(energy) - 1) and in_valley:
             v_end = i if e >= median_e else i + 1
-            width = v_end - v_start
-            if width >= min_valley_windows:
-                depth = median_e - min(energy[v_start:v_end])
-                score = depth * (width ** 1.5)  # favour wider valleys
+            if v_end - v_start >= min_valley_windows:
                 t_start = v_start * window_sec_actual
                 t_end = v_end * window_sec_actual
-                regions.append((t_start, t_end, score))
+                candidates.append((t_start, t_end))
             in_valley = False
 
-    # Take top N by score, then sort chronologically
-    regions.sort(key=lambda r: r[2], reverse=True)
-    top = regions[:num_valleys]
-    top.sort(key=lambda r: r[0])
-
-    result = [(s, e) for s, e, _ in top]
     logger.info(
-        f"Energy-valley: found {len(regions)} candidate valleys, "
-        f"selected top {len(result)}: "
-        f"{[(f'{s:.2f}', f'{e:.2f}') for s, e in result]}"
+        f"Energy-valley: found {len(candidates)} candidate regions: "
+        f"{[(f'{s:.2f}', f'{e:.2f}') for s, e in candidates]}"
     )
-    return result
+    return candidates
 
 
 async def _extract_energy_envelope(
@@ -562,83 +592,181 @@ async def _extract_energy_envelope(
     return smoothed, window_sec
 
 
-async def _detect_silence_boundaries(
-    audio_path: str,
-    silence_thresh: str = "-35dB",
-    min_silence_duration: float = 0.8,
-    merge_gap: float = 1.0,
-) -> List[tuple[float, float]]:
-    """Detect silence/pause regions in audio using ffmpeg ``silencedetect``.
+# ---------------------------------------------------------------------------
+# DP-based boundary assignment (adapted from the TTS-timing POC)
+# ---------------------------------------------------------------------------
 
-    Returns a list of ``(start, end)`` tuples marking each detected silence
-    region.  Nearby silences separated by less than *merge_gap* seconds are
-    merged into a single region — this handles intermittent breathing /
-    "haaah" artifacts that Gemini TTS sometimes produces inside what should
-    be a long pause.
+
+def _estimate_boundary_positions(
+    segment_texts: List[str],
+    total_duration: float,
+) -> List[float]:
+    """Estimate where segment boundaries should fall from word-count proportions.
+
+    Returns ``N-1`` positions (in seconds) for ``N`` segments.
     """
-    cmd = [
-        "ffmpeg",
-        "-i", audio_path,
-        "-af", f"silencedetect=noise={silence_thresh}:d={min_silence_duration}",
-        "-f", "null",
-        "-"
-    ]
-
-    try:
-        result = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await result.communicate()
-        output = stderr.decode('utf-8', errors='ignore')
-
-        # Parse silence_start and silence_end from ffmpeg output
-        silence_starts: list[float] = []
-        silence_ends: list[float] = []
-
-        for line in output.split('\n'):
-            if 'silence_start:' in line:
-                try:
-                    time_str = line.split('silence_start:')[1].strip().split()[0]
-                    silence_starts.append(float(time_str))
-                except (IndexError, ValueError):
-                    pass
-            elif 'silence_end:' in line:
-                try:
-                    time_str = line.split('silence_end:')[1].strip().split()[0]
-                    silence_ends.append(float(time_str))
-                except (IndexError, ValueError):
-                    pass
-
-        raw_regions: list[tuple[float, float]] = list(zip(silence_starts, silence_ends))
-
-        # ---- merge nearby silences ----
-        # When Gemini inserts a breathy artifact inside a long pause the
-        # silence detector sees two (or more) separate silence chunks with
-        # a brief noisy gap between them.  Merging turns them back into one
-        # contiguous pause region.
-        if not raw_regions:
-            return []
-
-        merged: list[tuple[float, float]] = [raw_regions[0]]
-        for start, end in raw_regions[1:]:
-            prev_start, prev_end = merged[-1]
-            if start - prev_end <= merge_gap:
-                merged[-1] = (prev_start, end)  # extend
-            else:
-                merged.append((start, end))
-
-        logger.debug(
-            f"Detected {len(raw_regions)} raw silences, merged into "
-            f"{len(merged)} pause regions: "
-            f"{[(f'{s:.2f}', f'{e:.2f}') for s, e in merged]}"
-        )
-        return merged
-
-    except Exception as e:
-        logger.error(f"Error detecting silence: {e}")
+    if len(segment_texts) <= 1:
         return []
+    weights = [max(1, _count_words(t)) for t in segment_texts]
+    total = sum(weights)
+    cumulative = 0
+    positions: List[float] = []
+    for w in weights[:-1]:
+        cumulative += w
+        positions.append((cumulative / total) * max(0.001, total_duration))
+    return positions
+
+
+def _candidate_score(
+    start: float,
+    end: float,
+    expected: float,
+    max_duration: float,
+    proximity_window: float,
+    estimate_weight: float,
+) -> float:
+    """Score a silence candidate by duration and proximity to an estimate.
+
+    Higher is better.  *estimate_weight* in ``[0, 1]`` trades off silence
+    duration (longer = better) vs closeness to the word-count estimate.
+    """
+    duration_score = max(0.001, end - start) / max(0.001, max_duration)
+    centre = (start + end) / 2.0
+    proximity_score = max(0.0, 1.0 - abs(centre - expected) / max(0.001, proximity_window))
+    w = min(1.0, max(0.0, estimate_weight))
+    return (1.0 - w) * duration_score + w * proximity_score
+
+
+def _assign_boundaries_dp(
+    candidates: List[tuple[float, float]],
+    expected_positions: List[float],
+    max_duration: float,
+    proximity_window: float,
+    estimate_weight: float,
+) -> List[tuple[float, float]]:
+    """Pick *N* ordered boundaries from *M* candidates (``M >= N``) via DP.
+
+    Maximises the sum of :func:`_candidate_score` across all selected
+    boundaries, subject to the constraint that selected indices are strictly
+    increasing (so boundaries remain chronological).
+
+    Raises ``RuntimeError`` when no valid assignment exists.
+    """
+    n = len(expected_positions)
+    m = len(candidates)
+    if n == 0:
+        return []
+    if m < n:
+        raise RuntimeError(
+            f"Not enough candidates ({m}) for {n} boundaries"
+        )
+
+    neg_inf = float("-inf")
+    dp = [[neg_inf] * m for _ in range(n)]
+    parent = [[-1] * m for _ in range(n)]
+
+    # Base case: first boundary
+    for i in range(m):
+        dp[0][i] = _candidate_score(
+            candidates[i][0], candidates[i][1],
+            expected_positions[0], max_duration, proximity_window, estimate_weight,
+        )
+
+    # Fill remaining rows
+    for j in range(1, n):
+        best_prev = neg_inf
+        best_prev_idx = -1
+        for i in range(m):
+            if i > 0 and dp[j - 1][i - 1] > best_prev:
+                best_prev = dp[j - 1][i - 1]
+                best_prev_idx = i - 1
+            if best_prev_idx == -1:
+                continue
+            score = _candidate_score(
+                candidates[i][0], candidates[i][1],
+                expected_positions[j], max_duration, proximity_window, estimate_weight,
+            )
+            dp[j][i] = best_prev + score
+            parent[j][i] = best_prev_idx
+
+    # Backtrack to find optimal assignment
+    end_i = max(range(m), key=lambda i: dp[n - 1][i])
+    if dp[n - 1][end_i] == neg_inf:
+        raise RuntimeError("Unable to assign ordered boundary silences")
+
+    picked_indices = [0] * n
+    j, i = n - 1, end_i
+    while j >= 0:
+        picked_indices[j] = i
+        i = parent[j][i]
+        j -= 1
+
+    return [candidates[idx] for idx in picked_indices]
+
+
+def _select_boundary_silences(
+    candidates: List[tuple[float, float]],
+    expected_positions: List[float],
+    total_duration: float,
+    estimate_weight: float = _ESTIMATE_WEIGHT,
+) -> List[tuple[float, float]]:
+    """Select *N* boundary silences from candidates using DP assignment.
+
+    Combines silence quality (duration) with word-count estimated positions
+    so that even when some pauses are imperfect, boundaries land close to
+    where they are expected.
+
+    Returns selected boundaries sorted chronologically.
+    """
+    n = len(expected_positions)
+    if n == 0:
+        return []
+    if len(candidates) < n:
+        return candidates  # not enough — caller will fallback
+
+    sorted_cands = sorted(candidates, key=lambda c: (c[0] + c[1]) / 2.0)
+    max_dur = max(max(0.001, c[1] - c[0]) for c in sorted_cands)
+    prox_window = max(0.6, total_duration / max(2, n + 1))
+
+    selected = _assign_boundaries_dp(
+        sorted_cands, expected_positions, max_dur, prox_window, estimate_weight,
+    )
+    return sorted(selected, key=lambda c: c[0])
+
+
+def _derive_segment_ranges(
+    total_duration: float,
+    boundaries: List[tuple[float, float]],
+    boundary_keep: float = _BOUNDARY_KEEP_SEC,
+) -> List[tuple[float, float]]:
+    """Derive speech segment ranges, keeping some silence at edges.
+
+    Each boundary silence region is split: a small *boundary_keep* portion
+    is left on each neighbouring segment so that the cut doesn't land on
+    an abrupt consonant.
+
+    Returns ``N`` ranges for ``N-1`` boundaries.
+    """
+    if not boundaries:
+        return [(0.0, total_duration)]
+
+    ranges: List[tuple[float, float]] = []
+    cursor = 0.0
+    for start, end in boundaries:
+        b_start = max(cursor, start)
+        b_end = max(b_start, end)
+        silence_len = b_end - b_start
+        keep = min(max(0.0, boundary_keep), silence_len)
+        keep_left = keep / 2.0
+        keep_right = keep - keep_left
+
+        seg_end = max(cursor, min(b_start + keep_left, total_duration))
+        next_cursor = max(seg_end, min(b_end - keep_right, total_duration))
+        ranges.append((cursor, seg_end))
+        cursor = next_cursor
+
+    ranges.append((cursor, total_duration))
+    return ranges
 
 
 async def _trim_segment_edges(
@@ -689,52 +817,23 @@ async def _trim_segment_edges(
             pass
 
 
-async def _split_audio_at_pauses(
+async def _split_audio_at_ranges(
     section_audio_path: str,
-    pause_regions: List[tuple[float, float]],
+    segment_ranges: List[tuple[float, float]],
     narration_segments: List[Dict[str, Any]],
     cleaned_texts: List[str],
     section_dir: Path,
-    total_duration: float,
 ) -> List[Dict[str, Any]]:
-    """Split audio at detected pause regions, extracting speech-only segments.
+    """Split audio into segments using pre-computed time ranges.
 
-    Each segment spans from the *end* of the previous pause to the *start*
-    of the next pause, so the long Gemini pauses (and any breathy artifacts
-    inside them) are excluded from the individual segment files.
-
-    After extraction each segment's leading/trailing silence is trimmed to
-    produce clean audio.
+    *segment_ranges* are ``(start_sec, end_sec)`` pairs produced by
+    :func:`_derive_segment_ranges`.  Each range already accounts for the
+    boundary-keep adjustment, so we extract verbatim and then trim any
+    residual leading/trailing silence from each segment.
     """
-    segment_audio_info = []
-    num_segments = len(narration_segments)
+    segment_audio_info: List[Dict[str, Any]] = []
 
-    # Trim excess pause regions
-    regions = pause_regions[:num_segments - 1] if len(pause_regions) >= num_segments else pause_regions
-
-    if len(regions) < num_segments - 1:
-        logger.warning(f"Insufficient pause regions: {len(regions)} for {num_segments} segments")
-        return []
-
-    # Build speech-only boundaries:
-    #   seg 0  →  [0, regions[0].start]
-    #   seg i  →  [regions[i-1].end, regions[i].start]
-    #   seg N  →  [regions[-1].end, total_duration]
-    speech_boundaries: list[tuple[float, float]] = []
-    for seg_idx in range(num_segments):
-        if seg_idx == 0:
-            start = 0.0
-            end = regions[0][0] if regions else total_duration
-        elif seg_idx == num_segments - 1:
-            start = regions[-1][1]
-            end = total_duration
-        else:
-            start = regions[seg_idx - 1][1]
-            end = regions[seg_idx][0]
-        speech_boundaries.append((start, end))
-
-    # Extract each segment
-    for seg_idx, (start_time, end_time) in enumerate(speech_boundaries):
+    for seg_idx, (start_time, end_time) in enumerate(segment_ranges):
         seg_duration = end_time - start_time
 
         seg_dir = section_dir / f"seg_{seg_idx}"
@@ -742,7 +841,6 @@ async def _split_audio_at_pauses(
         raw_seg_path = seg_dir / "audio_raw.mp3"
         seg_audio_path = seg_dir / "audio.mp3"
 
-        # Extract the speech region from the full audio
         cmd = [
             "ffmpeg", "-y",
             "-i", section_audio_path,
@@ -760,7 +858,6 @@ async def _split_audio_at_pauses(
             )
             await proc.communicate()
 
-            # Trim any residual silence at segment edges
             await _trim_segment_edges(str(raw_seg_path), str(seg_audio_path))
 
             actual_duration = await get_audio_duration(str(seg_audio_path))
@@ -778,12 +875,11 @@ async def _split_audio_at_pauses(
 
             logger.debug(
                 f"Segment {seg_idx}: {actual_duration:.2f}s "
-                f"(speech {start_time:.2f}s–{end_time:.2f}s)"
+                f"(range {start_time:.2f}s\u2013{end_time:.2f}s)"
             )
 
         except Exception as e:
             logger.error(f"Error extracting segment {seg_idx}: {e}")
-            # Fallback: use the full audio with estimated timing
             segment_info = {
                 "segment_index": seg_idx,
                 "text": cleaned_texts[seg_idx] if seg_idx < len(cleaned_texts) else "",

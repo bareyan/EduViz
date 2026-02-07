@@ -1,9 +1,6 @@
-"""
-Gemini TTS Engine - Text-to-Speech using Google Gemini 2.5 Flash TTS
+"""Gemini TTS engine."""
 
-Uses the Gemini API's native TTS capability with rate limiting
-to respect the free-tier limits (100 RPD, 8 RPM).
-"""
+from __future__ import annotations
 
 import asyncio
 import os
@@ -13,54 +10,14 @@ from typing import Optional
 
 from app.core import get_logger
 
+from .audio_payload import extract_inline_audio_payload
+from .constants import DEFAULT_GEMINI_MODEL, DEFAULT_GEMINI_VOICE, GEMINI_VOICES
+
 logger = get_logger(__name__, component="gemini_tts")
-
-# ---------------------------------------------------------------------------
-# Gemini TTS voice catalog
-# ---------------------------------------------------------------------------
-GEMINI_VOICES = {
-    "Zephyr": "Bright",
-    "Puck": "Upbeat",
-    "Charon": "Informative",
-    "Kore": "Firm",
-    "Fenrir": "Excitable",
-    "Leda": "Youthful",
-    "Orus": "Firm",
-    "Aoede": "Breezy",
-    "Callirrhoe": "Easy-going",
-    "Autonoe": "Bright",
-    "Enceladus": "Breathy",
-    "Iapetus": "Clear",
-    "Umbriel": "Easy-going",
-    "Algieba": "Smooth",
-    "Despina": "Smooth",
-    "Erinome": "Clear",
-    "Algenib": "Gravelly",
-    "Rasalgethi": "Informative",
-    "Laomedeia": "Upbeat",
-    "Achernar": "Soft",
-    "Alnilam": "Firm",
-    "Schedar": "Even",
-    "Gacrux": "Mature",
-    "Pulcherrima": "Forward",
-    "Achird": "Friendly",
-    "Zubenelgenubi": "Casual",
-    "Vindemiatrix": "Gentle",
-    "Sadachbia": "Lively",
-    "Sadaltager": "Knowledgeable",
-    "Sulafat": "Warm",
-}
-
-DEFAULT_GEMINI_VOICE = "Charon"
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-preview-tts"
 
 
 class _RateLimiter:
-    """Simple sliding-window rate limiter for RPM constraint.
-
-    Ensures at most ``max_rpm`` calls within any rolling 60-second window.
-    Callers ``await limiter.acquire()`` before making an API request.
-    """
+    """Simple sliding-window rate limiter for RPM constraint."""
 
     def __init__(self, max_rpm: int = 8):
         self.max_rpm = max_rpm
@@ -70,12 +27,11 @@ class _RateLimiter:
     async def acquire(self) -> None:
         async with self._lock:
             now = time.monotonic()
-            # Evict timestamps older than 60 s
             self._timestamps = [t for t in self._timestamps if now - t < 60]
 
             if len(self._timestamps) >= self.max_rpm:
                 oldest = self._timestamps[0]
-                wait = 60.0 - (now - oldest) + 0.2  # small safety margin
+                wait = 60.0 - (now - oldest) + 0.2
                 if wait > 0:
                     logger.info(
                         f"Rate limit: waiting {wait:.1f}s "
@@ -88,55 +44,17 @@ class _RateLimiter:
             self._timestamps.append(time.monotonic())
 
 
-# Module-level rate limiter shared across all GeminiTTSEngine instances
 _rate_limiter = _RateLimiter(max_rpm=int(os.getenv("GEMINI_TTS_RPM", "8")))
 
 
 class GeminiTTSEngine:
-    """Text-to-Speech engine using Google Gemini 2.5 Flash TTS.
+    """Text-to-Speech engine using Google Gemini 2.5 Flash TTS."""
 
-    The Gemini TTS API has strict free-tier rate limits:
-      - 8 requests per minute (RPM)
-      - 100 requests per day (RPD)
-
-    This engine is designed for *whole-section* generation: instead of
-    calling TTS per narration segment, callers should concatenate all
-    segment texts and make a single call, then split the resulting audio
-    proportionally.  This reduces API usage from ~N calls/section to 1.
-
-    The engine outputs WAV (24 kHz, 16-bit, mono) as returned by the
-    Gemini API, then optionally converts to MP3 via FFmpeg for
-    compatibility with the rest of the pipeline.
-    """
-
-    # Expose voice list for the rest of the app
     VOICES = GEMINI_VOICES
     DEFAULT_VOICE = DEFAULT_GEMINI_VOICE
 
     def __init__(self, model: str = DEFAULT_GEMINI_MODEL):
         self.model = model
-        self._client = None  # Lazy init
-
-    # ----- lazy client -----
-    def _get_client(self):
-        if self._client is None:
-            try:
-                from google import genai
-
-                api_key = os.getenv("GEMINI_API_KEY")
-                if not api_key:
-                    raise ValueError(
-                        "GEMINI_API_KEY env var is required for Gemini TTS"
-                    )
-                self._client = genai.Client(api_key=api_key)
-            except ImportError:
-                raise ImportError(
-                    "google-generativeai package is required for Gemini TTS. "
-                    "Install with: pip install google-generativeai"
-                )
-        return self._client
-
-    # ----- public interface (matches TTSEngine) -----
 
     async def synthesize(
         self,
@@ -146,12 +64,7 @@ class GeminiTTSEngine:
         rate: str = "+0%",
         pitch: str = "+0Hz",
     ) -> float:
-        """Synthesize *text* → audio file at *output_path*.
-
-        Returns duration in seconds.
-        """
         voice = voice or self.DEFAULT_VOICE
-        # Validate / normalise voice name
         if voice not in GEMINI_VOICES:
             logger.warning(
                 f"Unknown Gemini voice '{voice}', falling back to {self.DEFAULT_VOICE}"
@@ -162,10 +75,8 @@ class GeminiTTSEngine:
 
         pcm_data = await self._call_gemini_tts(text, voice)
         if pcm_data is None:
-            # Fallback: create silent placeholder
             return await self._create_placeholder_audio(text, output_path)
 
-        # Write WAV then convert to MP3 for pipeline compatibility
         wav_path = output_path.rsplit(".", 1)[0] + ".wav"
         self._write_wav(wav_path, pcm_data)
         await self._convert_wav_to_mp3(wav_path, output_path)
@@ -181,19 +92,20 @@ class GeminiTTSEngine:
         voice: Optional[str] = None,
         rate: str = "+0%",
     ) -> float:
-        """Alias for ``synthesize`` (compat with TTSEngine interface)."""
         return await self.synthesize(text, output_path, voice, rate=rate)
-
-    # ----- core API call -----
 
     async def _call_gemini_tts(
         self, text: str, voice: str
     ) -> Optional[bytes]:
-        """Call Gemini TTS API, return raw PCM bytes or None on failure."""
         try:
+            from google import genai
             from google.genai import types
 
-            client = self._get_client()
+            api_key = os.getenv("GEMINI_API_KEY")
+            if not api_key:
+                raise ValueError("GEMINI_API_KEY env var is required for Gemini TTS")
+
+            client = genai.Client(api_key=api_key)
 
             config = types.GenerateContentConfig(
                 response_modalities=["AUDIO"],
@@ -206,8 +118,6 @@ class GeminiTTSEngine:
                 ),
             )
 
-            # Run the synchronous SDK call in a thread to avoid blocking the
-            # event loop (the google-genai SDK is not async-native).
             response = await asyncio.to_thread(
                 client.models.generate_content,
                 model=self.model,
@@ -215,17 +125,12 @@ class GeminiTTSEngine:
                 config=config,
             )
 
-            # Extract audio bytes from response
-            data = (
-                response.candidates[0].content.parts[0].inline_data.data
-            )
-            return data
+            audio_bytes, _mime_type = extract_inline_audio_payload(response)
+            return audio_bytes
 
         except Exception as e:
             logger.error(f"Gemini TTS API error: {e}", exc_info=True)
             return None
-
-    # ----- helpers -----
 
     @staticmethod
     def _write_wav(
@@ -243,7 +148,6 @@ class GeminiTTSEngine:
 
     @staticmethod
     async def _convert_wav_to_mp3(wav_path: str, mp3_path: str) -> None:
-        """Convert WAV to MP3 using ffmpeg."""
         cmd = [
             "ffmpeg", "-y",
             "-i", wav_path,
@@ -258,9 +162,8 @@ class GeminiTTSEngine:
         )
         _, stderr = await process.communicate()
         if process.returncode != 0:
-            logger.warning(f"WAV→MP3 conversion failed: {stderr.decode()[:300]}")
+            logger.warning(f"WAV->MP3 conversion failed: {stderr.decode()[:300]}")
 
-        # Clean up intermediary wav
         try:
             os.remove(wav_path)
         except OSError:
@@ -288,7 +191,6 @@ class GeminiTTSEngine:
     async def _create_placeholder_audio(
         self, text: str, output_path: str
     ) -> float:
-        """Create silent audio as fallback when API call fails."""
         word_count = len(text.split())
         duration = max(3.0, word_count / 2.5)
         try:
@@ -311,8 +213,6 @@ class GeminiTTSEngine:
             with open(output_path, "wb"):
                 pass
         return duration
-
-    # ----- class methods for voice discovery -----
 
     @classmethod
     def get_available_voices(cls) -> dict:

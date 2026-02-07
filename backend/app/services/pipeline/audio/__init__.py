@@ -4,7 +4,14 @@ import os
 from typing import Union
 
 from .tts_engine import TTSEngine
-from .gemini_tts_engine import GeminiTTSEngine
+from .gemini import (
+    GeminiTTSEngine,
+    GeminiTTSTimingComponent,
+    TTSTimingConfig,
+    TTSTimingResult,
+    SubtitleTimingItem,
+    generate_tts_timing,
+)
 
 # Type alias for any TTS engine
 AnyTTSEngine = Union[TTSEngine, GeminiTTSEngine]
@@ -32,4 +39,14 @@ def create_tts_engine() -> AnyTTSEngine:
     return TTSEngine()
 
 
-__all__ = ["TTSEngine", "GeminiTTSEngine", "AnyTTSEngine", "create_tts_engine"]
+__all__ = [
+    "TTSEngine",
+    "GeminiTTSEngine",
+    "GeminiTTSTimingComponent",
+    "TTSTimingConfig",
+    "TTSTimingResult",
+    "SubtitleTimingItem",
+    "generate_tts_timing",
+    "AnyTTSEngine",
+    "create_tts_engine",
+]
