@@ -20,3 +20,4 @@ tests
 .env
 .env.*
 !.env.example
+!.env.advanced.example
