@@ -132,6 +132,79 @@ THEME_SETUP_CODES = {
     "nord": '        self.camera.background_color = "#2E3440"\n',
 }
 
+# Theme prompt specs for LLM stages (choreographer + implementer)
+THEME_PROMPT_SPECS = {
+    "3b1b": {
+        "display_name": "3Blue1Brown Dark",
+        "background": "#171717",
+        "primary_text": "#FFFFFF",
+        "secondary_text": "#AFC6FF",
+        "accents": ["#58C4DD", "#83C167", "#FFC857", "#FF6B6B"],
+        "notes": "High-contrast dark style with vibrant accents.",
+    },
+    "clean": {
+        "display_name": "Clean White",
+        "background": "#FFFFFF",
+        "primary_text": "#111111",
+        "secondary_text": "#334155",
+        "accents": ["#1D4ED8", "#0F766E", "#D97706", "#DC2626"],
+        "notes": "Light theme. Never use white/light text on white background.",
+    },
+    "dracula": {
+        "display_name": "Dracula",
+        "background": "#282A36",
+        "primary_text": "#F8F8F2",
+        "secondary_text": "#BD93F9",
+        "accents": ["#8BE9FD", "#50FA7B", "#FFB86C", "#FF5555"],
+        "notes": "Dark purple style with bright readable foreground colors.",
+    },
+    "solarized": {
+        "display_name": "Solarized Dark",
+        "background": "#002B36",
+        "primary_text": "#EEE8D5",
+        "secondary_text": "#93A1A1",
+        "accents": ["#268BD2", "#2AA198", "#B58900", "#DC322F"],
+        "notes": "Warm professional dark style; maintain strong text contrast.",
+    },
+    "nord": {
+        "display_name": "Nord",
+        "background": "#2E3440",
+        "primary_text": "#ECEFF4",
+        "secondary_text": "#D8DEE9",
+        "accents": ["#88C0D0", "#A3BE8C", "#EBCB8B", "#BF616A"],
+        "notes": "Cool arctic dark style with soft but readable contrast.",
+    },
+}
+
+# Scene-level text defaults to enforce readability regardless of generated code.
+THEME_TEXT_DEFAULT_CODES = {
+    "3b1b": (
+        '        Text.set_default(color="#FFFFFF")\n'
+        '        Tex.set_default(color="#FFFFFF")\n'
+        '        MathTex.set_default(color="#FFFFFF")\n'
+    ),
+    "clean": (
+        '        Text.set_default(color="#111111")\n'
+        '        Tex.set_default(color="#111111")\n'
+        '        MathTex.set_default(color="#111111")\n'
+    ),
+    "dracula": (
+        '        Text.set_default(color="#F8F8F2")\n'
+        '        Tex.set_default(color="#F8F8F2")\n'
+        '        MathTex.set_default(color="#F8F8F2")\n'
+    ),
+    "solarized": (
+        '        Text.set_default(color="#EEE8D5")\n'
+        '        Tex.set_default(color="#EEE8D5")\n'
+        '        MathTex.set_default(color="#EEE8D5")\n'
+    ),
+    "nord": (
+        '        Text.set_default(color="#ECEFF4")\n'
+        '        Tex.set_default(color="#ECEFF4")\n'
+        '        MathTex.set_default(color="#ECEFF4")\n'
+    ),
+}
+
 # Canonical style aliases to avoid accidental fallback to default theme.
 STYLE_ALIASES = {
     "3blue1brown": "3b1b",
@@ -152,3 +225,18 @@ def normalize_theme_style(style: str) -> str:
     if not raw:
         return "3b1b"
     return STYLE_ALIASES.get(raw, raw if raw in THEME_SETUP_CODES else "3b1b")
+
+
+def get_theme_prompt_info(style: str) -> str:
+    """Return explicit theme instructions for LLM prompts."""
+    normalized = normalize_theme_style(style)
+    spec = THEME_PROMPT_SPECS.get(normalized, THEME_PROMPT_SPECS["3b1b"])
+    accents = ", ".join(spec["accents"])
+    return (
+        f'{spec["display_name"]}; '
+        f'background={spec["background"]}; '
+        f'primary_text={spec["primary_text"]}; '
+        f'secondary_text={spec["secondary_text"]}; '
+        f'accents=[{accents}]; '
+        f'notes={spec["notes"]}'
+    )

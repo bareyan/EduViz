@@ -66,6 +66,18 @@ class MyScene(Scene):
     full = create_scene_file(code, "id", 10.0, DEFAULT_THEME_CODE)
     assert "config.background_color" in full or "self.camera.background_color" in full
 
+
+def test_create_scene_file_inserts_readable_text_defaults_for_light_theme():
+    code = textwrap.dedent("""
+from manim import *
+class MyScene(Scene):
+    def construct(self):
+        c = Circle()
+""")
+    full = create_scene_file(code, "id", 10.0, "clean")
+    assert 'Text.set_default(color="#111111")' in full
+    assert 'MathTex.set_default(color="#111111")' in full
+
 def test_fix_translated_code():
     bad_code = textwrap.dedent("""
     Auto-generated Manim scene

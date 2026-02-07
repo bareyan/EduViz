@@ -82,6 +82,7 @@ class AnimationOrchestrator:
         section: Dict[str, Any],
         duration: float,
         context: Optional[Dict[str, Any]] = None,
+        on_choreography_plan: Optional[Callable[[str, int], None]] = None,
         on_raw_code: Optional[Callable[[str, int], None]] = None,
         status_callback: Optional[Callable[[SectionState], None]] = None
     ) -> str:
@@ -129,6 +130,7 @@ class AnimationOrchestrator:
                     section_title,
                     attempt_idx,
                     retry_context,
+                    on_choreography_plan=on_choreography_plan,
                     on_raw_code=on_raw_code,
                     status_callback=status_callback
                 )
@@ -165,6 +167,7 @@ class AnimationOrchestrator:
         section_title: str,
         attempt_idx: int,
         context: Dict[str, Any],
+        on_choreography_plan: Optional[Callable[[str, int], None]] = None,
         on_raw_code: Optional[Callable[[str, int], None]] = None,
         status_callback: Optional[Callable[[SectionState], None]] = None
     ) -> str:
@@ -183,6 +186,15 @@ class AnimationOrchestrator:
         # Stage 1: Choreography (visual planning)
         logger.info(f"Stage 1: Choreography for '{section_title}'")
         plan = await self.choreographer.plan(section, duration, context)
+
+        if on_choreography_plan:
+            try:
+                on_choreography_plan(plan, attempt_idx)
+            except Exception as e:
+                logger.warning(
+                    f"Failed to persist choreography plan for '{section_title}': {e}",
+                    extra={"section_title": section_title, "attempt": attempt_idx + 1}
+                )
         
         # Stage 2: Implementation (code generation)
         logger.info(f"Stage 2: Implementation for '{section_title}'")

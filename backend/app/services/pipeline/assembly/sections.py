@@ -197,6 +197,8 @@ async def process_single_subsection(
         if isinstance(manim_result, dict):
             if manim_result.get("manim_code_path"):
                 result["manim_code_path"] = manim_result["manim_code_path"]
+            if manim_result.get("choreography_plan_path"):
+                result["choreography_plan_path"] = manim_result["choreography_plan_path"]
     except Exception as e:
         import traceback
         logger.error(f"Manim error for section {section_index}: {e}")
@@ -362,6 +364,8 @@ async def process_segments_audio_first(
         video_path = manim_result.get("video_path")
         if isinstance(manim_result, dict) and manim_result.get("manim_code_path"):
             result["manim_code_path"] = manim_result["manim_code_path"]
+        if isinstance(manim_result, dict) and manim_result.get("choreography_plan_path"):
+            result["choreography_plan_path"] = manim_result["choreography_plan_path"]
     except Exception as e:
         logger.error(f"Manim error for unified section {section_index}: {e}")
         import traceback

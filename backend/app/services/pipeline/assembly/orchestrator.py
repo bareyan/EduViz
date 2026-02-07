@@ -31,6 +31,7 @@ class SectionResult:
     duration: float
     title: str
     manim_code_path: Optional[str] = None
+    choreography_plan_path: Optional[str] = None
     error: Optional[str] = None
 
     def is_successful(self) -> bool:
@@ -291,6 +292,9 @@ class SectionOrchestrator:
                 if subsection_results.get("manim_code_path"):
                     result.manim_code_path = subsection_results["manim_code_path"]
                     section["manim_code_path"] = subsection_results["manim_code_path"]
+                if subsection_results.get("choreography_plan_path"):
+                    result.choreography_plan_path = subsection_results["choreography_plan_path"]
+                    section["choreography_plan_path"] = subsection_results["choreography_plan_path"]
 
             else:
                 # Multi-segment processing
@@ -317,6 +321,9 @@ class SectionOrchestrator:
                 if segment_result.get("manim_code_path"):
                     result.manim_code_path = segment_result["manim_code_path"]
                     section["manim_code_path"] = segment_result["manim_code_path"]
+                if segment_result.get("choreography_plan_path"):
+                    result.choreography_plan_path = segment_result["choreography_plan_path"]
+                    section["choreography_plan_path"] = segment_result["choreography_plan_path"]
 
             # Mark as complete and report progress
             self.progress_tracker.mark_section_complete(section_index)
@@ -420,6 +427,8 @@ class SectionOrchestrator:
                 sections[i]["manim_code_path"] = result.manim_code_path
                 if "manim_code" in sections[i]:
                     del sections[i]["manim_code"]
+            if result.choreography_plan_path and i < len(sections):
+                sections[i]["choreography_plan_path"] = result.choreography_plan_path
 
             # Build chapter metadata (only for sections with video)
             if result.video_path:

@@ -5,6 +5,15 @@ TTS Engine - Text-to-Speech using Edge TTS (free, high quality)
 import asyncio
 from typing import Optional
 
+from app.core.voice_catalog import (
+    TTS_VOICES_BY_LANGUAGE,
+    DEFAULT_TTS_LANGUAGE,
+    get_tts_available_languages,
+    get_tts_available_voices_flat,
+    get_tts_default_voice_for_language,
+    get_tts_voices_for_language,
+)
+
 try:
     import edge_tts
 except ImportError:
@@ -14,82 +23,16 @@ except ImportError:
 class TTSEngine:
     """Text-to-Speech engine using Microsoft Edge TTS"""
 
-    # Simplified voice selection - only the best voices for each language
-    VOICES_BY_LANGUAGE = {
-        "en": {
-            "name": "English",
-            "voices": {
-                "en-GB-RyanNeural": {"name": "Ryan (UK)", "gender": "male"},
-                "en-GB-SoniaNeural": {"name": "Sonia (UK)", "gender": "female"},
-            },
-            "default": "en-GB-RyanNeural"
-        },
-        "fr": {
-            "name": "French",
-            "voices": {
-                "fr-CH-FabriceNeural": {"name": "Fabrice (Swiss)", "gender": "male"},
-                "fr-FR-DeniseNeural": {"name": "Denise (France)", "gender": "female"},
-            },
-            "default": "fr-CH-FabriceNeural"
-        },
-        "ru": {
-            "name": "Russian",
-            "voices": {
-                "ru-RU-DmitryNeural": {"name": "Dmitry (Russia)", "gender": "male"},
-                "ru-RU-SvetlanaNeural": {"name": "Svetlana (Russia)", "gender": "female"},
-            },
-            "default": "ru-RU-DmitryNeural"
-        },
-        "ua": {
-            "name": "Ukrainian",
-            "voices": {
-                "uk-UA-OstapNeural": {"name": "Ostap (Ukraine)", "gender": "male"},
-                "uk-UA-PolinaNeural": {"name": "Polina (Ukraine)", "gender": "female"},
-            },
-            "default": "uk-UA-OstapNeural"
-        },
-        # Armenian - Using multilingual voices
-        "hy": {
-            "name": "Armenian",
-            "voices": {
-                "en-US-EmmaMultilingualNeural": {"name": "Emma (Multilingual)", "gender": "female"},
-                "fr-FR-VivienneMultilingualNeural": {"name": "Vivienne (Multilingual)", "gender": "female"},
-                "en-US-BrianMultilingualNeural": {"name": "Brian (Multilingual)", "gender": "male"},
-            },
-            "default": "en-US-EmmaMultilingualNeural",
-            "note": "Armenian not natively supported - using multilingual voices"
-        },
-        # Multilingual voices - for auto language detection or any other languages
-        "auto": {
-            "name": "Multilingual (Auto-detect)",
-            "voices": {
-                "en-US-EmmaMultilingualNeural": {"name": "Emma (Multilingual)", "gender": "female"},
-                "fr-FR-VivienneMultilingualNeural": {"name": "Vivienne (Multilingual)", "gender": "female"},
-                "en-US-BrianMultilingualNeural": {"name": "Brian (Multilingual)", "gender": "male"},
-            },
-            "default": "en-US-EmmaMultilingualNeural",
-            "note": "Multilingual voices that can speak multiple languages naturally"
-        }
-    }
-
-    # Flat dictionary for backwards compatibility
-    VOICES = {
-        voice_id: info["name"]
-        for lang_data in VOICES_BY_LANGUAGE.values()
-        for voice_id, info in lang_data["voices"].items()
-    }
-
-    DEFAULT_VOICE = "en-GB-RyanNeural"
-    DEFAULT_LANGUAGE = "en"
+    # Centralized voice catalog
+    VOICES_BY_LANGUAGE = TTS_VOICES_BY_LANGUAGE
+    VOICES = get_tts_available_voices_flat()
+    DEFAULT_LANGUAGE = DEFAULT_TTS_LANGUAGE
+    DEFAULT_VOICE = get_tts_default_voice_for_language(DEFAULT_LANGUAGE)
 
     @classmethod
     def get_default_voice_for_language(cls, language: str) -> str:
         """Get the default voice for a specific language"""
-        lang_data = cls.VOICES_BY_LANGUAGE.get(language)
-        if lang_data and "default" in lang_data:
-            return lang_data["default"]
-        # Fallback to multilingual for unknown languages
-        return cls.VOICES_BY_LANGUAGE["auto"]["default"]
+        return get_tts_default_voice_for_language(language)
 
     def __init__(self):
         if not edge_tts:
@@ -244,24 +187,17 @@ class TTSEngine:
     @classmethod
     def get_voices_by_language(cls) -> dict:
         """Get voices organized by language"""
-        return cls.VOICES_BY_LANGUAGE
+        return TTS_VOICES_BY_LANGUAGE
 
     @classmethod
     def get_available_languages(cls) -> list:
         """Get list of available languages"""
-        return [
-            {"code": code, "name": data["name"]}
-            for code, data in cls.VOICES_BY_LANGUAGE.items()
-        ]
+        return get_tts_available_languages()
 
     @classmethod
     def get_voices_for_language(cls, language: str) -> list:
         """Get voices for a specific language"""
-        lang_data = cls.VOICES_BY_LANGUAGE.get(language, cls.VOICES_BY_LANGUAGE["en"])
-        return [
-            {"id": voice_id, "name": info["name"], "gender": info["gender"]}
-            for voice_id, info in lang_data["voices"].items()
-        ]
+        return get_tts_voices_for_language(language)
 
     async def generate_speech(
         self,

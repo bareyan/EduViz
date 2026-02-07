@@ -39,10 +39,16 @@ def generator(mock_deps):
 async def test_generate_animation_success(generator, mock_deps):
     # Setup
     mock_orchestrator = generator.orchestrator
-    mock_orchestrator.generate = AsyncMock(return_value="manim_code")
+    async def _mock_generate(*args, **kwargs):
+        on_plan = kwargs.get("on_choreography_plan")
+        if on_plan:
+            on_plan('{"steps": []}', 0)
+        return "manim_code"
+    mock_orchestrator.generate = AsyncMock(side_effect=_mock_generate)
     
     mock_deps["create_scene_file"].return_value = "full_code"
     generator.file_manager.prepare_scene_file.return_value = "code_path"
+    generator.file_manager.prepare_choreography_plan_file.return_value = "/tmp/out/choreography_plan.json"
     mock_deps["render_scene"].side_effect = AsyncMock(return_value="video.mp4")
     generator.vision_validator.verify_issues = AsyncMock(return_value=[])
     
@@ -58,8 +64,10 @@ async def test_generate_animation_success(generator, mock_deps):
     # Assert
     assert result["video_path"] == "video.mp4"
     assert result["manim_code"] == "full_code"
+    assert result["choreography_plan_path"] == "/tmp/out/choreography_plan.json"
     mock_orchestrator.generate.assert_called_once()
     mock_deps["render_scene"].assert_called_once()
+    generator.file_manager.prepare_choreography_plan_file.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_generate_animation_orchestrator_failure(generator, mock_deps):
@@ -74,6 +82,29 @@ async def test_generate_animation_orchestrator_failure(generator, mock_deps):
             section_index=1,
             audio_duration=10.0
         )
+
+
+@pytest.mark.asyncio
+async def test_generate_animation_passes_explicit_theme_info(generator, mock_deps):
+    mock_orchestrator = generator.orchestrator
+    mock_orchestrator.generate = AsyncMock(return_value="manim_code")
+    mock_deps["create_scene_file"].return_value = "full_code"
+    generator.file_manager.prepare_scene_file.return_value = "code_path"
+    mock_deps["render_scene"].side_effect = AsyncMock(return_value="video.mp4")
+    generator.vision_validator.verify_issues = AsyncMock(return_value=[])
+
+    section = {"id": "sec1", "title": "Section 1"}
+    await generator.generate_animation(
+        section=section,
+        output_dir="/tmp/out",
+        section_index=1,
+        audio_duration=10.0,
+        style="clean",
+    )
+
+    called_section = mock_orchestrator.generate.call_args[0][0]
+    assert called_section["style"] == "clean"
+    assert "background=#FFFFFF" in called_section["theme_info"]
 
 @pytest.mark.asyncio
 async def test_process_code_and_render_rendering_failure(generator, mock_deps):

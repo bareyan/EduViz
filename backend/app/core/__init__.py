@@ -84,6 +84,18 @@ from .constants import (
     get_language_name,
 )
 
+# Voice catalog
+from .voice_catalog import (
+    TTS_VOICES_BY_LANGUAGE,
+    TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE,
+    get_tts_available_languages,
+    get_tts_available_voices_flat,
+    get_tts_default_voice_for_language,
+    get_tts_voices_for_language,
+    get_translation_default_voice,
+    get_translation_languages,
+)
+
 __all__ = [
     # Logging
     "setup_logging",
@@ -129,5 +141,14 @@ __all__ = [
     # Constants
     "LANGUAGE_NAMES",
     "get_language_name",
+    # Voice catalog
+    "TTS_VOICES_BY_LANGUAGE",
+    "TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE",
+    "get_tts_available_languages",
+    "get_tts_available_voices_flat",
+    "get_tts_default_voice_for_language",
+    "get_tts_voices_for_language",
+    "get_translation_default_voice",
+    "get_translation_languages",
 ]
 

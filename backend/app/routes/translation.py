@@ -18,10 +18,13 @@ from ..core import (
     get_media_duration,
     load_script,
     load_script_raw,
-    get_language_name,
     job_intermediate_artifacts_available,
     job_is_final_only,
     assert_runtime_tools_available,
+)
+from ..core.voice_catalog import (
+    get_translation_default_voice,
+    get_translation_languages as list_translation_languages,
 )
 
 router = APIRouter(tags=["translation"])
@@ -40,40 +43,15 @@ class TranslationResponse(BaseModel):
     message: str
 
 
-# Default translation voice by language code.
-TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE = {
-    "en": "en-US-GuyNeural",
-    "fr": "fr-FR-HenriNeural",
-    "es": "es-ES-AlvaroNeural",
-    "de": "de-DE-ConradNeural",
-    "it": "it-IT-DiegoNeural",
-    "pt": "pt-BR-AntonioNeural",
-    "zh": "zh-CN-YunxiNeural",
-    "ja": "ja-JP-KeitaNeural",
-    "ko": "ko-KR-InJoonNeural",
-    "ar": "ar-SA-HamedNeural",
-    "ru": "ru-RU-DmitryNeural",
-    "hy": "hy-AM-HaykNeural",
-    "hi": "hi-IN-MadhurNeural",
-    "tr": "tr-TR-AhmetNeural",
-    "pl": "pl-PL-MarekNeural",
-    "nl": "nl-NL-MaartenNeural",
-}
-
-
 def get_voice_for_language(language: str) -> str:
     """Get appropriate TTS voice for a language"""
-    return TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE.get(language, "en-US-GuyNeural")
+    return get_translation_default_voice(language)
 
 
 @router.get("/translation/languages")
 async def get_translation_languages():
     """Get supported target languages for video translation."""
-    languages = [
-        {"code": code, "name": get_language_name(code)}
-        for code in sorted(TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE.keys())
-    ]
-    return {"languages": languages}
+    return {"languages": list_translation_languages()}
 
 
 def _cleanup_translation_artifacts(translation_dir: str) -> None:

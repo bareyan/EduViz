@@ -21,7 +21,7 @@ _MANIM_TECHNICAL_BASE = f"""
 - DO NOT use legacy manimlib or ManimGL syntax.
 
 ## ANIMATION PRINCIPLES
-- **3Blue1Brown Aesthetics**: Dark background (#171717), vibrant colors, smooth transitions
+- **Theme Fidelity**: Follow the exact theme from user prompt (background, text colors, accents)
 - **Mathematical Clarity**: Use MathTex for all formulas and equations
 - **Timing Precision**: Use self.wait() to sync animations with narration exactly
 
@@ -31,7 +31,7 @@ _MANIM_TECHNICAL_BASE = f"""
 - **SAFE ZONE**: Best practice is to keep content within X [-5.5, 5.5], Y [-3.0, 3.0].
 - **TEXT EDGE MARGIN**: Text MUST have ≥0.5 units margin from screen edges. Partially clipped text (e.g. "Dégénérescenc" instead of "Dégénérescence") is a CRITICAL defect.
 - **OVERLAPS**: Do NOT overlap Text/Tex objects. This is a CRITICAL ERROR.
-- **VISIBILITY**: Do NOT set object color to background color (#171717). This is a CRITICAL ERROR.
+- **VISIBILITY**: Do NOT set object color equal/similar to current background color. This is a CRITICAL ERROR.
 - **OUTLINES/CONTAINERS**: If using boxes, rounded rectangles, highlights, or frames, ensure the text/element is fully inside with padding. Use .next_to(..., buff=...) or .scale_to_fit_width/height and avoid clipping.
 - Use .scale() to ensure objects fit within bounds.
 - Avoid 3D objects (ThreeDScene, ThreeDVMobject) - use 2D representations.

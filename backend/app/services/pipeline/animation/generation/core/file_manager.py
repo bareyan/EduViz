@@ -9,6 +9,7 @@ Follows SRP by handling:
 """
 
 import shutil
+import json
 from pathlib import Path
 from typing import Optional
 
@@ -53,6 +54,32 @@ class AnimationFileManager:
             return file_path
         except IOError as e:
             logger.error(f"Failed to write scene file {file_path}: {e}")
+            raise
+
+    def prepare_choreography_plan_file(
+        self,
+        output_dir: str,
+        plan_content: str,
+    ) -> Path:
+        """Persist choreography output in section directory.
+
+        Stores JSON when parseable, otherwise wraps raw text in a JSON envelope.
+        """
+        self.ensure_output_directory(output_dir)
+        file_path = Path(output_dir) / "choreography_plan.json"
+
+        try:
+            payload = json.loads(plan_content)
+        except (TypeError, json.JSONDecodeError):
+            payload = {"plan_text": str(plan_content or "")}
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            logger.info(f"Choreography plan written: {file_path}")
+            return file_path
+        except IOError as e:
+            logger.error(f"Failed to write choreography plan file {file_path}: {e}")
             raise
 
     def get_quality_subdir(self, quality: str) -> str:

@@ -9,6 +9,8 @@ to keep routes focused on HTTP handling.
 """
 
 import shutil
+import json
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
@@ -32,6 +34,40 @@ from .jobs_helpers import (
 )
 
 router = APIRouter(tags=["jobs"])
+
+
+def _load_visual_script(section: dict, section_dir: "Path") -> str:
+    """
+    Resolve visual script text for section details.
+
+    Priority:
+    1) section.visual_description from script.json
+    2) choreography_plan.json persisted in section directory
+    """
+    visual_description = str(section.get("visual_description", "") or "").strip()
+    if visual_description:
+        return visual_description
+
+    candidates = []
+    if section.get("choreography_plan_path"):
+        candidates.append(Path(str(section.get("choreography_plan_path"))).resolve())
+    candidates.append((section_dir / "choreography_plan.json").resolve())
+
+    for candidate in candidates:
+        try:
+            if not validate_path_within_directory(candidate, OUTPUT_DIR):
+                continue
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            with open(candidate, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if isinstance(payload, (dict, list)):
+                return json.dumps(payload, ensure_ascii=False, indent=2)
+            return str(payload)
+        except Exception:
+            continue
+
+    return ""
 
 
 @router.get("/job/{job_id}", response_model=JobResponse)
@@ -324,8 +360,8 @@ async def get_section_details(job_id: str, section_index: int):
     # Get full narration
     narration = section.get("tts_narration") or section.get("narration", "")
 
-    # Get visual description from script
-    visual_description = section.get("visual_description", "")
+    # Get visual script from script metadata or persisted choreography plan
+    visual_description = _load_visual_script(section, section_dir)
 
     # Get narration segments if available
     narration_segments = section.get("narration_segments", [])

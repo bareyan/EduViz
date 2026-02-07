@@ -12,6 +12,7 @@ from app.services.infrastructure.parsing.code_parser import (
 from ...config import (
     CONSTRUCT_INDENT_SPACES, 
     THEME_SETUP_CODES,
+    THEME_TEXT_DEFAULT_CODES,
     normalize_theme_style,
 )
 from ..constants import DEFAULT_THEME_CODE
@@ -27,6 +28,15 @@ def get_theme_setup_code(style: str = DEFAULT_THEME_CODE) -> str:
     """
     normalized = normalize_theme_style(style)
     return THEME_SETUP_CODES.get(normalized, THEME_SETUP_CODES[DEFAULT_THEME_CODE])
+
+
+def get_theme_text_defaults_code(style: str = DEFAULT_THEME_CODE) -> str:
+    """Returns scene-level default text color setup for a specific style."""
+    normalized = normalize_theme_style(style)
+    return THEME_TEXT_DEFAULT_CODES.get(
+        normalized,
+        THEME_TEXT_DEFAULT_CODES[DEFAULT_THEME_CODE],
+    )
 
 
 def clean_code(code_text: Optional[str]) -> str:
@@ -85,9 +95,18 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
     # Fix any translated common issues
     code = fix_translated_code(code)
     
-    # Ensure background color is set according to style if not present
+    # Ensure background color and readable text defaults are set according to style if not present
     theme_setup = get_theme_setup_code(style).strip()
-    if theme_setup and theme_setup not in code:
+    text_defaults_setup = get_theme_text_defaults_code(style).strip()
+    needs_theme_setup = bool(theme_setup and theme_setup not in code)
+    needs_text_defaults = bool(
+        text_defaults_setup
+        and "Text.set_default(" not in code
+        and "Tex.set_default(" not in code
+        and "MathTex.set_default(" not in code
+    )
+
+    if needs_theme_setup or needs_text_defaults:
         # Find construct(self): and insert theme setup
         match = re.search(r"def construct\(self\):", code)
         if match:
@@ -103,7 +122,15 @@ def create_scene_file(code: str, section_id: str, duration: float, style: str = 
             else:
                 indent = " " * CONSTRUCT_INDENT_SPACES
                 
-            code = code[:insertion_point] + "\n" + indent + theme_setup.strip() + "\n" + code[insertion_point:]
+            inserts = []
+            if needs_theme_setup:
+                inserts.append(theme_setup.strip())
+            if needs_text_defaults:
+                inserts.extend(text_defaults_setup.splitlines())
+
+            if inserts:
+                injection = "\n".join(f"{indent}{line.strip()}" for line in inserts if line.strip())
+                code = code[:insertion_point] + "\n" + injection + "\n" + code[insertion_point:]
 
     return code
 

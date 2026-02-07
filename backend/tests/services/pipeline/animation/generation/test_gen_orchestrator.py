@@ -42,15 +42,17 @@ async def test_generate_success(orchestrator, mock_stages):
     mock_stages["choreographer"].plan = AsyncMock(return_value="plan")
     mock_stages["implementer"].implement = AsyncMock(return_value="code")
     mock_stages["refiner"].refine = AsyncMock(return_value=("final_code", True))
+    on_plan = Mock()
     
     section = {"title": "Test Section"}
-    result = await orchestrator.generate(section, 60.0)
+    result = await orchestrator.generate(section, 60.0, on_choreography_plan=on_plan)
     
     # Assertions
     assert result == "final_code"
     mock_stages["choreographer"].plan.assert_called_once()
     mock_stages["implementer"].implement.assert_called_once()
     mock_stages["refiner"].refine.assert_called_once()
+    on_plan.assert_called_once_with("plan", 0)
 
 @pytest.mark.asyncio
 async def test_generate_retry_logic(orchestrator, mock_stages):

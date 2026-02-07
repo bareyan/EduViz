@@ -19,6 +19,13 @@ def test_prepare_scene_file(file_manager):
         assert path == Path("/tmp/scene_1.py")
         mock_open.assert_called_once()
 
+
+def test_prepare_choreography_plan_file_json(file_manager):
+    with patch("builtins.open") as mock_open:
+        path = file_manager.prepare_choreography_plan_file("/tmp", '{"steps": []}')
+        assert path == Path("/tmp/choreography_plan.json")
+        mock_open.assert_called_once()
+
 def test_get_quality_subdir(file_manager):
     # Depending on REAL config, but defaulting to 480p15 usually
     # If QUALITY_DIR_MAP is mocked, we can test logic.

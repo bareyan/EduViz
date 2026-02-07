@@ -28,6 +28,8 @@ from .core.validation import VisionValidator
 from ..config import (
     ENABLE_VISION_QC,
     MAX_CLEAN_RETRIES,
+    normalize_theme_style,
+    get_theme_prompt_info,
 )
 from .constants import DEFAULT_THEME_CODE
 
@@ -108,6 +110,11 @@ class ManimGenerator:
         self.stats["total_sections"] += 1
         logger.info(f"Starting animation pipeline for section {section_index} (Job: {job_id})")
 
+        normalized_style = normalize_theme_style(style)
+        section_input = dict(section)
+        section_input["style"] = normalized_style
+        section_input["theme_info"] = section.get("theme_info") or get_theme_prompt_info(normalized_style)
+
         # Build context for logging
         context = {
             "section_index": section_index,
@@ -117,6 +124,25 @@ class ManimGenerator:
         # Modular Pipeline Flow (Choreograph -> Implement -> Refine)
         section_dir = Path(output_dir)
         write_status(section_dir, "generating_manim")
+        choreography_plan_path: Optional[str] = None
+
+        def on_choreography_plan(plan: str, attempt_idx: int) -> None:
+            nonlocal choreography_plan_path
+            plan_file = self.file_manager.prepare_choreography_plan_file(
+                output_dir=output_dir,
+                plan_content=plan,
+            )
+            choreography_plan_path = str(plan_file)
+            logger.info(
+                "Choreography plan generated",
+                extra={
+                    "section_index": section_index,
+                    "attempt": attempt_idx + 1,
+                    "plan_chars": len(plan),
+                    "pipeline_stage": "choreography_generated",
+                    "choreography_plan_path": choreography_plan_path,
+                },
+            )
 
         def on_raw_code(code: str, attempt_idx: int) -> None:
             self.file_manager.prepare_scene_file(
@@ -138,9 +164,10 @@ class ManimGenerator:
             write_status(section_dir, status)
 
         final_manim_code = await self.orchestrator.generate(
-            section,
+            section_input,
             audio_duration,
             context,
+            on_choreography_plan=on_choreography_plan,
             on_raw_code=on_raw_code,
             status_callback=status_callback
         )
@@ -157,14 +184,17 @@ class ManimGenerator:
             )
 
         # Stage 4: Rendering (Production)
-        return await self.process_code_and_render(
+        result = await self.process_code_and_render(
             manim_code=final_manim_code,
-            section=section,
+            section=section_input,
             output_dir=output_dir,
             section_index=section_index,
             audio_duration=audio_duration,
-            style=style
+            style=normalized_style
         )
+        if choreography_plan_path:
+            result["choreography_plan_path"] = choreography_plan_path
+        return result
 
     async def process_code_and_render(
         self,

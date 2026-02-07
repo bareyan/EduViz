@@ -33,6 +33,7 @@ from app.services.pipeline.animation.config import (
     VISION_QC_FRAME_DIR_NAME,
     THEME_SETUP_CODES,
     normalize_theme_style,
+    get_theme_prompt_info,
 )
 
 
@@ -203,3 +204,8 @@ class TestThemeStyleNormalization:
 
     def test_unknown_style_falls_back_to_default(self):
         assert normalize_theme_style("unknown-style") == "3b1b"
+
+    def test_theme_prompt_info_includes_colors(self):
+        info = get_theme_prompt_info("clean")
+        assert "background=#FFFFFF" in info
+        assert "primary_text=#111111" in info
