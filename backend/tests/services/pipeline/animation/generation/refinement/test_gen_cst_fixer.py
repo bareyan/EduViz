@@ -85,3 +85,91 @@ rect = Rectangle()
     assert "rect.set_fill" in fixed
     assert "opacity" in fixed
     assert "0" in fixed
+
+
+def test_fix_visual_quality_text_dominance():
+    fixer = CSTFixer()
+    code = """
+class Scene(Scene):
+    def construct(self):
+        opt_lbl = Text("Optimal Solution", font_size=32)
+        self.play(
+            opt_lbl.animate.scale(1.2).set_color(YELLOW),
+            run_time=1.0
+        )
+"""
+    issue = ValidationIssue(
+        severity=IssueSeverity.WARNING,
+        confidence=IssueConfidence.HIGH,
+        category=IssueCategory.VISUAL_QUALITY,
+        message="Text dominance",
+        details={"reason": "text_dominance", "text": "Optimal Solution"},
+        auto_fixable=True,
+    )
+
+    fixed, remaining, count = fixer.fix(code, [issue])
+    assert count == 1
+    assert "opt_lbl.scale_to_fit_width" in fixed
+    assert "1.2" not in fixed
+    assert "1.08" in fixed
+
+
+def test_fix_known_patterns_disables_outer_lines_when_grid_lines_used():
+    fixer = CSTFixer()
+    code = """
+from manim import *
+class SceneA(Scene):
+    def construct(self):
+        table = MathTable([["1"]], include_outer_lines=True)
+        grid = table.get_grid_lines()
+"""
+    fixed, count = fixer.fix_known_patterns(code)
+    assert count >= 1
+    assert "include_outer_lines=False" in fixed
+
+
+def test_fix_visual_quality_filled_shape_dominance():
+    fixer = CSTFixer()
+    code = """
+class Scene(Scene):
+    def construct(self):
+        panel = Rectangle(width=12, height=6, fill_opacity=1.0)
+"""
+    issue = ValidationIssue(
+        severity=IssueSeverity.CRITICAL,
+        confidence=IssueConfidence.HIGH,
+        category=IssueCategory.VISUAL_QUALITY,
+        message="Filled rectangle dominates frame",
+        details={"reason": "filled_shape_dominance", "object_type": "Rectangle"},
+        auto_fixable=True,
+    )
+
+    fixed, remaining, count = fixer.fix(code, [issue])
+    assert count == 1
+    assert "panel.set_fill(opacity=0.15)" in fixed or "panel.set_fill(opacity = 0.15)" in fixed
+
+
+def test_fix_out_of_bounds_text_edge_clipping_nudges_text():
+    fixer = CSTFixer()
+    code = """
+class Scene(Scene):
+    def construct(self):
+        question = Text("Which edge to follow?")
+"""
+    issue = ValidationIssue(
+        severity=IssueSeverity.CRITICAL,
+        confidence=IssueConfidence.HIGH,
+        category=IssueCategory.OUT_OF_BOUNDS,
+        message="Text appears clipped near left edge",
+        details={
+            "is_text": True,
+            "reason": "text_edge_clipping",
+            "text": "Which edge to follow?",
+            "edge": "left",
+        },
+        auto_fixable=True,
+    )
+
+    fixed, remaining, count = fixer.fix(code, [issue])
+    assert count == 1
+    assert "question.shift(RIGHT * 0.6)" in fixed

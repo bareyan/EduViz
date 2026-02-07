@@ -17,6 +17,8 @@ class MyScene(Scene):
     assert "SPATIAL_ISSUES_JSON" in injected_code
     # Monkey patch check
     assert "self._original_play = self.play" in injected_code
+    assert "filled_shape_dominance" in injected_code
+    assert "text_edge_clipping" in injected_code
 
 def test_inject_failure_returns_original():
     injector = SpatialCheckInjector()

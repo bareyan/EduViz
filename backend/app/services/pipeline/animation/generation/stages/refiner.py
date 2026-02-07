@@ -10,7 +10,9 @@ Orchestrates the validate → triage → fix cycle with the
 2. **Uncertain Issues**: It might be broken, but we're not sure.
    → Check whitelist first (skip if known false positive).
    → If not whitelisted → verify with IssueVerifier (Vision LLM).
-   → If verified as real → route to LLM fixer.
+   → If verified as real:
+      - auto-fixable → deterministic fixer
+      - non-auto-fixable → LLM fixer
    → If false positive → add to whitelist (skip next time).
 
 The whitelist is session-scoped and resets between section generations,
@@ -94,7 +96,8 @@ class Refiner:
                a. Certain + auto-fixable → CSTFixer (no LLM)
                b. Certain + requires LLM → LLM fixer
                c. Uncertain → verify with IssueVerifier:
-                  - Real → route to LLM fixer
+                  - Real + auto-fixable → CSTFixer
+                  - Real + non-auto-fixable → LLM fixer
                   - False positive → add to whitelist
 
         Returns:
@@ -282,18 +285,12 @@ class Refiner:
         triage_stats["deterministic"] = 0
         triage_stats["llm"] = 0
         triage_stats["deferred_to_visual_qc"] = 0
-        triage_stats["skipped_whitelisted"] = 0
+        triage_stats["skipped_whitelisted"] = len(partitions["whitelisted"])
 
-        # Tier 1: Deterministic fixes for certain auto-fixable issues
-        if partitions["certain_auto_fixable"]:
-            code, remaining, fixes = self.deterministic_fixer.fix(
-                code, partitions["certain_auto_fixable"]
-            )
-            triage_stats["deterministic"] = fixes
-            # Any that couldn't be auto-fixed need LLM
-            partitions["certain_llm_needed"].extend(remaining)
+        verified_real_auto_fixable: List[ValidationIssue] = []
+        verified_real_llm_needed: List[ValidationIssue] = []
 
-        # Tier 2: Verify uncertain issues with IssueVerifier (LLM-based)
+        # Tier 1: Verify uncertain issues first (if verifier available)
         if partitions["uncertain"]:
             if self.issue_verifier:
                 logger.info(
@@ -308,8 +305,12 @@ class Refiner:
                     logger.info(
                         f"IssueVerifier confirmed {len(verification_result.real)} real issues"
                     )
-                    partitions["certain_llm_needed"].extend(verification_result.real)
                     triage_stats["verified_real"] = len(verification_result.real)
+                    for verified_issue in verification_result.real:
+                        if verified_issue.auto_fixable:
+                            verified_real_auto_fixable.append(verified_issue)
+                        else:
+                            verified_real_llm_needed.append(verified_issue)
                 
                 # False positives → add to whitelist
                 if verification_result.false_positives:
@@ -323,17 +324,30 @@ class Refiner:
                 self.pending_uncertain_issues.extend(partitions["uncertain"])
                 triage_stats["deferred_to_visual_qc"] = len(partitions["uncertain"])
 
-        # Tier 3: LLM fixes for certain issues that need it
-        if partitions["certain_llm_needed"]:
+        # Tier 2: Deterministic fixes for all auto-fixable real issues
+        deterministic_batch = list(partitions["certain_auto_fixable"])
+        deterministic_batch.extend(verified_real_auto_fixable)
+        if deterministic_batch:
+            code, remaining, fixes = self.deterministic_fixer.fix(
+                code, deterministic_batch
+            )
+            triage_stats["deterministic"] = fixes
+            # Any that couldn't be auto-fixed need LLM fallback.
+            partitions["certain_llm_needed"].extend(remaining)
+
+        # Tier 3: LLM fixes for non-auto-fixable real issues
+        llm_batch = list(partitions["certain_llm_needed"])
+        llm_batch.extend(verified_real_llm_needed)
+        if llm_batch:
             error_context = "\n".join(
-                issue.to_fixer_context() for issue in partitions["certain_llm_needed"]
+                issue.to_fixer_context() for issue in llm_batch
             )
             self._report_status(status_callback, "fixing_manim", section_title, turn_idx)
             code = await self._apply_llm_fix(
                 code, error_context, turn_idx, context
             )
-            triage_stats["llm"] = len(partitions["certain_llm_needed"])
-            triage_stats["unresolved"] = len(partitions["certain_llm_needed"])
+            triage_stats["llm"] = len(llm_batch)
+            triage_stats["unresolved"] = len(llm_batch)
 
         return code, triage_stats
 

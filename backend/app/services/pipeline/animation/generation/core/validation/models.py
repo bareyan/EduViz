@@ -150,6 +150,7 @@ class ValidationIssue:
             IssueCategory.TEXT_OVERLAP,
             IssueCategory.OBJECT_OCCLUSION,
             IssueCategory.VISIBILITY,
+            IssueCategory.VISUAL_QUALITY,
         )
 
     def to_fixer_context(self) -> str:

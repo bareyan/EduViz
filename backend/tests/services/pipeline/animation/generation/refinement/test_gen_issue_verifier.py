@@ -49,6 +49,26 @@ async def test_verify_llm_failure(issue_verifier):
     assert len(res.real) == 1
     assert len(res.false_positives) == 0
 
+
+@pytest.mark.asyncio
+async def test_verify_recovers_from_malformed_json_response(issue_verifier):
+    i1 = ValidationIssue(IssueSeverity.INFO, IssueConfidence.LOW, IssueCategory.TEXT_OVERLAP, "msg1")
+    i2 = ValidationIssue(IssueSeverity.INFO, IssueConfidence.LOW, IssueCategory.VISIBILITY, "msg2")
+
+    # Simulate strict JSON failure with recoverable raw response.
+    issue_verifier.engine.generate = AsyncMock(return_value={
+        "success": False,
+        "error": "json_decode_error: Expecting property name enclosed in double quotes",
+        "response": '[{index: 0, verdict: "FALSE_POSITIVE"}, {index: 1, verdict: "REAL"}]',
+        "parsed_json": None,
+    })
+
+    res = await issue_verifier.verify("code", [i1, i2])
+    assert len(res.false_positives) == 1
+    assert res.false_positives[0].message == "msg1"
+    assert len(res.real) == 1
+    assert res.real[0].message == "msg2 [verified]"
+
 def test_build_prompt(issue_verifier):
     code = "import manim"
     i1 = ValidationIssue(IssueSeverity.INFO, IssueConfidence.LOW, IssueCategory.TEXT_OVERLAP, "msg1")

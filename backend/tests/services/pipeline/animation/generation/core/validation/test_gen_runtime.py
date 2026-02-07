@@ -67,6 +67,13 @@ def test_parse_spatial_json(validator):
     assert len(issues) == 1
     assert issues[0].category == IssueCategory.VISIBILITY
 
+
+def test_parse_spatial_json_visual_quality(validator):
+    stderr = 'SPATIAL_ISSUES_JSON:[{"severity":"warning","confidence":"high","category":"visual_quality","message":"Dominant label"}]'
+    issues = validator._parse_spatial_json(stderr)
+    assert len(issues) == 1
+    assert issues[0].category == IssueCategory.VISUAL_QUALITY
+
 def test_parse_spatial_warnings(validator):
     stderr = "SPATIAL_WARNING: Text overlap detected"
     issues = validator._parse_spatial_warnings(stderr)
@@ -79,3 +86,117 @@ def test_prepare_media_dir_creates_tex_folder(validator):
     with patch.object(Path, "mkdir") as mock_mkdir:
         validator._prepare_media_dir(media_dir)
         assert mock_mkdir.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_validate_preflight_blocks_grid_lines_attribute(validator):
+    code = """
+from manim import *
+class SceneA(Scene):
+    def construct(self):
+        t = MathTable([["1"]])
+        x = t.grid_lines
+"""
+    with patch("subprocess.run") as mock_run:
+        result = await validator.validate(code)
+        assert result.valid is False
+        assert any("grid_lines" in issue.message for issue in result.issues)
+        assert result.issues[0].line is not None
+        mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_validate_preflight_flags_duplicate_math_table_grid_lines(validator):
+    code = """
+from manim import *
+class SceneA(Scene):
+    def construct(self):
+        t = MathTable(
+            [["1", "2"], ["3", "4"]],
+            include_outer_lines=True
+        )
+        grid = t.get_grid_lines()
+"""
+    with patch("subprocess.run") as mock_run:
+        result = await validator.validate(code)
+        assert result.valid is False
+        assert any(
+            issue.category == IssueCategory.VISUAL_QUALITY
+            and "get_grid_lines" in issue.message
+            for issue in result.issues
+        )
+        visual_issue = next(
+            issue for issue in result.issues
+            if issue.category == IssueCategory.VISUAL_QUALITY
+        )
+        assert visual_issue.auto_fixable is True
+        assert visual_issue.details.get("reason") == "duplicate_grid_lines"
+        assert visual_issue.details.get("table_var") == "t"
+        mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_validate_preflight_detects_get_cell_out_of_bounds(validator):
+    code = """
+from manim import *
+class SceneA(Scene):
+    def construct(self):
+        t = MathTable(
+            [["1", "2"], ["3", "4"]],
+            col_labels=[MathTex("x1"), MathTex("x2")],
+            row_labels=[MathTex("r1"), MathTex("r2")]
+        )
+        bad = t.get_cell((8, 8))
+"""
+    with patch("subprocess.run") as mock_run:
+        result = await validator.validate(code)
+        assert result.valid is False
+        assert any(
+            issue.category == IssueCategory.RUNTIME
+            and "exceeds table bounds" in issue.message
+            for issue in result.issues
+        )
+        mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_validate_preflight_detects_negative_wait(validator):
+    code = """
+from manim import *
+class SceneA(Scene):
+    def construct(self):
+        self.wait(1.0 - 2.5)
+"""
+    with patch("subprocess.run") as mock_run:
+        result = await validator.validate(code)
+        assert result.valid is False
+        assert any(
+            issue.category == IssueCategory.RUNTIME
+            and "negative duration" in issue.message
+            for issue in result.issues
+        )
+        mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_validate_preflight_detects_nested_get_columns_oob(validator):
+    code = """
+from manim import *
+class SceneA(Scene):
+    def construct(self):
+        t = MathTable(
+            [["1", "2"], ["3", "4"]],
+            col_labels=[MathTex("x1"), MathTex("x2")],
+            row_labels=[MathTex("r1"), MathTex("r2")]
+        )
+        bad = t.get_columns()[10][0]
+"""
+    with patch("subprocess.run") as mock_run:
+        result = await validator.validate(code)
+        assert result.valid is False
+        assert any(
+            issue.category == IssueCategory.RUNTIME
+            and "out of range" in issue.message
+            for issue in result.issues
+        )
+        mock_run.assert_not_called()

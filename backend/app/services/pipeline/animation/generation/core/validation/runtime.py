@@ -28,6 +28,7 @@ from .models import (
 )
 from .spatial import SPATIAL_JSON_MARKER
 from .static import ValidationResult
+from .runtime_preflight import RuntimePreflightChecker
 
 # Category map for the spatial JSON parser
 _CATEGORY_MAP = {
@@ -35,6 +36,7 @@ _CATEGORY_MAP = {
     "text_overlap": IssueCategory.TEXT_OVERLAP,
     "object_occlusion": IssueCategory.OBJECT_OCCLUSION,
     "visibility": IssueCategory.VISIBILITY,
+    "visual_quality": IssueCategory.VISUAL_QUALITY,
 }
 _SEVERITY_MAP = {
     "critical": IssueSeverity.CRITICAL,
@@ -67,12 +69,31 @@ class RuntimeValidator:
         # Resolve manim executable
         # We prefer 'python -m manim' to ensure we use the same environment
         self.python_exe = sys.executable
+        self.preflight_checker = RuntimePreflightChecker()
 
     async def validate(self, code: str, temp_dir: Optional[str] = None, enable_spatial_checks: bool = False, frames_dir: Optional[str] = None) -> ValidationResult:
         """
         Executes the code in dry-run mode.
         """
         result = ValidationResult(valid=True)
+        preflight_issues = self.preflight_checker.check(code)
+        for issue in preflight_issues:
+            if issue.line and not issue.details.get("code_context"):
+                snippet = self._build_code_context(code, issue.line)
+                if snippet:
+                    issue.details["code_context"] = snippet
+            result.add_issue(issue)
+
+        if preflight_issues:
+            logger.warning(
+                "Runtime preflight detected issues before dry-run",
+                extra={
+                    "issue_count": len(preflight_issues),
+                    "categories": [i.category.value for i in preflight_issues],
+                },
+            )
+            # Avoid expensive dry-run when we already have high-confidence blockers.
+            return result
 
         if enable_spatial_checks:
             try:

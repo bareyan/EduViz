@@ -5,24 +5,17 @@ Lightweight LLM probe that checks whether low-confidence validation issues
 are REAL problems or false positives.
 
 Instead of blindly skipping uncertain issues, we send a cheap, focused
-question to the LLM: "Is this a real problem?" — and act on the answer.
-
-Token cost: ~200-400 tokens per verification (vs. ~2000-4000 for a full fix).
-Latency: ~1-3 seconds per probe.
-
-Usage:
-    verifier = IssueVerifier(engine)
-    verified = await verifier.verify(code, uncertain_issues)
-    # verified.real    → issues confirmed as real problems → route to fixer
-    # verified.false_positives → confirmed harmless → discard
+question to the LLM: "Is this a real problem?" and act on the answer.
 """
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+import re
+from typing import Dict, List
 
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig
+from app.services.infrastructure.parsing import parse_json_array_response
 
 from ...config import (
     VERIFICATION_BATCH_SIZE,
@@ -63,21 +56,12 @@ class IssueVerifier:
         code: str,
         issues: List[ValidationIssue],
     ) -> VerificationResult:
-        """Verify a list of uncertain issues.
-
-        Args:
-            code: The Manim source code being validated.
-            issues: Issues with low confidence / INFO severity.
-
-        Returns:
-            VerificationResult with issues split into real vs false_positive.
-        """
+        """Verify a list of uncertain issues."""
         result = VerificationResult()
 
         if not issues:
             return result
 
-        # Process in batches to keep prompts focused
         for batch_start in range(0, len(issues), VERIFICATION_BATCH_SIZE):
             batch = issues[batch_start : batch_start + VERIFICATION_BATCH_SIZE]
             batch_result = await self._verify_batch(code, batch)
@@ -99,11 +83,9 @@ class IssueVerifier:
         """Verify a single batch of issues."""
         result = VerificationResult()
 
-        # Build the verification prompt
         prompt = self._build_prompt(code, issues)
         contents = [prompt]
-        
-        # Add images if available
+
         has_images = False
         for issue in issues:
             if issue.details and issue.details.get("frame_path"):
@@ -117,34 +99,42 @@ class IssueVerifier:
 
         try:
             llm_result = await self.engine.generate(
-                prompt=prompt if not has_images else None, # pass as contents if images exist
+                prompt=prompt if not has_images else None,
                 contents=contents if has_images else None,
                 system_prompt=VERIFIER_SYSTEM.template,
                 config=PromptConfig(
                     temperature=VERIFICATION_TEMPERATURE,
                     max_output_tokens=500,
                     response_format="json",
-                    require_json_valid=True,
+                    # Verifier should recover malformed JSON instead of hard-failing.
+                    require_json_valid=False,
                     timeout=VERIFICATION_TIMEOUT,
                     max_retries=VERIFICATION_MAX_RETRIES,
                 ),
                 context={"stage": "issue_verification"},
             )
 
-            if not llm_result.get("success"):
+            verdict_map = self._extract_verdict_map(llm_result)
+            if not llm_result.get("success") and not verdict_map:
                 logger.warning(
                     f"Verification LLM call failed: {llm_result.get('error')}. "
                     "Treating all as real (conservative)."
                 )
                 result.real.extend(issues)
                 return result
+            if not llm_result.get("success") and verdict_map:
+                logger.warning(
+                    f"Verification LLM call failed: {llm_result.get('error')}. "
+                    f"Recovered {len(verdict_map)} verdict(s) from raw response."
+                )
 
-            verdicts = self._parse_verdicts(llm_result, issues)
+            verdicts = self._parse_verdicts(issues, verdict_map)
             for issue, is_real in verdicts:
                 if is_real:
-                    # Promote confidence since LLM confirmed it
                     promoted = ValidationIssue(
-                        severity=issue.severity if issue.severity != IssueSeverity.INFO else IssueSeverity.WARNING,
+                        severity=issue.severity
+                        if issue.severity != IssueSeverity.INFO
+                        else IssueSeverity.WARNING,
                         confidence=IssueConfidence.MEDIUM,
                         category=issue.category,
                         message=issue.message + " [verified]",
@@ -168,7 +158,6 @@ class IssueVerifier:
     @staticmethod
     def _build_prompt(code: str, issues: List[ValidationIssue]) -> str:
         """Build a concise verification prompt."""
-        # Show only relevant code snippet (first 150 lines max)
         code_lines = code.splitlines()
         if len(code_lines) > 150:
             code_snippet = "\n".join(code_lines[:150]) + "\n# ... (truncated)"
@@ -187,46 +176,95 @@ class IssueVerifier:
             f"The spatial validator flagged these uncertain issues:\n"
             + "\n".join(issue_list)
             + "\n\nFor each issue (by index), is it REAL or FALSE_POSITIVE?"
-            + ("\n(Screenshots attached)" if any(i.details.get("frame_path") for i in issues) else "")
+            + (
+                "\n(Screenshots attached)"
+                if any(i.details.get("frame_path") for i in issues)
+                else ""
+            )
         )
 
     def _build_image_part(self, image_bytes: bytes):
         try:
-            return self.engine.types.Part.from_data(data=image_bytes, mime_type="image/png")
+            return self.engine.types.Part.from_data(
+                data=image_bytes, mime_type="image/png"
+            )
         except AttributeError:
-            return self.engine.types.Part.from_bytes(data=image_bytes, mime_type="image/png")
+            return self.engine.types.Part.from_bytes(
+                data=image_bytes, mime_type="image/png"
+            )
 
     @staticmethod
     def _parse_verdicts(
-        llm_result: dict,
         issues: List[ValidationIssue],
+        verdict_map: Dict[int, bool],
     ) -> List[tuple[ValidationIssue, bool]]:
-        """Parse LLM verdicts and pair with original issues.
-
-        Falls back to treating issues as real on parse failure.
-        """
+        """Pair issues with verdict map (default unresolved -> REAL)."""
         verdicts: List[tuple[ValidationIssue, bool]] = []
-        parsed = llm_result.get("parsed_json")
-
-        if not isinstance(parsed, list):
-            # Try extracting from response text
-            text = llm_result.get("response", "")
-            # Fallback: count REAL/FALSE_POSITIVE occurrences
-            for i, issue in enumerate(issues):
-                is_real = "REAL" in text  # Conservative
-                verdicts.append((issue, is_real))
-            return verdicts
-
-        # Map index → verdict
-        verdict_map: dict[int, bool] = {}
-        for item in parsed:
-            if isinstance(item, dict):
-                idx = item.get("index", -1)
-                v = str(item.get("verdict", "")).upper()
-                verdict_map[idx] = v == "REAL"
-
         for i, issue in enumerate(issues):
-            is_real = verdict_map.get(i, True)  # Default to real if missing
+            is_real = verdict_map.get(i, True)
             verdicts.append((issue, is_real))
-
         return verdicts
+
+    @staticmethod
+    def _extract_verdict_map(llm_result: dict) -> Dict[int, bool]:
+        """Recover verdict map from parsed JSON or malformed response text."""
+        verdict_map: Dict[int, bool] = {}
+
+        parsed = llm_result.get("parsed_json")
+        if isinstance(parsed, list):
+            verdict_map.update(IssueVerifier._extract_verdict_entries(parsed))
+            if verdict_map:
+                return verdict_map
+
+        text = str(llm_result.get("response") or "").strip()
+        if not text:
+            return verdict_map
+
+        recovered = parse_json_array_response(text, default=[])
+        if isinstance(recovered, list):
+            verdict_map.update(IssueVerifier._extract_verdict_entries(recovered))
+            if verdict_map:
+                return verdict_map
+
+        # Pattern: "0: REAL" / "1 - FALSE_POSITIVE"
+        for match in re.finditer(
+            r"(?im)\b(\d+)\s*[:=\-]\s*(REAL|FALSE_POSITIVE)\b",
+            text,
+        ):
+            idx = int(match.group(1))
+            verdict_map[idx] = match.group(2).upper() == "REAL"
+
+        if verdict_map:
+            return verdict_map
+
+        # Malformed object blocks with unquoted keys:
+        # {index: 0, verdict: "FALSE_POSITIVE"}
+        for block in re.findall(r"\{[^{}]*\}", text, flags=re.S):
+            idx_match = re.search(r"\bindex\b\s*:\s*(\d+)", block, flags=re.I)
+            verdict_match = re.search(
+                r"\bverdict\b\s*:\s*['\"]?(REAL|FALSE_POSITIVE)['\"]?",
+                block,
+                flags=re.I,
+            )
+            if not idx_match or not verdict_match:
+                continue
+            idx = int(idx_match.group(1))
+            verdict_map[idx] = verdict_match.group(1).upper() == "REAL"
+
+        return verdict_map
+
+    @staticmethod
+    def _extract_verdict_entries(items: List[dict]) -> Dict[int, bool]:
+        """Normalize list[dict] verdict payload into index->bool map."""
+        verdict_map: Dict[int, bool] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            idx = item.get("index", -1)
+            verdict_raw = str(item.get("verdict", "")).upper()
+            if not isinstance(idx, int):
+                continue
+            if verdict_raw not in {"REAL", "FALSE_POSITIVE"}:
+                continue
+            verdict_map[idx] = verdict_raw == "REAL"
+        return verdict_map

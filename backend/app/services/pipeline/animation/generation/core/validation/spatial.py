@@ -44,9 +44,13 @@ def _perform_spatial_checks(self):
     # Lower threshold for text (0.1) vs general objects (0.3)
     TEXT_OVERSHOOT_THRESHOLD = 0.1
     GENERAL_OVERSHOOT_THRESHOLD = 0.3
+    TEXT_CLIP_MARGIN = 0.12
     # Group/table size limits — anything larger is definitely broken
     GROUP_MAX_WIDTH = 15.0
     GROUP_MAX_HEIGHT = 9.0
+    FRAME_AREA = (2 * SCREEN_X) * (2 * SCREEN_Y)
+    FILL_DOMINANCE_AREA_RATIO = 0.42
+    FILL_DOMINANCE_OPACITY = 0.55
 
     # ── Types we expect to overlap (not bugs) ──
     EFFECT_TYPES = frozenset({
@@ -126,6 +130,25 @@ def _perform_spatial_checks(self):
     def _trunc(s, n=50):
         return s[:n] if len(s) > n else s
 
+    def _text_label(m):
+        try:
+            txt = getattr(m, "text", "")
+            if isinstance(txt, str) and txt:
+                return _trunc(txt)
+        except Exception:
+            pass
+        return _trunc(repr(m))
+
+    def _closest_edge(left, right, top, bottom):
+        distances = {
+            "left": SCREEN_X + left,
+            "right": SCREEN_X - right,
+            "top": SCREEN_Y - top,
+            "bottom": SCREEN_Y + bottom,
+        }
+        edge = min(distances, key=distances.get)
+        return edge, distances[edge]
+
     def _current_time_sec():
         try:
             t = getattr(getattr(self, "renderer", None), "time", None)
@@ -204,6 +227,8 @@ def _perform_spatial_checks(self):
         overshoot_x = max(0, -left - SCREEN_X, right - SCREEN_X)
         overshoot_y = max(0, -bottom - SCREEN_Y, top - SCREEN_Y)
         overshoot = max(overshoot_x, overshoot_y)
+        nearest_edge, nearest_edge_dist = _closest_edge(left, right, top, bottom)
+        text_label = _text_label(m) if is_text_obj else None
 
         # Use stricter threshold for text objects
         ignore_threshold = TEXT_OVERSHOOT_THRESHOLD if is_text_obj else GENERAL_OVERSHOOT_THRESHOLD
@@ -220,7 +245,8 @@ def _perform_spatial_checks(self):
                 fix_hint=f"Shift or scale to bring within +/-{SAFE_X} x +/-{SAFE_Y}",
                 object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
                 width=round(w, 2), height=round(h, 2), overshoot=round(overshoot, 2),
-                is_text=is_text_obj,
+                is_text=is_text_obj, edge=nearest_edge, edge_margin=round(nearest_edge_dist, 2),
+                text=text_label, reason=("text_edge_clipping" if is_text_obj else "object_bounds"),
             ))
         elif overshoot > ignore_threshold:
             msg = (
@@ -236,7 +262,8 @@ def _perform_spatial_checks(self):
                 fix_hint=f"{'Text clipped at edge — shift inward or reduce font_size' if is_text_obj else f'Minor adjustment needed (~{overshoot:.1f} units)'}",
                 object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
                 width=round(w, 2), height=round(h, 2), overshoot=round(overshoot, 2),
-                is_text=is_text_obj,
+                is_text=is_text_obj, edge=nearest_edge, edge_margin=round(nearest_edge_dist, 2),
+                text=text_label, reason=("text_edge_clipping" if is_text_obj else "object_bounds"),
             ))
 
         # ── Text edge proximity check ──
@@ -250,20 +277,38 @@ def _perform_spatial_checks(self):
             margin_bottom = SCREEN_Y + bottom
 
             min_margin = min(margin_right, margin_left, margin_top, margin_bottom)
-            if 0 < min_margin < TEXT_EDGE_MARGIN:
+            edge, edge_dist = _closest_edge(left, right, top, bottom)
+            if 0 < min_margin < TEXT_CLIP_MARGIN:
                 msg = (
-                    f"Text '{obj_type}' dangerously close to screen edge at "
+                    f"Text '{text_label}' appears clipped near {edge} edge at "
                     f"({x:.1f}, {y:.1f}), margin={min_margin:.2f}"
                 )
                 # Use LOW confidence — let Visual QC decide if it's actually clipped
                 new_issues.append(_issue(
-                    "warning", "low", "out_of_bounds", msg,
+                    "critical", "high", "out_of_bounds", msg,
                     auto_fixable=True,
                     fix_hint="Shift text inward or reduce font_size — risk of edge clipping",
-                    object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
+                    object_type=obj_type, text=text_label, center_x=round(x, 2), center_y=round(y, 2),
+                    width=round(w, 2), height=round(h, 2),
+                    overshoot=round(TEXT_CLIP_MARGIN - min_margin, 2),
+                    is_text=True, edge=edge, edge_margin=round(edge_dist, 2),
+                    reason="text_edge_clipping",
+                ))
+            elif 0 < min_margin < TEXT_EDGE_MARGIN:
+                msg = (
+                    f"Text '{text_label}' dangerously close to screen edge at "
+                    f"({x:.1f}, {y:.1f}), margin={min_margin:.2f}"
+                )
+                new_issues.append(_issue(
+                    "warning", "low", "out_of_bounds", msg,
+                    auto_fixable=True,
+                    fix_hint="Shift text inward or reduce font_size - risk of edge clipping",
+                    object_type=obj_type, text=text_label,
+                    center_x=round(x, 2), center_y=round(y, 2),
                     width=round(w, 2), height=round(h, 2),
                     overshoot=round(TEXT_EDGE_MARGIN - min_margin, 2),
-                    is_text=True, edge_margin=round(min_margin, 2),
+                    is_text=True, edge=edge, edge_margin=round(edge_dist, 2),
+                    reason="text_edge_risk",
                 ))
 
     # ═══════════════════════════════════════════════════════════════════
@@ -358,6 +403,96 @@ def _perform_spatial_checks(self):
                 ))
 
     # ═══════════════════════════════════════════════════════════════════
+    # 2b. TEXT DOMINANCE / OVER-EMPHASIS
+    # ═══════════════════════════════════════════════════════════════════
+    # Catch oversized non-title Text labels that dominate the frame.
+    DOMINANT_TEXT_WIDTH = 4.8
+    DOMINANT_TEXT_HEIGHT = 1.0
+    TITLE_Y_CUTOFF = 2.8
+
+    for _, t in texts:
+        obj_type = type(t).__name__
+        if obj_type != "Text":
+            continue
+
+        try:
+            tw, th = t.width, t.height
+            tx, ty, _ = t.get_center()
+        except Exception:
+            continue
+
+        if tw < DOMINANT_TEXT_WIDTH and th < DOMINANT_TEXT_HEIGHT:
+            continue
+        if ty > TITLE_Y_CUTOFF:
+            # Top-edge headline/title area is intentionally larger.
+            continue
+
+        txt = _trunc(getattr(t, "text", repr(t)))
+        msg = (
+            f"Text '{txt}' is visually dominant "
+            f"(size {tw:.1f}x{th:.1f} at ({tx:.1f}, {ty:.1f}))"
+        )
+        sev = "critical" if tw > 5.6 else "warning"
+        new_issues.append(_issue(
+            sev, "high", "visual_quality", msg,
+            auto_fixable=True,
+            fix_hint="Reduce emphasis: lower font_size or cap animate.scale to <= 1.08.",
+            object_type=obj_type,
+            text=txt,
+            width=round(tw, 2),
+            height=round(th, 2),
+            center_x=round(tx, 2),
+            center_y=round(ty, 2),
+            reason="text_dominance",
+        ))
+
+    # ═══════════════════════════════════════════════════════════════════
+    # 2c. FILLED SHAPE DOMINANCE
+    # Catch giant filled overlays that consume a large fraction of the frame.
+    for _, o in objects:
+        obj_type = type(o).__name__
+        if obj_type in EFFECT_TYPES or obj_type in CONTAINER_TYPES:
+            continue
+        if _is_text(o):
+            continue
+
+        try:
+            fill_opacity = o.get_fill_opacity() if hasattr(o, "get_fill_opacity") else 0.0
+        except Exception:
+            fill_opacity = 0.0
+        if fill_opacity is None or fill_opacity < FILL_DOMINANCE_OPACITY:
+            continue
+
+        try:
+            ow, oh = o.width, o.height
+            ox, oy, _ = o.get_center()
+        except Exception:
+            continue
+        if ow < 0.5 or oh < 0.5:
+            continue
+
+        area_ratio = (ow * oh) / FRAME_AREA if FRAME_AREA > 0 else 0.0
+        if area_ratio < FILL_DOMINANCE_AREA_RATIO:
+            continue
+
+        msg = (
+            f"Filled {obj_type} dominates frame "
+            f"(area {area_ratio:.0%}, opacity {fill_opacity:.2f}, size {ow:.1f}x{oh:.1f})"
+        )
+        new_issues.append(_issue(
+            "critical", "high", "visual_quality", msg,
+            auto_fixable=True,
+            fix_hint="Reduce fill_opacity or resize/reposition the shape to avoid covering content.",
+            object_type=obj_type,
+            width=round(ow, 2),
+            height=round(oh, 2),
+            center_x=round(ox, 2),
+            center_y=round(oy, 2),
+            fill_opacity=round(float(fill_opacity), 2),
+            area_ratio=round(area_ratio, 2),
+            reason="filled_shape_dominance",
+        ))
+
     # 3. OBJECT-ON-TEXT OCCLUSION (z-order aware)
     # ═══════════════════════════════════════════════════════════════════
     for t_idx, t in texts:

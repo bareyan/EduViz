@@ -4,6 +4,7 @@ from unittest.mock import Mock, AsyncMock, patch
 from app.services.pipeline.animation.generation.stages.refiner import Refiner
 from app.services.pipeline.animation.generation.core.validation.models import ValidationIssue, IssueSeverity, IssueConfidence, IssueCategory
 from app.services.pipeline.animation.generation.core.validation.static import ValidationResult
+from app.services.pipeline.animation.generation.refinement.issue_verifier import VerificationResult
 
 @pytest.fixture
 def refiner():
@@ -80,3 +81,115 @@ async def test_refine_exhausted(refiner):
     
     assert final_code == "broken"
     assert stable is False
+
+
+@pytest.mark.asyncio
+async def test_triage_routes_verified_real_auto_fixable_to_deterministic(refiner):
+    uncertain = ValidationIssue(
+        IssueSeverity.WARNING,
+        IssueConfidence.LOW,
+        IssueCategory.TEXT_OVERLAP,
+        "minor overlap",
+        auto_fixable=True,
+    )
+    verified_auto = ValidationIssue(
+        IssueSeverity.WARNING,
+        IssueConfidence.MEDIUM,
+        IssueCategory.TEXT_OVERLAP,
+        "minor overlap [verified]",
+        auto_fixable=True,
+    )
+
+    refiner.issue_verifier = Mock()
+    refiner.issue_verifier.verify = AsyncMock(
+        return_value=VerificationResult(real=[verified_auto], false_positives=[])
+    )
+    refiner.deterministic_fixer.fix = Mock(return_value=("det_fixed", [], 1))
+    refiner._apply_llm_fix = AsyncMock(return_value="llm_fixed")
+
+    new_code, stats = await refiner._triage_issues(
+        "orig", [uncertain], 1, "Title", context=None
+    )
+
+    assert new_code == "det_fixed"
+    assert stats["deterministic"] == 1
+    assert stats["llm"] == 0
+    assert stats["unresolved"] == 0
+    refiner.deterministic_fixer.fix.assert_called_once()
+    refiner._apply_llm_fix.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_triage_mixed_routes_verified_uncertain_to_both_paths(refiner):
+    certain_auto = ValidationIssue(
+        IssueSeverity.CRITICAL,
+        IssueConfidence.HIGH,
+        IssueCategory.TEXT_OVERLAP,
+        "certain auto",
+        auto_fixable=True,
+    )
+    certain_llm = ValidationIssue(
+        IssueSeverity.CRITICAL,
+        IssueConfidence.HIGH,
+        IssueCategory.RUNTIME,
+        "certain llm",
+        auto_fixable=False,
+    )
+    uncertain_auto = ValidationIssue(
+        IssueSeverity.WARNING,
+        IssueConfidence.LOW,
+        IssueCategory.TEXT_OVERLAP,
+        "uncertain auto",
+        auto_fixable=True,
+    )
+    uncertain_non_auto = ValidationIssue(
+        IssueSeverity.WARNING,
+        IssueConfidence.LOW,
+        IssueCategory.OBJECT_OCCLUSION,
+        "uncertain non-auto",
+        auto_fixable=False,
+    )
+
+    verified_auto = ValidationIssue(
+        IssueSeverity.WARNING,
+        IssueConfidence.MEDIUM,
+        IssueCategory.TEXT_OVERLAP,
+        "uncertain auto [verified]",
+        auto_fixable=True,
+    )
+    verified_non_auto = ValidationIssue(
+        IssueSeverity.WARNING,
+        IssueConfidence.MEDIUM,
+        IssueCategory.OBJECT_OCCLUSION,
+        "uncertain non-auto [verified]",
+        auto_fixable=False,
+    )
+
+    refiner.issue_verifier = Mock()
+    refiner.issue_verifier.verify = AsyncMock(
+        return_value=VerificationResult(
+            real=[verified_auto, verified_non_auto],
+            false_positives=[],
+        )
+    )
+    # Simulate deterministic failing to fix one auto-fixable issue.
+    refiner.deterministic_fixer.fix = Mock(
+        return_value=("after_det", [verified_auto], 1)
+    )
+    refiner._apply_llm_fix = AsyncMock(return_value="after_llm")
+
+    new_code, stats = await refiner._triage_issues(
+        "orig",
+        [certain_auto, certain_llm, uncertain_auto, uncertain_non_auto],
+        1,
+        "Title",
+        context=None,
+    )
+
+    assert new_code == "after_llm"
+    assert stats["deterministic"] == 1
+    # LLM batch = certain_llm + deterministic remaining + verified_non_auto
+    assert stats["llm"] == 3
+    assert stats["unresolved"] == 3
+    refiner.issue_verifier.verify.assert_called_once()
+    refiner._apply_llm_fix.assert_called_once()
