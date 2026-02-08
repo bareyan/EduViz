@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Loader2, Palette, ChevronRight, ArrowLeft, Clock, Zap, Globe, BookOpen, GraduationCap, FileText, Link2, Layers, RotateCcw, Cpu } from 'lucide-react'
+import { Loader2, Palette, ChevronRight, ArrowLeft, Clock, Zap, Globe, BookOpen, GraduationCap, FileText, Link2, Layers, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { generateVideos, getVoices, Voice, Language, AnalysisResult, getPipelines, PipelineInfo } from '../api'
+import { generateVideos, getVoices, Voice, Language, AnalysisResult } from '../api'
 
 export default function GenerationPage() {
   const { analysisId: _analysisId } = useParams<{ analysisId: string }>()
@@ -17,8 +17,6 @@ export default function GenerationPage() {
   const [contentFocus, setContentFocus] = useState<'practice' | 'theory' | 'as_document'>('as_document')
   const [documentContext, setDocumentContext] = useState<'standalone' | 'series' | 'auto'>('auto')
   const [isGenerating, setIsGenerating] = useState(false)
-  const [pipelines, setPipelines] = useState<PipelineInfo[]>([])
-  const [selectedPipeline, setSelectedPipeline] = useState('default')
   
   // Check if we're resuming a previous job
   const resumeJobId = sessionStorage.getItem('resumeJobId')
@@ -27,23 +25,6 @@ export default function GenerationPage() {
   // Retrieve stored data
   const selectedTopics: number[] = JSON.parse(sessionStorage.getItem('selectedTopics') || '[]')
   const analysis: AnalysisResult | null = JSON.parse(sessionStorage.getItem('analysis') || 'null')
-
-  // Load available pipelines
-  useEffect(() => {
-    const loadPipelines = async () => {
-      try {
-        const data = await getPipelines()
-        setPipelines(data.pipelines)
-        // Set active pipeline as default
-        if (data.active) {
-          setSelectedPipeline(data.active)
-        }
-      } catch (error) {
-        console.error('Failed to load pipelines:', error)
-      }
-    }
-    loadPipelines()
-  }, [])
 
   // Load voices when language changes
   useEffect(() => {
@@ -88,7 +69,6 @@ export default function GenerationPage() {
         language: selectedLanguage,
         content_focus: contentFocus,
         document_context: documentContext,
-        pipeline: selectedPipeline,
         resume_job_id: resumeJobId || undefined,
       })
       
@@ -149,7 +129,7 @@ export default function GenerationPage() {
           <div>
             <p className="text-sm text-gray-500">Estimated Duration</p>
             <p className="text-xl font-bold">
-              ~{videoMode === 'overview' ? Math.round(totalDuration / 3) : totalDuration} min
+              ~{videoMode === 'overview' ? Math.round(totalDuration / 180) : Math.round(totalDuration / 60)} min
               {videoMode === 'overview' && <span className="text-sm text-gray-500"> (overview)</span>}
             </p>
           </div>
@@ -353,53 +333,6 @@ export default function GenerationPage() {
                 Prior concepts from the series can be assumed known
               </p>
             </button>
-          </div>
-        </div>
-
-        {/* Pipeline Selection */}
-        <div className="p-6 bg-gray-900/50 rounded-xl border border-gray-800">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-indigo-500/20 rounded-lg">
-              <Cpu className="w-5 h-5 text-indigo-400" />
-            </div>
-            <h2 className="text-lg font-semibold">AI Model Pipeline</h2>
-          </div>
-          <p className="text-sm text-gray-400 mb-4">
-            Choose the AI models used for script generation and video creation
-          </p>
-          <div className="space-y-3">
-            {pipelines.map(pipeline => (
-              <button
-                key={pipeline.name}
-                onClick={() => setSelectedPipeline(pipeline.name)}
-                className={`
-                  w-full p-4 rounded-lg text-left transition-all
-                  ${selectedPipeline === pipeline.name
-                    ? 'bg-indigo-500/20 border-indigo-400 border-2' 
-                    : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
-                  }
-                `}
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <p className="font-semibold capitalize">
-                    {pipeline.name.replace('_', ' ')}
-                  </p>
-                  {pipeline.is_active && (
-                    <span className="text-xs px-2 py-1 bg-indigo-500/20 text-indigo-400 rounded">
-                      Active
-                    </span>
-                  )}
-                </div>
-                <p className="text-sm text-gray-400 mb-2">
-                  {pipeline.description}
-                </p>
-                <div className="text-xs text-gray-500 space-y-1">
-                  <div>Script: {pipeline.models.script_generation}</div>
-                  <div>Visual Script: {pipeline.models.visual_script_generation}</div>
-                  <div>Manim: {pipeline.models.manim_generation}</div>
-                </div>
-              </button>
-            ))}
           </div>
         </div>
 
