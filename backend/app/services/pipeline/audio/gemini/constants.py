@@ -35,5 +35,5 @@ GEMINI_VOICES = {
     "Sulafat": "Warm",
 }
 
-DEFAULT_GEMINI_VOICE = "Charon"
+DEFAULT_GEMINI_VOICE = "Algieba"
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-preview-tts"

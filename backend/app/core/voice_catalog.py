@@ -78,6 +78,7 @@ GEMINI_TTS_VOICES: Dict[str, Dict[str, Any]] = {
     "en": {
         "name": "English",
         "voices": {
+            "Algieba": {"name": "Algieba (Smooth)", "gender": "neutral"},
             "Charon": {"name": "Charon (Informative)", "gender": "neutral"},
             "Kore": {"name": "Kore (Firm)", "gender": "neutral"},
             "Puck": {"name": "Puck (Upbeat)", "gender": "neutral"},
@@ -86,11 +87,11 @@ GEMINI_TTS_VOICES: Dict[str, Dict[str, Any]] = {
             "Aoede": {"name": "Aoede (Breezy)", "gender": "neutral"},
             "Sulafat": {"name": "Sulafat (Warm)", "gender": "neutral"},
         },
-        "default": "Charon",
+        "default": "Algieba",
     },
 }
 
-DEFAULT_GEMINI_TTS_VOICE = "Charon"
+DEFAULT_GEMINI_TTS_VOICE = "Algieba"
 
 
 def get_gemini_tts_default_voice(language: str = "en") -> str:
