@@ -146,21 +146,32 @@ class RuntimeValidator:
                 env=env,
                 timeout=180.0  # 180s timeout - dry-run can be slow with complex loops
             )
+
+            stderr_text = (
+                result_proc.stderr if isinstance(result_proc.stderr, str) else ""
+            )
+            stdout_text = (
+                result_proc.stdout if isinstance(result_proc.stdout, str) else ""
+            )
+            combined_output = "\n".join(
+                chunk for chunk in (stderr_text, stdout_text) if chunk
+            )
             
             # Always check for structured spatial JSON, even if manim exits cleanly.
-            spatial_issues = self._parse_spatial_json(result_proc.stderr)
+            spatial_issues = self._parse_spatial_json(combined_output)
             if spatial_issues:
                 for issue in spatial_issues:
                     result.add_issue(issue)
 
-            spatial_warnings = self._parse_spatial_warnings(result_proc.stderr)
+            spatial_warnings = self._parse_spatial_warnings(combined_output)
             if spatial_warnings:
                 for issue in spatial_warnings:
                     result.add_issue(issue)
 
             if result_proc.returncode != 0 and not spatial_issues:
+                error_stderr = stderr_text if stderr_text.strip() else combined_output
                 error_msg, error_line, error_details = self._parse_manim_error(
-                    result_proc.stderr,
+                    error_stderr,
                     code=code,
                     tmp_path=tmp_path,
                 )

@@ -40,6 +40,28 @@ async def test_validate_with_spatial_issues(validator):
         assert len(result.issues) == 1
         assert result.issues[0].category == IssueCategory.TEXT_OVERLAP
 
+
+@pytest.mark.asyncio
+async def test_validate_with_spatial_issues_in_stdout(validator):
+    stdout = """
+    Random log
+    SPATIAL_ISSUES_JSON:[{"severity": "critical", "confidence": "high", "category": "out_of_bounds", "message": "Off-screen text"}]
+    """
+    with patch("subprocess.run") as mock_run, \
+         patch("app.services.pipeline.animation.generation.core.validation.spatial.SpatialCheckInjector") as MockInjector:
+
+        mock_run.return_value.returncode = 1
+        mock_run.return_value.stderr = ""
+        mock_run.return_value.stdout = stdout
+
+        MockInjector.return_value.inject.return_value = "injected_code"
+
+        result = await validator.validate("code", enable_spatial_checks=True)
+
+        assert result.valid is False
+        assert len(result.issues) == 1
+        assert result.issues[0].category == IssueCategory.OUT_OF_BOUNDS
+
 @pytest.mark.asyncio
 async def test_validate_runtime_error(validator):
     stderr = """
