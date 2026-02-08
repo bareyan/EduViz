@@ -1,8 +1,10 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { Loader2, BookOpen, Calculator, Clock, ChevronRight, Check, AlertCircle } from 'lucide-react'
+import { BookOpen, Calculator, Clock, ChevronRight, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAnalysis } from '../hooks/useAnalysis'
-import { TopicSuggestion } from '../types/analysis.types'
+import { StatCard } from '../features/analysis/components/StatCard'
+import { TopicCard } from '../features/analysis/components/TopicCard'
+import { AnalysisLoading } from '../features/analysis/components/AnalysisLoading'
 
 export default function AnalysisPage() {
   const { fileId } = useParams<{ fileId: string }>()
@@ -21,18 +23,7 @@ export default function AnalysisPage() {
   }
 
   if (isLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-6">
-        <div className="relative">
-          <Loader2 className="w-16 h-16 text-math-blue animate-spin" />
-          <div className="absolute inset-0 bg-math-blue/20 blur-xl pulse-ring" />
-        </div>
-        <div className="text-center">
-          <h2 className="text-2xl font-bold mb-2">Analyzing Your Material</h2>
-          <p className="text-gray-400">Detecting equations, theorems, and key concepts...</p>
-        </div>
-      </div>
-    )
+    return <AnalysisLoading />
   }
 
   if (error) {
@@ -115,73 +106,6 @@ export default function AnalysisPage() {
           Continue
           <ChevronRight className="w-5 h-5" />
         </button>
-      </div>
-    </div>
-  )
-}
-
-function StatCard({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
-  return (
-    <div className="p-4 bg-gray-900/50 rounded-xl border border-gray-800 text-center">
-      <div className="flex justify-center text-math-blue mb-2">{icon}</div>
-      <p className="text-2xl font-bold">{value}</p>
-      <p className="text-sm text-gray-500">{label}</p>
-    </div>
-  )
-}
-
-function TopicCard({ 
-  topic, 
-  isSelected, 
-  onToggle 
-}: { 
-  topic: TopicSuggestion
-  isSelected: boolean
-  onToggle: () => void 
-}) {
-  const complexityColors: Record<string, string> = {
-    beginner: 'bg-green-500/20 text-green-400',
-    intermediate: 'bg-yellow-500/20 text-yellow-400',
-    advanced: 'bg-red-500/20 text-red-400',
-  }
-
-  return (
-    <div
-      onClick={onToggle}
-      className={`
-        p-4 rounded-xl border cursor-pointer transition-all
-        ${isSelected 
-          ? 'bg-math-blue/10 border-math-blue' 
-          : 'bg-gray-900/50 border-gray-800 hover:border-gray-700'
-        }
-      `}
-    >
-      <div className="flex items-start gap-4">
-        <div className={`
-          w-6 h-6 rounded-md border-2 flex items-center justify-center flex-shrink-0 mt-0.5
-          ${isSelected ? 'bg-math-blue border-math-blue' : 'border-gray-600'}
-        `}>
-          {isSelected && <Check className="w-4 h-4 text-white" />}
-        </div>
-        
-        <div className="flex-1">
-          <div className="flex items-center gap-3 mb-2">
-            <h3 className="font-semibold">{topic.title}</h3>
-            <span className={`px-2 py-0.5 rounded-full text-xs ${complexityColors[topic.complexity] || 'bg-gray-500/20 text-gray-400'}`}>
-              {topic.complexity}
-            </span>
-          </div>
-          <p className="text-sm text-gray-400 mb-2">{topic.description}</p>
-          {topic.subtopics.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {topic.subtopics.map((subtopic, i) => (
-                <span key={i} className="px-2 py-1 bg-gray-800 rounded text-xs text-gray-400">
-                  {subtopic}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
     </div>
   )

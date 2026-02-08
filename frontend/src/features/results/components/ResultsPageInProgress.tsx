@@ -1,6 +1,6 @@
 import React from 'react'
 import { JobResponse, DetailedProgress, SectionProgress } from '../../../types/job.types'
-import { SectionProgressView, SectionScriptModal } from '../../../components/SectionProgressView'
+import { SectionProgressView, SectionScriptModal } from './SectionProgressView'
 import { stages, getStageIndex } from '../results.utils'
 
 interface ResultsPageInProgressProps {

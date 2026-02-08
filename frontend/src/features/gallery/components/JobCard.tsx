@@ -7,7 +7,8 @@ import {
   XCircle,
   Edit
 } from 'lucide-react'
-import { GalleryJob, API_BASE } from '../../../api'
+import { GalleryJob } from '../../../types/job.types'
+import { API_BASE } from '../../../config/api.config'
 import { formatDuration } from '../../../utils/format.utils'
 
 interface JobCardProps {

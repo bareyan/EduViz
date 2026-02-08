@@ -4,7 +4,6 @@ import {
   Loader2, 
   CheckCircle, 
   XCircle, 
-  Download, 
   Play, 
   Home,
   Globe,
@@ -13,7 +12,6 @@ import {
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { GeneratedVideo, SectionProgress } from '../types/job.types'
-import { generationService } from '../services/generation.service'
 import { API_BASE } from '../config/api.config'
 import { jobService } from '../services/job.service'
 import { useJobProgress } from '../hooks/useJobProgress'
@@ -21,8 +19,10 @@ import { useTranslation } from '../hooks/useTranslation'
 import { useVoices } from '../hooks/useVoices'
 import { ResultsPageInProgress } from '../features/results/components/ResultsPageInProgress'
 import { ResultsPageFailed } from '../features/results/components/ResultsPageFailed'
+import { VideoPlayer } from '../features/results/components/VideoPlayer'
+import { VideoCard } from '../features/results/components/VideoCard'
+import { TranslationModal } from '../features/results/components/TranslationModal'
 import { getStatusInfo } from '../features/results/results.utils'
-import { formatDuration } from '../utils/format.utils'
 
 export default function ResultsPage() {
   const { jobId } = useParams<{ jobId: string }>()
@@ -298,176 +298,22 @@ export default function ResultsPage() {
       </div>
       
       {showTranslationModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-gray-900 rounded-xl p-6 max-w-md w-full mx-4 border border-gray-800">
-            <h3 className="text-xl font-semibold mb-4">Add Translation</h3>
-            <p className="text-gray-400 text-sm mb-4">
-              Select a language to translate the video into. The narration will be translated and 
-              new audio will be generated.
-            </p>
-            
-            <label className="block text-sm font-medium text-gray-300 mb-2">Target Language</label>
-            <div className="space-y-2 max-h-40 overflow-y-auto mb-4">
-              {translationLanguages
-                .filter(lang => lang.code !== translations?.original_language)
-                .filter(lang => !translations?.translations.some(t => t.language === lang.code))
-                .map(lang => (
-                  <button
-                    key={lang.code}
-                    onClick={() => setSelectedLanguage(lang.code)}
-                    className={`w-full p-3 rounded-lg text-left transition-all ${
-                      selectedLanguage === lang.code
-                        ? 'bg-math-purple/20 border-math-purple border'
-                        : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
-                    }`}
-                  >
-                    {lang.name}
-                  </button>
-                ))}
-            </div>
-            
-            <label className="block text-sm font-medium text-gray-300 mb-2">Voice</label>
-            <select
-              value={selectedVoice}
-              onChange={(e) => setSelectedVoice(e.target.value)}
-              className="w-full p-3 rounded-lg bg-gray-800 border border-gray-700 text-white mb-4
-                         focus:outline-none focus:border-math-purple"
-            >
-              {translationVoices.map(voice => (
-                <option key={voice.id} value={voice.id}>
-                  {voice.name} ({voice.gender})
-                </option>
-              ))}
-            </select>
-            
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  setShowTranslationModal(false)
-                  setSelectedLanguage('')
-                }}
-                className="flex-1 px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-700 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateTranslation}
-                disabled={!selectedLanguage || isTranslating}
-                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-math-purple text-white 
-                           rounded-lg hover:bg-math-purple/80 transition-colors disabled:opacity-50"
-              >
-                {isTranslating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Starting...
-                  </>
-                ) : (
-                  'Start Translation'
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function VideoPlayer({ video }: { video: GeneratedVideo }) {
-  const videoUrl = video.download_url 
-    ? (video.download_url.startsWith('http') ? video.download_url : `${API_BASE}${video.download_url}`)
-    : generationService.getVideoUrl(video.video_id)
-
-  const handleDownload = () => {
-    const a = document.createElement('a')
-    a.href = videoUrl
-    a.download = `${video.title || 'video'}.mp4`
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    toast.success('Download started!')
-  }
-
-  const chapters = video.chapters || []
-
-  return (
-    <div className="rounded-xl overflow-hidden bg-gray-900 border border-gray-800">
-      <div className="aspect-video bg-black relative">
-        <video
-          src={videoUrl}
-          className="w-full h-full"
-          controls
+        <TranslationModal
+          onClose={() => {
+            setShowTranslationModal(false)
+            setSelectedLanguage('')
+          }}
+          onConfirm={handleCreateTranslation}
+          translationLanguages={translationLanguages}
+          translations={translations}
+          selectedLanguage={selectedLanguage}
+          setSelectedLanguage={setSelectedLanguage}
+          selectedVoice={selectedVoice}
+          setSelectedVoice={setSelectedVoice}
+          translationVoices={translationVoices}
+          isTranslating={isTranslating}
         />
-      </div>
-
-      <div className="p-4">
-        <div className="flex items-start justify-between">
-          <div>
-            <h3 className="text-xl font-semibold mb-1">{video.title}</h3>
-            <p className="text-sm text-gray-500">
-              {formatDuration(video.duration)} • {chapters.length} chapters
-            </p>
-          </div>
-          <button
-            onClick={handleDownload}
-            className="flex items-center gap-2 px-4 py-2 bg-math-blue text-white rounded-lg 
-                       hover:bg-math-blue/80 transition-colors"
-          >
-            <Download className="w-4 h-4" />
-            Download
-          </button>
-        </div>
-
-        {chapters.length > 0 && (
-          <div className="mt-4">
-            <h4 className="text-sm font-medium text-gray-400 mb-2">Chapters</h4>
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {chapters.map((chapter, i) => (
-                <div 
-                  key={i}
-                  className="flex items-center gap-3 p-2 bg-gray-800/50 rounded-lg text-sm"
-                >
-                  <span className="text-gray-500">{formatDuration(chapter.start_time)}</span>
-                  <span className="flex-1">{chapter.title}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function VideoCard({ 
-  video, 
-  isSelected, 
-  onSelect 
-}: { 
-  video: GeneratedVideo
-  isSelected: boolean
-  onSelect: () => void 
-}) {
-  return (
-    <div
-      onClick={onSelect}
-      className={`
-        p-4 rounded-xl cursor-pointer transition-all
-        ${isSelected 
-          ? 'bg-math-blue/20 border-math-blue border' 
-          : 'bg-gray-900/50 border-gray-800 border hover:border-gray-700'
-        }
-      `}
-    >
-      <div className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-lg bg-gray-800 flex items-center justify-center">
-          <Play className="w-5 h-5 text-gray-400" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="font-medium truncate">{video.title}</h3>
-          <p className="text-sm text-gray-500">{formatDuration(video.duration)}</p>
-        </div>
-      </div>
+      )}
     </div>
   )
 }
