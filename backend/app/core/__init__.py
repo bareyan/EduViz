@@ -35,6 +35,21 @@ from .security import (
     secure_file_path,
 )
 
+# Authentication
+from .auth import (
+    SESSION_COOKIE_NAME,
+    is_auth_enabled,
+    is_public_path,
+    verify_auth_password,
+    issue_auth_token,
+    verify_auth_token,
+    extract_request_token,
+    is_request_authenticated,
+    get_session_max_age_seconds,
+    is_cookie_secure,
+    list_public_paths,
+)
+
 # File operations
 from .files import (
     find_file_by_id,
@@ -125,6 +140,18 @@ __all__ = [
     "validate_path_within_directory",
     "validate_section_index",
     "secure_file_path",
+    # Auth
+    "SESSION_COOKIE_NAME",
+    "is_auth_enabled",
+    "is_public_path",
+    "verify_auth_password",
+    "issue_auth_token",
+    "verify_auth_token",
+    "extract_request_token",
+    "is_request_authenticated",
+    "get_session_max_age_seconds",
+    "is_cookie_secure",
+    "list_public_paths",
     # Files
     "find_file_by_id",
     "ensure_directory",

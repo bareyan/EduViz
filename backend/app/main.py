@@ -13,6 +13,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from time import monotonic
 from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -27,11 +28,13 @@ from .config import (
     STATIC_DIR,
 )
 from .routes import (
+    auth_router,
     upload_router,
     analysis_router,
     generation_router,
     jobs_router,
     sections_router,
+    translation_router,
 
 )
 from .core import (
@@ -41,6 +44,10 @@ from .core import (
     clear_context,
     parse_bool_env,
     run_startup_runtime_checks,
+    is_auth_enabled,
+    is_public_path,
+    is_request_authenticated,
+    list_public_paths,
 )
 
 # Initialize logging
@@ -60,6 +67,11 @@ logger = get_logger(__name__, service="api")
 logger.info("Starting MathViz Backend API", extra={
     "log_level": log_level,
     "json_logs": use_json_logs
+})
+
+logger.info("Authentication mode", extra={
+    "auth_enabled": is_auth_enabled(),
+    "public_paths": list_public_paths(),
 })
 
 # Runtime protection controls
@@ -178,6 +190,10 @@ async def add_request_correlation(request: Request, call_next):
     })
 
     try:
+        if request.method != "OPTIONS" and is_auth_enabled() and not is_public_path(path):
+            if not is_request_authenticated(request):
+                return JSONResponse(status_code=401, content={"detail": "Authentication required"})
+
         # Upload route has its own streaming file-size guard.
         if path != "/upload":
             content_length = request.headers.get("content-length")
@@ -235,11 +251,13 @@ app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Include routers
+app.include_router(auth_router)
 app.include_router(upload_router)
 app.include_router(analysis_router)
 app.include_router(generation_router)
 app.include_router(jobs_router)
 app.include_router(sections_router)
+app.include_router(translation_router)
 
 
 
