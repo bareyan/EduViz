@@ -32,13 +32,22 @@ SPATIAL_JSON_MARKER = "SPATIAL_ISSUES_JSON:"
 INJECTED_METHOD = '''
 def _perform_spatial_checks(self):
     """Injected spatial validator - runs at every play()/wait() boundary."""
-    import json as _json
 
-    # ── Screen limits ──
-    SCREEN_X = 7.1
-    SCREEN_Y = 4.0
-    SAFE_X = 5.5
-    SAFE_Y = 3.0
+    # ── Dynamic Screen limits ──
+    try:
+        # Use camera frame dimensions if available, fallback to defaults
+        if hasattr(self, "camera"):
+            SCREEN_X = self.camera.frame_width / 2
+            SCREEN_Y = self.camera.frame_height / 2
+        else:
+            SCREEN_X = 7.1
+            SCREEN_Y = 4.0
+    except Exception:
+        SCREEN_X = 7.1
+        SCREEN_Y = 4.0
+
+    SAFE_X = SCREEN_X * 0.77  # Roughly 5.5 / 7.1
+    SAFE_Y = SCREEN_Y * 0.75  # Roughly 3.0 / 4.0
     # Text needs extra margin — partial letters at screen edge look broken
     TEXT_EDGE_MARGIN = 0.3
     # Lower threshold for text (0.1) vs general objects (0.3)
@@ -46,8 +55,8 @@ def _perform_spatial_checks(self):
     GENERAL_OVERSHOOT_THRESHOLD = 0.3
     TEXT_CLIP_MARGIN = 0.12
     # Group/table size limits — anything larger is definitely broken
-    GROUP_MAX_WIDTH = 15.0
-    GROUP_MAX_HEIGHT = 9.0
+    GROUP_MAX_WIDTH = SCREEN_X * 2.1
+    GROUP_MAX_HEIGHT = SCREEN_Y * 2.25
     FRAME_AREA = (2 * SCREEN_X) * (2 * SCREEN_Y)
     # TEMPORARY RELAXATION: disable heuristic visual-quality blockers
     # by using non-reachable thresholds until we tighten logic.
@@ -967,26 +976,26 @@ class SpatialCheckInjector:
         """Find the Scene subclass using heuristics.
         
         Priority:
-        1. Class that explicitly inherits from a name ending in 'Scene'
-        2. Class that contains a 'construct' method (most reliable for Manim)
+        1. Class that contains a 'construct' method (most reliable for Manim)
+        2. Class that explicitly inherits from a name ending in 'Scene'
         3. First class in the module as fallback
         """
         classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
         if not classes:
             return None
 
-        # 1. Look for 'Scene' in bases
+        # 1. Look for 'construct' method (Highest priority: this is where we inject)
+        for node in classes:
+            if any(isinstance(n, ast.FunctionDef) and n.name == "construct" for n in node.body):
+                return node
+
+        # 2. Look for 'Scene' in bases
         for node in classes:
             for base in node.bases:
                 if isinstance(base, ast.Name) and "Scene" in base.id:
                     return node
                 if isinstance(base, ast.Attribute) and "Scene" in base.attr:
                     return node
-
-        # 2. Look for 'construct' method
-        for node in classes:
-            if any(isinstance(n, ast.FunctionDef) and n.name == "construct" for n in node.body):
-                return node
 
         # 3. Fallback: first class
         return classes[0]
