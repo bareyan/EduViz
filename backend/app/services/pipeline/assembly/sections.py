@@ -46,6 +46,9 @@ _BOUNDARY_KEEP_SEC = 0.5
 """Seconds of silence retained at each side of a boundary cut so that
 individual segments don't start/end with an abrupt jump."""
 
+LONG_COMPREHENSIVE_CHUNK_MIN_DURATION_SEC = 120.0
+LONG_COMPREHENSIVE_TTS_CHUNKS = 2
+
 
 def _count_words(text: str) -> int:
     """Count words in *text*."""
@@ -250,6 +253,141 @@ def _is_whole_section_tts(tts_engine: "TTSEngine") -> bool:
     return getattr(tts_engine, "_whole_section_tts", False)
 
 
+def _safe_duration(value: Any, default: float = 0.0) -> float:
+    """Coerce duration-like value to a non-negative float."""
+    try:
+        parsed = float(value)
+        if parsed > 0:
+            return parsed
+    except (TypeError, ValueError):
+        pass
+    return default
+
+
+def _estimate_segment_duration(segment: Dict[str, Any]) -> float:
+    """Estimate duration for splitting decisions when precise timing is unavailable."""
+    from_estimated = _safe_duration(segment.get("estimated_duration"))
+    if from_estimated > 0:
+        return from_estimated
+
+    from_actual = _safe_duration(segment.get("duration"))
+    if from_actual > 0:
+        return from_actual
+
+    text = str(segment.get("text", ""))
+    return max(0.5, len(text) / 12.5)
+
+
+def _effective_section_duration(
+    section: Dict[str, Any],
+    narration_segments: List[Dict[str, Any]],
+) -> float:
+    """Resolve duration used to decide whether chunked TTS should be enabled."""
+    explicit_duration = _safe_duration(section.get("duration_seconds"))
+    if explicit_duration > 0:
+        return explicit_duration
+    return sum(_estimate_segment_duration(seg) for seg in narration_segments)
+
+
+def _should_use_chunked_whole_section_tts(
+    section: Dict[str, Any],
+    narration_segments: List[Dict[str, Any]],
+    tts_engine: "TTSEngine",
+) -> bool:
+    """Enable 2-request chunked whole-section TTS for long comprehensive Gemini sections."""
+    if not _is_whole_section_tts(tts_engine):
+        return False
+    if len(narration_segments) < 2:
+        return False
+
+    video_mode = str(section.get("video_mode", "comprehensive")).strip().lower()
+    if video_mode != "comprehensive":
+        return False
+
+    duration = _effective_section_duration(section, narration_segments)
+    return duration >= LONG_COMPREHENSIVE_CHUNK_MIN_DURATION_SEC
+
+
+def _split_segments_into_contiguous_chunks(
+    narration_segments: List[Dict[str, Any]],
+    chunk_count: int = LONG_COMPREHENSIVE_TTS_CHUNKS,
+) -> List[List[Dict[str, Any]]]:
+    """Split segments into contiguous chunks while preserving order."""
+    if not narration_segments:
+        return []
+    if chunk_count <= 1 or len(narration_segments) <= 1:
+        return [list(narration_segments)]
+
+    if chunk_count != 2:
+        # Current rollout only needs 2 chunks; keep behavior deterministic.
+        chunk_count = 2
+
+    if len(narration_segments) == 2:
+        return [[narration_segments[0]], [narration_segments[1]]]
+
+    durations = [_estimate_segment_duration(seg) for seg in narration_segments]
+    total_duration = sum(durations)
+    target_left = total_duration / 2.0
+
+    best_split = 1
+    best_gap = float("inf")
+    running = 0.0
+    for idx in range(1, len(narration_segments)):
+        running += durations[idx - 1]
+        gap = abs(running - target_left)
+        if gap < best_gap:
+            best_gap = gap
+            best_split = idx
+
+    return [narration_segments[:best_split], narration_segments[best_split:]]
+
+
+def _normalize_segment_timings_to_total(
+    segment_audio_info: List[Dict[str, Any]],
+    stitched_total_duration: float,
+) -> List[Dict[str, Any]]:
+    """Rebuild monotonic segment timings so they exactly match total duration."""
+    if not segment_audio_info:
+        return []
+
+    ordered_segments = sorted(segment_audio_info, key=lambda s: int(s.get("segment_index", 0)))
+
+    durations: List[float] = []
+    for seg in ordered_segments:
+        duration = _safe_duration(seg.get("duration"))
+        if duration <= 0:
+            start_time = _safe_duration(seg.get("start_time"))
+            end_time = _safe_duration(seg.get("end_time"))
+            duration = max(0.001, end_time - start_time)
+        durations.append(max(0.001, duration))
+
+    source_total = sum(durations)
+    target_total = _safe_duration(stitched_total_duration, default=source_total)
+    if source_total <= 0:
+        source_total = target_total if target_total > 0 else float(len(ordered_segments))
+        durations = [source_total / len(ordered_segments)] * len(ordered_segments)
+
+    scale = target_total / source_total if source_total > 0 else 1.0
+
+    normalized: List[Dict[str, Any]] = []
+    cursor = 0.0
+    for idx, (seg, duration) in enumerate(zip(ordered_segments, durations)):
+        adjusted_duration = max(0.001, duration * scale)
+        start_time = cursor
+        end_time = start_time + adjusted_duration
+        if idx == len(ordered_segments) - 1:
+            end_time = target_total
+
+        updated = dict(seg)
+        updated["start_time"] = start_time
+        updated["end_time"] = end_time
+        updated["duration"] = max(0.0, end_time - start_time)
+        normalized.append(updated)
+        cursor = end_time
+
+    return normalized
+
+
 async def _generate_audio_per_segment(
     tts_engine: "TTSEngine",
     narration_segments: List[Dict[str, Any]],
@@ -444,6 +582,86 @@ async def _generate_audio_whole_section(
         section_dir=section_dir,
         total_duration=total_duration,
     )
+
+
+async def _generate_audio_whole_section_chunked(
+    tts_engine: "TTSEngine",
+    narration_segments: List[Dict[str, Any]],
+    section_dir: Path,
+    section_index: int,
+    voice: str,
+) -> tuple[List[Dict[str, Any]], float]:
+    """Generate long-section whole TTS in two contiguous chunks and stitch results."""
+    chunks = _split_segments_into_contiguous_chunks(
+        narration_segments,
+        chunk_count=LONG_COMPREHENSIVE_TTS_CHUNKS,
+    )
+    if len(chunks) < 2:
+        return await _generate_audio_whole_section(
+            tts_engine=tts_engine,
+            narration_segments=narration_segments,
+            section_dir=section_dir,
+            section_index=section_index,
+            voice=voice,
+        )
+
+    chunk_audio_paths: List[str] = []
+    remapped_segments: List[Dict[str, Any]] = []
+    segment_offset = 0
+
+    for chunk_idx, chunk_segments in enumerate(chunks):
+        chunk_dir = section_dir / f"tts_chunk_{chunk_idx}"
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+
+        chunk_info, _ = await _generate_audio_whole_section(
+            tts_engine=tts_engine,
+            narration_segments=chunk_segments,
+            section_dir=chunk_dir,
+            section_index=section_index,
+            voice=voice,
+        )
+        if not chunk_info:
+            logger.warning(
+                f"Section {section_index}: Chunked whole-section TTS failed at chunk {chunk_idx}"
+            )
+            return [], 0.0
+
+        chunk_section_audio_path = chunk_dir / "section_audio.mp3"
+        if not chunk_section_audio_path.exists():
+            logger.warning(
+                f"Section {section_index}: Missing chunk audio file at {chunk_section_audio_path}"
+            )
+            return [], 0.0
+        chunk_audio_paths.append(str(chunk_section_audio_path))
+
+        for local_idx, seg_info in enumerate(chunk_info):
+            remapped = dict(seg_info)
+            remapped["segment_index"] = segment_offset + local_idx
+            remapped_segments.append(remapped)
+        segment_offset += len(chunk_segments)
+
+    section_audio_path = section_dir / "section_audio.mp3"
+    stitched_ok = await concatenate_audio_files(chunk_audio_paths, str(section_audio_path))
+    if not stitched_ok:
+        logger.warning(f"Section {section_index}: Failed to stitch chunk audios")
+        return [], 0.0
+
+    stitched_total_duration = await get_audio_duration(str(section_audio_path))
+    normalized_segments = _normalize_segment_timings_to_total(
+        remapped_segments,
+        stitched_total_duration,
+    )
+
+    # Unified path for downstream consumers (final section audio source).
+    for seg in normalized_segments:
+        seg["audio_path"] = str(section_audio_path)
+
+    logger.info(
+        f"Section {section_index}: Chunked whole-section TTS complete "
+        f"({stitched_total_duration:.1f}s, {len(normalized_segments)} segments, "
+        f"{len(chunk_audio_paths)} requests)"
+    )
+    return normalized_segments, stitched_total_duration
 
 
 async def _distribute_timing_proportionally(
@@ -942,7 +1160,16 @@ async def process_segments_audio_first(
 
     num_segments = len(narration_segments)
     use_whole_section = _is_whole_section_tts(tts_engine)
-    mode_label = "whole-section" if use_whole_section else "per-segment"
+    use_chunked_whole_section = (
+        use_whole_section
+        and _should_use_chunked_whole_section_tts(section, narration_segments, tts_engine)
+    )
+    if use_chunked_whole_section:
+        mode_label = "chunked-whole-section"
+    elif use_whole_section:
+        mode_label = "whole-section"
+    else:
+        mode_label = "per-segment"
     logger.info(f"Section {section_index}: Processing {num_segments} segments (audio-first, {mode_label})")
 
     # Status: generating audio
@@ -950,14 +1177,24 @@ async def process_segments_audio_first(
 
     # Step 1 & 2: Generate audio — strategy depends on engine type
     if use_whole_section:
-        segment_audio_info, total_duration = await _generate_audio_whole_section(
-            tts_engine, narration_segments, section_dir, section_index, voice,
-        )
+        if use_chunked_whole_section:
+            segment_audio_info, total_duration = await _generate_audio_whole_section_chunked(
+                tts_engine, narration_segments, section_dir, section_index, voice,
+            )
+            if not segment_audio_info:
+                logger.warning(
+                    f"Section {section_index}: Chunked whole-section TTS failed, falling back to single request"
+                )
+                segment_audio_info, total_duration = await _generate_audio_whole_section(
+                    tts_engine, narration_segments, section_dir, section_index, voice,
+                )
+        else:
+            segment_audio_info, total_duration = await _generate_audio_whole_section(
+                tts_engine, narration_segments, section_dir, section_index, voice,
+            )
         if not segment_audio_info:
             logger.warning(f"Section {section_index}: Whole-section TTS failed")
             return result
-        # Audio file already at section_dir / "section_audio.mp3"
-        section_audio_path = section_dir / "section_audio.mp3"
     else:
         segment_audio_info, total_duration = await _generate_audio_per_segment(
             tts_engine, narration_segments, section_dir, section_index, voice,

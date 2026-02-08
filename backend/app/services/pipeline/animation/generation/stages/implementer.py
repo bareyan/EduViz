@@ -14,8 +14,7 @@ from app.services.infrastructure.llm import PromptingEngine, PromptConfig
 
 from ...config import (
     BASE_GENERATION_TEMPERATURE,
-    IMPLEMENTATION_MAX_OUTPUT_TOKENS,
-    OVERVIEW_IMPLEMENTATION_MAX_OUTPUT_TOKENS,
+    get_implementation_max_output_tokens,
     OVERVIEW_IMPLEMENTATION_TIMEOUT,
 )
 from ..constants import DEFAULT_THEME, DEFAULT_LANGUAGE
@@ -86,10 +85,9 @@ class Implementer:
             enable_thinking=not is_overview,
             timeout=OVERVIEW_IMPLEMENTATION_TIMEOUT if is_overview else 300.0,
             temperature=temperature or BASE_GENERATION_TEMPERATURE,
-            max_output_tokens=(
-                OVERVIEW_IMPLEMENTATION_MAX_OUTPUT_TOKENS
-                if is_overview
-                else IMPLEMENTATION_MAX_OUTPUT_TOKENS
+            max_output_tokens=get_implementation_max_output_tokens(
+                duration_seconds=duration,
+                is_overview=is_overview,
             ),
         )
         

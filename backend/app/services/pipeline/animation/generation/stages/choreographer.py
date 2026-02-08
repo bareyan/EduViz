@@ -14,8 +14,7 @@ from app.services.infrastructure.llm import PromptingEngine, PromptConfig
 
 from ...config import (
     BASE_GENERATION_TEMPERATURE,
-    CHOREOGRAPHY_MAX_OUTPUT_TOKENS,
-    OVERVIEW_CHOREOGRAPHY_MAX_OUTPUT_TOKENS,
+    get_choreography_max_output_tokens,
     OVERVIEW_CHOREOGRAPHY_TIMEOUT,
 )
 from ..constants import DEFAULT_THEME, DEFAULT_VISUAL_HINTS, DEFAULT_SECTION_TITLE, DEFAULT_LANGUAGE
@@ -99,10 +98,9 @@ class Choreographer:
                 timeout=OVERVIEW_CHOREOGRAPHY_TIMEOUT if is_overview else 300.0,
                 temperature=BASE_GENERATION_TEMPERATURE,
                 response_schema=CHOREOGRAPHY_SCHEMA,
-                max_output_tokens=(
-                    OVERVIEW_CHOREOGRAPHY_MAX_OUTPUT_TOKENS
-                    if is_overview
-                    else CHOREOGRAPHY_MAX_OUTPUT_TOKENS
+                max_output_tokens=get_choreography_max_output_tokens(
+                    duration_seconds=duration,
+                    is_overview=is_overview,
                 ),
             ),
             context=dict(context or {}, stage="choreography")

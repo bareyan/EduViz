@@ -28,12 +28,80 @@ CORRECTION_TEMPERATURE_STEP = 0.1
 
 # Maximum tokens for refinement responses
 MAX_REFINEMENT_OUTPUT_TOKENS = 16384
+
+# Base output token budgets (used for ~1 minute sections)
 CHOREOGRAPHY_MAX_OUTPUT_TOKENS = 32768
 IMPLEMENTATION_MAX_OUTPUT_TOKENS = 32768
 OVERVIEW_CHOREOGRAPHY_MAX_OUTPUT_TOKENS = 16384
 OVERVIEW_IMPLEMENTATION_MAX_OUTPUT_TOKENS = 16384
+
+# Duration-aware output token scaling
+TOKEN_SCALING_BASE_DURATION_SECONDS = 60.0
+CHOREOGRAPHY_TOKENS_PER_EXTRA_MINUTE = 8192
+IMPLEMENTATION_TOKENS_PER_EXTRA_MINUTE = 8192
+OVERVIEW_CHOREOGRAPHY_TOKENS_PER_EXTRA_MINUTE = 4096
+OVERVIEW_IMPLEMENTATION_TOKENS_PER_EXTRA_MINUTE = 4096
+CHOREOGRAPHY_MAX_OUTPUT_TOKENS_CAP = 65536
+IMPLEMENTATION_MAX_OUTPUT_TOKENS_CAP = 65536
+OVERVIEW_CHOREOGRAPHY_MAX_OUTPUT_TOKENS_CAP = 32768
+OVERVIEW_IMPLEMENTATION_MAX_OUTPUT_TOKENS_CAP = 32768
+
 OVERVIEW_CHOREOGRAPHY_TIMEOUT = 180.0
 OVERVIEW_IMPLEMENTATION_TIMEOUT = 180.0
+
+
+def scale_tokens_for_duration(
+    *,
+    duration_seconds: float,
+    base_tokens: int,
+    tokens_per_extra_minute: int,
+    max_tokens_cap: int,
+    base_duration_seconds: float = TOKEN_SCALING_BASE_DURATION_SECONDS,
+) -> int:
+    """Scale output tokens based on section duration with a hard cap."""
+    safe_duration = max(0.0, float(duration_seconds))
+    if safe_duration <= base_duration_seconds:
+        return base_tokens
+
+    extra_minutes = (safe_duration - base_duration_seconds) / 60.0
+    scaled_tokens = base_tokens + int(round(extra_minutes * tokens_per_extra_minute))
+    return min(max_tokens_cap, max(base_tokens, scaled_tokens))
+
+
+def get_choreography_max_output_tokens(duration_seconds: float, is_overview: bool) -> int:
+    """Get duration-aware token budget for choreography generation."""
+    if is_overview:
+        return scale_tokens_for_duration(
+            duration_seconds=duration_seconds,
+            base_tokens=OVERVIEW_CHOREOGRAPHY_MAX_OUTPUT_TOKENS,
+            tokens_per_extra_minute=OVERVIEW_CHOREOGRAPHY_TOKENS_PER_EXTRA_MINUTE,
+            max_tokens_cap=OVERVIEW_CHOREOGRAPHY_MAX_OUTPUT_TOKENS_CAP,
+        )
+
+    return scale_tokens_for_duration(
+        duration_seconds=duration_seconds,
+        base_tokens=CHOREOGRAPHY_MAX_OUTPUT_TOKENS,
+        tokens_per_extra_minute=CHOREOGRAPHY_TOKENS_PER_EXTRA_MINUTE,
+        max_tokens_cap=CHOREOGRAPHY_MAX_OUTPUT_TOKENS_CAP,
+    )
+
+
+def get_implementation_max_output_tokens(duration_seconds: float, is_overview: bool) -> int:
+    """Get duration-aware token budget for implementation generation."""
+    if is_overview:
+        return scale_tokens_for_duration(
+            duration_seconds=duration_seconds,
+            base_tokens=OVERVIEW_IMPLEMENTATION_MAX_OUTPUT_TOKENS,
+            tokens_per_extra_minute=OVERVIEW_IMPLEMENTATION_TOKENS_PER_EXTRA_MINUTE,
+            max_tokens_cap=OVERVIEW_IMPLEMENTATION_MAX_OUTPUT_TOKENS_CAP,
+        )
+
+    return scale_tokens_for_duration(
+        duration_seconds=duration_seconds,
+        base_tokens=IMPLEMENTATION_MAX_OUTPUT_TOKENS,
+        tokens_per_extra_minute=IMPLEMENTATION_TOKENS_PER_EXTRA_MINUTE,
+        max_tokens_cap=IMPLEMENTATION_MAX_OUTPUT_TOKENS_CAP,
+    )
 
 
 # Prompt sizing and snippet extraction limits

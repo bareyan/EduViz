@@ -1,6 +1,10 @@
 
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, AsyncMock
+from app.services.pipeline.animation.config import (
+    CHOREOGRAPHY_MAX_OUTPUT_TOKENS,
+    OVERVIEW_CHOREOGRAPHY_MAX_OUTPUT_TOKENS,
+)
 from app.services.pipeline.animation.generation.stages.choreographer import Choreographer, ChoreographyError
 
 @pytest.fixture
@@ -65,3 +69,25 @@ async def test_choreographer_overview_uses_faster_llm_config(choreographer):
     config = choreographer.engine.generate.await_args.kwargs["config"]
     assert config.enable_thinking is False
     assert config.timeout <= 180.0
+
+
+@pytest.mark.asyncio
+async def test_choreographer_scales_tokens_for_long_comprehensive_sections(choreographer):
+    section = {"title": "Long Comprehensive", "video_mode": "comprehensive"}
+    choreographer.engine.generate = AsyncMock(return_value={"success": True, "response": "Plan"})
+
+    await choreographer.plan(section, 180.0)
+
+    config = choreographer.engine.generate.await_args.kwargs["config"]
+    assert config.max_output_tokens > CHOREOGRAPHY_MAX_OUTPUT_TOKENS
+
+
+@pytest.mark.asyncio
+async def test_choreographer_scales_tokens_for_long_overview_sections(choreographer):
+    section = {"title": "Long Overview", "video_mode": "overview"}
+    choreographer.engine.generate = AsyncMock(return_value={"success": True, "response": "Plan"})
+
+    await choreographer.plan(section, 180.0)
+
+    config = choreographer.engine.generate.await_args.kwargs["config"]
+    assert config.max_output_tokens > OVERVIEW_CHOREOGRAPHY_MAX_OUTPUT_TOKENS

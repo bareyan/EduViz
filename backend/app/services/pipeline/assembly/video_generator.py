@@ -140,7 +140,7 @@ class VideoGenerator:
         document_context: str = "auto",
         resume: bool = False,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
-        max_concurrent_sections: int = 3
+        max_concurrent_sections: int = 1
     ) -> Dict[str, Any]:
         """
         Generate complete video from material
