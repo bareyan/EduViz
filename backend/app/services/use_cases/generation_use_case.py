@@ -19,7 +19,7 @@ from app.services.pipeline.assembly import VideoGenerator
 from app.services.pipeline.animation.config import normalize_theme_style
 from app.services.infrastructure.orchestration import get_job_manager, JobStatus
 from app.services.infrastructure.storage import FileBasedAnalysisRepository
-from app.core import find_uploaded_file
+from app.core import find_uploaded_file, save_video_info, create_video_info_from_result
 
 
 class GenerationUseCase:
@@ -247,6 +247,10 @@ class GenerationUseCase:
                         "download_url": f"/outputs/{job_id}/final_video.mp4",
                         "thumbnail_url": None,
                     }
+                    
+                    # Persist video metadata alongside the video file
+                    video_info = create_video_info_from_result(job_id, video_result)
+                    save_video_info(video_info)
                     
                     self.job_manager.update_job(
                         job_id,

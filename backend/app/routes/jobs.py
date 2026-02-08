@@ -27,6 +27,8 @@ from ..core import (
     job_intermediate_artifacts_available,
     job_is_final_only,
     assert_runtime_tools_available,
+    load_video_info,
+    list_all_videos,
 )
 from .jobs_helpers import (
     get_stage_from_status,
@@ -185,12 +187,21 @@ async def get_available_voices(language: str = "en"):
 
 @router.get("/jobs")
 async def list_all_jobs():
-    """List all jobs from job_data directory"""
+    """
+    List all jobs and completed videos.
+    
+    Combines:
+    - Active jobs from job_data (in-progress work)
+    - Completed videos from outputs/ (persisted video_info.json)
+    """
     repo = FileBasedJobRepository()
     jobs_list = repo.list_all()
-
+    seen_ids = set()
     jobs = []
+
+    # Process active jobs from job_data
     for job in jobs_list:
+        seen_ids.add(job.id)
         job_dict = {
             "id": job.id,
             "status": job.status,
@@ -206,25 +217,69 @@ async def list_all_jobs():
         job_dict["video_exists"] = video_path.exists()
         job_dict["video_url"] = f"/outputs/{job.id}/final_video.mp4" if job_dict["video_exists"] else None
 
-        try:
-            script = load_script(job.id)
-            job_dict.update(get_script_metadata(script))
-        except HTTPException:
-            pass
+        # Try video_info.json first (survives cleanup), fallback to script.json
+        video_info = load_video_info(job.id)
+        if video_info:
+            job_dict["title"] = video_info.title
+            job_dict["total_duration"] = video_info.duration
+            job_dict["sections_count"] = len(video_info.chapters)
+        else:
+            try:
+                script = load_script(job.id)
+                job_dict.update(get_script_metadata(script))
+            except HTTPException:
+                pass
 
         jobs.append(job_dict)
+
+    # Add completed videos without job_data (orphaned after cleanup)
+    for video_info in list_all_videos():
+        if video_info.video_id in seen_ids:
+            continue
+        
+        video_path = OUTPUT_DIR / video_info.video_id / "final_video.mp4"
+        if not video_path.exists():
+            continue
+        
+        jobs.append({
+            "id": video_info.video_id,
+            "status": "completed",
+            "progress": 100,
+            "message": "Video ready",
+            "created_at": video_info.created_at or "",
+            "updated_at": video_info.created_at or "",
+            "result": None,
+            "error": None,
+            "video_exists": True,
+            "video_url": f"/outputs/{video_info.video_id}/final_video.mp4",
+            "title": video_info.title,
+            "total_duration": video_info.duration,
+            "sections_count": len(video_info.chapters),
+        })
 
     return {"jobs": jobs}
 
 
 @router.get("/jobs/completed")
 async def list_completed_jobs():
-    """List only completed jobs with videos"""
+    """
+    List only completed jobs with videos.
+    
+    Combines:
+    - Completed jobs from job_data
+    - Orphaned videos (where job_data was cleaned but video exists)
+    """
     repo = FileBasedJobRepository()
     jobs_list = repo.list_completed()
-
+    seen_ids = set()
     completed = []
+
     for job in jobs_list:
+        seen_ids.add(job.id)
+        video_path = OUTPUT_DIR / job.id / "final_video.mp4"
+        if not video_path.exists():
+            continue
+
         job_dict = {
             "id": job.id,
             "status": job.status,
@@ -234,17 +289,47 @@ async def list_completed_jobs():
             "updated_at": job.updated_at,
             "result": job.result,
             "error": job.error,
+            "video_url": f"/outputs/{job.id}/final_video.mp4",
         }
 
-        video_path = OUTPUT_DIR / job.id / "final_video.mp4"
-        if video_path.exists():
-            job_dict["video_url"] = f"/outputs/{job.id}/final_video.mp4"
+        # Try video_info.json first (survives cleanup), fallback to script.json
+        video_info = load_video_info(job.id)
+        if video_info:
+            job_dict["title"] = video_info.title
+            job_dict["total_duration"] = video_info.duration
+            job_dict["sections_count"] = len(video_info.chapters)
+        else:
             try:
                 script = load_script(job.id)
                 job_dict.update(get_script_metadata(script))
             except HTTPException:
                 pass
-            completed.append(job_dict)
+
+        completed.append(job_dict)
+
+    # Add orphaned videos (video exists but job_data cleaned)
+    for video_info in list_all_videos():
+        if video_info.video_id in seen_ids:
+            continue
+        
+        video_path = OUTPUT_DIR / video_info.video_id / "final_video.mp4"
+        if not video_path.exists():
+            continue
+        
+        completed.append({
+            "id": video_info.video_id,
+            "status": "completed",
+            "progress": 100,
+            "message": "Video ready",
+            "created_at": video_info.created_at or "",
+            "updated_at": video_info.created_at or "",
+            "result": None,
+            "error": None,
+            "video_url": f"/outputs/{video_info.video_id}/final_video.mp4",
+            "title": video_info.title,
+            "total_duration": video_info.duration,
+            "sections_count": len(video_info.chapters),
+        })
 
     return {"jobs": completed}
 
