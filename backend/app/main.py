@@ -24,6 +24,7 @@ from .config import (
     CORS_ORIGINS,
     OUTPUT_DIR,
     UPLOAD_DIR,
+    STATIC_DIR,
 )
 from .routes import (
     upload_router,
@@ -231,6 +232,7 @@ app.add_middleware(
 
 # Mount static files for video serving
 app.mount("/outputs", StaticFiles(directory=str(OUTPUT_DIR)), name="outputs")
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Include routers
 app.include_router(upload_router)

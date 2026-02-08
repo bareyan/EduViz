@@ -1,27 +1,35 @@
 ﻿import { useNavigate } from 'react-router-dom'
-import { 
-  Loader2, 
-  Palette, 
-  ChevronRight, 
-  ArrowLeft, 
-  BookOpen, 
-  GraduationCap, 
-  FileText, 
-  Link2, 
-  Layers, 
-  RotateCcw, 
-  Globe, 
-  Zap 
+import {
+  Loader2,
+  Palette,
+  ChevronRight,
+  ArrowLeft,
+  BookOpen,
+  GraduationCap,
+  FileText,
+  Link2,
+  Layers,
+  RotateCcw,
+  Globe,
+  Zap,
+  Volume2,
+  VolumeX
 } from 'lucide-react'
 import { useVoices } from '../hooks/useVoices'
+import { useVoicePreview } from '../hooks/useVoicePreview'
 import { storageService } from '../services/storage.service'
 import { useGenerationForm } from '../features/generation/hooks/useGenerationForm'
 import { SummaryCard } from '../features/generation/components/SummaryCard'
 import { VideoModeSelector } from '../features/generation/components/VideoModeSelector'
 
+import { API_BASE } from '../config/api.config'
+
 export default function GenerationPage() {
   const navigate = useNavigate()
-  
+
+  // Audio preview state
+  const { playingVoiceId, handlePreview } = useVoicePreview()
+
   // Retrieve stored data
   const selectedTopics = storageService.getSelectedTopics()
   const analysis = storageService.getAnalysis()
@@ -72,16 +80,16 @@ export default function GenerationPage() {
         </p>
       </div>
 
-      <SummaryCard 
-        analysis={analysis} 
-        selectedTopics={selectedTopics} 
+      <SummaryCard
+        analysis={analysis}
+        selectedTopics={selectedTopics}
       />
 
       {/* Settings */}
       <div className="space-y-6">
-        <VideoModeSelector 
-          videoMode={videoMode} 
-          setVideoMode={setVideoMode} 
+        <VideoModeSelector
+          videoMode={videoMode}
+          setVideoMode={setVideoMode}
         />
 
         {/* Content Focus Selection */}
@@ -97,24 +105,24 @@ export default function GenerationPage() {
           </p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {[
-              { 
-                id: 'as_document', 
-                name: 'As Document', 
-                desc: 'Follow the document structure', 
+              {
+                id: 'as_document',
+                name: 'As Document',
+                desc: 'Follow the document structure',
                 icon: FileText,
                 color: 'bg-math-orange/20 border-math-orange'
               },
-              { 
-                id: 'practice', 
-                name: 'Practice', 
-                desc: 'More examples and problems', 
+              {
+                id: 'practice',
+                name: 'Practice',
+                desc: 'More examples and problems',
                 icon: GraduationCap,
                 color: 'bg-math-green/20 border-math-green'
               },
-              { 
-                id: 'theory', 
-                name: 'Theory', 
-                desc: 'More proofs and derivations', 
+              {
+                id: 'theory',
+                name: 'Theory',
+                desc: 'More proofs and derivations',
                 icon: BookOpen,
                 color: 'bg-math-purple/20 border-math-purple'
               }
@@ -124,8 +132,8 @@ export default function GenerationPage() {
                 onClick={() => setContentFocus(item.id as any)}
                 className={`
                   p-4 rounded-lg text-left transition-all
-                  ${contentFocus === item.id 
-                    ? `${item.color} border-2` 
+                  ${contentFocus === item.id
+                    ? `${item.color} border-2`
                     : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
                   }
                 `}
@@ -162,8 +170,8 @@ export default function GenerationPage() {
                 onClick={() => setDocumentContext(item.id as any)}
                 className={`
                   p-4 rounded-lg text-left transition-all
-                  ${documentContext === item.id 
-                    ? 'bg-teal-500/20 border-teal-400 border-2' 
+                  ${documentContext === item.id
+                    ? 'bg-teal-500/20 border-teal-400 border-2'
                     : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
                   }
                 `}
@@ -186,7 +194,7 @@ export default function GenerationPage() {
             </div>
             <h2 className="text-lg font-semibold">Language & Voice</h2>
           </div>
-          
+
           <div className="mb-6">
             <label className="text-sm text-gray-400 mb-2 block">Language</label>
             <div className="flex flex-wrap gap-3">
@@ -194,8 +202,8 @@ export default function GenerationPage() {
                 onClick={() => setSelectedLanguage('auto')}
                 className={`
                   px-4 py-2 rounded-lg font-medium transition-all
-                  ${selectedLanguage === 'auto' 
-                    ? 'bg-math-purple text-white' 
+                  ${selectedLanguage === 'auto'
+                    ? 'bg-math-purple text-white'
                     : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
                   }
                 `}
@@ -208,8 +216,8 @@ export default function GenerationPage() {
                   onClick={() => setSelectedLanguage(lang.code)}
                   className={`
                     px-4 py-2 rounded-lg font-medium transition-all
-                    ${selectedLanguage === lang.code 
-                      ? 'bg-math-purple text-white' 
+                    ${selectedLanguage === lang.code
+                      ? 'bg-math-purple text-white'
                       : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
                     }
                   `}
@@ -219,25 +227,42 @@ export default function GenerationPage() {
               ))}
             </div>
           </div>
-          
+
           <div>
             <label className="text-sm text-gray-400 mb-2 block">Voice</label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {voices.map(voice => (
-                <button
-                  key={voice.id}
-                  onClick={() => setSelectedVoice(voice.id)}
-                  className={`
-                    p-3 rounded-lg text-left transition-all
-                    ${selectedVoice === voice.id 
-                      ? 'bg-math-purple/20 border-math-purple border' 
-                      : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
-                    }
-                  `}
-                >
-                  <p className="font-medium">{voice.name}</p>
-                  <p className="text-sm text-gray-500 capitalize">{voice.gender}</p>
-                </button>
+                <div key={voice.id} className="relative group">
+                  <button
+                    onClick={() => setSelectedVoice(voice.id)}
+                    className={`
+                      p-3 pr-12 rounded-lg text-left transition-all w-full
+                      ${selectedVoice === voice.id
+                        ? 'bg-math-purple/20 border-math-purple border'
+                        : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                      }
+                    `}
+                  >
+                    <p className="font-medium">{voice.name}</p>
+                    <p className="text-sm text-gray-500 capitalize">{voice.gender}</p>
+                  </button>
+                  {voice.preview_url && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handlePreview(voice.id, voice.preview_url);
+                      }}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-math-purple/20 hover:bg-math-purple/40 transition-colors text-math-purple border border-math-purple/30 group-hover:border-math-purple/50"
+                      title="Preview voice"
+                    >
+                      {playingVoiceId === voice.id ? (
+                        <VolumeX className="w-4 h-4" />
+                      ) : (
+                        <Volume2 className="w-4 h-4" />
+                      )}
+                    </button>
+                  )}
+                </div>
               ))}
             </div>
           </div>
@@ -262,16 +287,43 @@ export default function GenerationPage() {
                 key={s.id}
                 onClick={() => setStyle(s.id as any)}
                 className={`
-                  p-3 rounded-lg text-left transition-all relative overflow-hidden
-                  ${style === s.id 
-                    ? 'bg-math-green/20 border-math-green border-2' 
-                    : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                  group relative rounded-xl text-left transition-all overflow-hidden aspect-video border-2
+                  ${style === s.id
+                    ? 'border-math-green ring-2 ring-math-green/20'
+                    : 'border-transparent hover:border-gray-600'
                   }
                 `}
               >
-                <div className={`absolute top-2 right-2 w-3 h-3 rounded-full ${s.color} border border-gray-600`}></div>
-                <p className="font-medium">{s.name}</p>
-                <p className="text-xs text-gray-500">{s.desc}</p>
+                {/* Background Image */}
+                <div className="absolute inset-0 bg-gray-800">
+                  <img
+                    src={`${API_BASE}/static/style_previews/${s.id}.png`}
+                    alt={`${s.name} preview`}
+                    className="w-full h-full object-cover opacity-75 group-hover:opacity-100 transition-opacity"
+                    onError={(e) => {
+                      // Fallback if image fails
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                  {/* Gradient Overlay */}
+                  <div className={`absolute inset-0 bg-gradient-to-t from-gray-900/90 via-gray-900/50 to-transparent ${style === s.id ? 'opacity-80' : 'opacity-100'} transition-opacity`} />
+                </div>
+
+                {/* Content */}
+                <div className="absolute inset-0 p-4 flex flex-col justify-end">
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className={`w-2 h-2 rounded-full ${s.color} ring-1 ring-white/50`}></div>
+                    <p className="font-bold text-white shadow-black drop-shadow-md">{s.name}</p>
+                  </div>
+                  <p className="text-xs text-gray-300 line-clamp-2 shadow-black drop-shadow-md">{s.desc}</p>
+                </div>
+
+                {/* Active Indicator */}
+                {style === s.id && (
+                  <div className="absolute top-2 right-2 bg-math-green text-black text-xs font-bold px-2 py-1 rounded-full shadow-lg">
+                    Selected
+                  </div>
+                )}
               </button>
             ))}
           </div>
@@ -297,10 +349,10 @@ export default function GenerationPage() {
           onClick={() => handleGenerate(selectedVoice)}
           disabled={isGenerating}
           className={`flex items-center justify-center gap-2 px-10 py-4 w-full md:w-auto
-                     ${isResuming 
-                       ? 'bg-gradient-to-r from-math-green to-teal-500' 
-                       : 'bg-gradient-to-r from-math-blue to-math-purple'
-                     }
+                     ${isResuming
+              ? 'bg-gradient-to-r from-math-green to-teal-500'
+              : 'bg-gradient-to-r from-math-blue to-math-purple'
+            }
                      text-white rounded-xl font-bold text-lg hover:opacity-90 transition-all active:scale-95
                      disabled:opacity-50 disabled:cursor-not-allowed shadow-xl`}
         >

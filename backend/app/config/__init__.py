@@ -16,7 +16,7 @@ env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
 
 # Re-export paths
-from .paths import APP_DIR, BACKEND_DIR, UPLOAD_DIR, OUTPUT_DIR, JOB_DATA_DIR
+from .paths import APP_DIR, BACKEND_DIR, UPLOAD_DIR, OUTPUT_DIR, JOB_DATA_DIR, STATIC_DIR, VOICE_PREVIEWS_DIR
 
 # Re-export constants
 from .constants import (
