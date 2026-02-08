@@ -139,7 +139,7 @@ class OutputCleanupService:
         Keep only final_video.mp4 (and translations/) in a completed job folder.
         """
         removed_count = 0
-        keep_entries = {"final_video.mp4", "translations"}
+        keep_entries = {"final_video.mp4", "video_info.json", "error_info.json", "translations", "thumbnail.jpg"}
 
         for entry in output_path.iterdir():
             if entry.name in keep_entries:

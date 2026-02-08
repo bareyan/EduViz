@@ -41,3 +41,8 @@ class JobResponse(BaseModel):
     message: str
     result: Optional[Union[dict, list]] = None
     details: Optional[DetailedProgress] = None
+
+
+class JobUpdateRequest(BaseModel):
+    """Request to update job metadata"""
+    title: Optional[str] = None

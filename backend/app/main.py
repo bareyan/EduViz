@@ -32,7 +32,7 @@ from .routes import (
     generation_router,
     jobs_router,
     sections_router,
-    translation_router,
+
 )
 from .core import (
     setup_logging,
@@ -240,7 +240,7 @@ app.include_router(analysis_router)
 app.include_router(generation_router)
 app.include_router(jobs_router)
 app.include_router(sections_router)
-app.include_router(translation_router)
+
 
 
 @app.get("/")
@@ -427,19 +427,33 @@ async def _try_combine_job(job_id: str, job_manager, video_generator, progress):
                 })
                 current_time += section.get("duration_seconds", 0)
 
+            # Generate thumbnail
+            from app.services.pipeline.assembly.ffmpeg import generate_thumbnail
+            thumbnail_url = None
+            thumb_path = job_output_dir / "thumbnail.jpg"
+            if await generate_thumbnail(str(final_video_path), str(thumb_path), time=min(total_duration/2, 5.0)):
+                thumbnail_url = f"/outputs/{job_id}/thumbnail.jpg"
+
+            video_result = {
+                "video_id": job_id,
+                "title": script.get("title", "Math Video"),
+                "duration": total_duration,
+                "chapters": chapters,
+                "download_url": f"/outputs/{job_id}/final_video.mp4",
+                "thumbnail_url": thumbnail_url
+            }
+
+            # Persist video_info.json for Gallery
+            from app.core import save_video_info, create_video_info_from_result
+            video_info = create_video_info_from_result(job_id, video_result)
+            save_video_info(video_info)
+
             job_manager.update_job(
                 job_id,
                 JobStatus.COMPLETED,
                 100,
                 "Video generation complete!",
-                result=[{
-                    "video_id": job_id,
-                    "title": script.get("title", "Math Video"),
-                    "duration": total_duration,
-                    "chapters": chapters,
-                    "download_url": f"/outputs/{job_id}/final_video.mp4",
-                    "thumbnail_url": None
-                }]
+                result=[video_result]
             )
             print(f"[Startup] Job {job_id} combined and completed")
         else:

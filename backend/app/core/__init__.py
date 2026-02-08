@@ -96,6 +96,21 @@ from .voice_catalog import (
     get_translation_languages,
 )
 
+# Video info persistence
+from .video_info import (
+    VideoInfo,
+    VideoChapter,
+    save_video_info,
+    load_video_info,
+    video_info_exists,
+    list_all_videos,
+    create_video_info_from_result,
+    ErrorInfo,
+    save_error_info,
+    load_error_info,
+    list_all_failures,
+)
+
 __all__ = [
     # Logging
     "setup_logging",
@@ -150,5 +165,17 @@ __all__ = [
     "get_tts_voices_for_language",
     "get_translation_default_voice",
     "get_translation_languages",
+    # Video info
+    "VideoInfo",
+    "VideoChapter",
+    "save_video_info",
+    "load_video_info",
+    "video_info_exists",
+    "list_all_videos",
+    "create_video_info_from_result",
+    "ErrorInfo",
+    "save_error_info",
+    "load_error_info",
+    "list_all_failures",
 ]
 

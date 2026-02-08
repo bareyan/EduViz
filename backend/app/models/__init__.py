@@ -25,7 +25,7 @@ from .sections import (
 )
 
 # Job models
-from .jobs import ResumeInfo, DetailedProgress, JobResponse
+from .jobs import ResumeInfo, DetailedProgress, JobResponse, JobUpdateRequest
 
 # Translation models
 from .translation import TranslationRequest, TranslationInfo, TranslationResponse
@@ -49,6 +49,7 @@ __all__ = [
     "ResumeInfo",
     "DetailedProgress",
     "JobResponse",
+    "JobUpdateRequest",
     # Translation
     "TranslationRequest",
     "TranslationInfo",

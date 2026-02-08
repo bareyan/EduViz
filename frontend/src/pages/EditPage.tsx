@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { 
-  ChevronLeft, 
-  Video, 
-  Camera, 
+import {
+  ChevronLeft,
+  Video,
+  Camera,
   RefreshCw,
   Save,
   Play
@@ -21,7 +21,7 @@ export default function EditPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const navigate = useNavigate();
   const videoRef = useRef<HTMLVideoElement>(null);
-  
+
   const {
     sections,
     selectedSection,
@@ -51,7 +51,7 @@ export default function EditPage() {
       await jobService.recompileJob(jobId);
       toast.success('Recompilation started! Redirecting...');
       setTimeout(() => navigate(`/results/${jobId}`), 2000);
-    } catch (err) {
+    } catch {
       toast.error('Failed to start recompilation');
     }
   };
@@ -106,7 +106,7 @@ export default function EditPage() {
       </header>
 
       <main className="flex-1 flex overflow-hidden">
-        <EditSidebar 
+        <EditSidebar
           sections={sections}
           selectedSection={selectedSection}
           onSelectSection={setSelectedSection}
