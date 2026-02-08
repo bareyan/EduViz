@@ -23,6 +23,7 @@ _MANIM_TECHNICAL_BASE = f"""
 ## ANIMATION PRINCIPLES
 - **Theme Fidelity**: Follow the exact theme from user prompt (background, text colors, accents)
 - **Mathematical Clarity**: Use MathTex for all formulas and equations
+- **Math/Text Separation**: Use Tex for mixed prose+math, keep LaTeX commands out of Text(), and treat currency `$` amounts as plain text
 - **Timing Precision**: Use self.wait() to sync animations with narration exactly
 
 ## SPATIAL CONSTRAINTS (CRITICAL — VIOLATIONS CAUSE VISIBLE DEFECTS)

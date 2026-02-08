@@ -128,6 +128,65 @@ class SceneA(Scene):
     assert "include_outer_lines=False" in fixed
 
 
+def test_fix_known_patterns_promotes_text_with_pure_math_to_mathtex():
+    fixer = CSTFixer()
+    code = """
+from manim import *
+expr = Text("$x^2$")
+"""
+    fixed, count = fixer.fix_known_patterns(code)
+    assert count >= 1
+    assert "MathTex(" in fixed
+    assert "$x^2$" not in fixed
+
+
+def test_fix_known_patterns_promotes_mixed_text_math_to_tex():
+    fixer = CSTFixer()
+    code = """
+from manim import *
+label = Text("Value is $x$")
+"""
+    fixed, count = fixer.fix_known_patterns(code)
+    assert count >= 1
+    assert "label = Tex(" in fixed
+    assert "Value is $x$" in fixed
+
+
+def test_fix_known_patterns_promotes_tex_with_pure_math_to_mathtex():
+    fixer = CSTFixer()
+    code = """
+from manim import *
+equation = Tex("$x^2$")
+"""
+    fixed, count = fixer.fix_known_patterns(code)
+    assert count >= 1
+    assert "equation = MathTex(" in fixed
+    assert "$x^2$" not in fixed
+
+
+def test_fix_known_patterns_preserves_currency_text():
+    fixer = CSTFixer()
+    code = """
+from manim import *
+price = Text("Price is $5")
+"""
+    fixed, count = fixer.fix_known_patterns(code)
+    assert count == 0
+    assert fixed.strip() == code.strip()
+
+
+def test_fix_known_patterns_promotes_bare_latex_command_to_mathtex():
+    fixer = CSTFixer()
+    code = r'''
+from manim import *
+rel = Text(r"\in")
+'''
+    fixed, count = fixer.fix_known_patterns(code)
+    assert count >= 1
+    assert "rel = MathTex(" in fixed
+    assert "\\\\in" in fixed
+
+
 def test_fix_visual_quality_filled_shape_dominance():
     fixer = CSTFixer()
     code = """
