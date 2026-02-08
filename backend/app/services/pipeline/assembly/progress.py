@@ -13,6 +13,27 @@ from app.core import get_logger
 
 logger = get_logger(__name__, component="progress_tracker")
 
+_WRAPPER_METADATA_KEYS = (
+    "mode",
+    "output_language",
+    "detected_language",
+    "language",
+    "source_language",
+)
+
+
+def _unwrap_script_with_metadata(raw_script: Dict[str, Any]) -> Dict[str, Any]:
+    """Unwrap wrapped scripts while preserving language-related metadata."""
+    if "script" in raw_script and isinstance(raw_script.get("script"), dict):
+        inner = raw_script["script"]
+        if "sections" in inner or "title" in inner:
+            merged = dict(inner)
+            for key in _WRAPPER_METADATA_KEYS:
+                if key in raw_script and key not in merged:
+                    merged[key] = raw_script[key]
+            return merged
+    return raw_script
+
 
 @dataclass
 class JobProgress:
@@ -131,15 +152,7 @@ class ProgressTracker:
             try:
                 with open(script_path, encoding="utf-8") as f:
                     raw_script = json.load(f)
-                # Unwrap script if it's in wrapped format {"script": {...}, "mode": ...}
-                if "script" in raw_script and isinstance(raw_script.get("script"), dict):
-                    inner = raw_script["script"]
-                    if "sections" in inner or "title" in inner:
-                        result.script = inner
-                    else:
-                        result.script = raw_script
-                else:
-                    result.script = raw_script
+                result.script = _unwrap_script_with_metadata(raw_script)
                 result.total_sections = len(result.script.get("sections", []))
                 logger.debug(f"Found existing script with {result.total_sections} sections", extra={
                     "total_sections": result.total_sections
@@ -301,15 +314,7 @@ class ProgressTracker:
             with open(script_path, encoding="utf-8") as f:
                 raw_script = json.load(f)
 
-            # Unwrap script if it's in wrapped format {"script": {...}, "mode": ...}
-            if "script" in raw_script and isinstance(raw_script.get("script"), dict):
-                inner = raw_script["script"]
-                if "sections" in inner or "title" in inner:
-                    script = inner
-                else:
-                    script = raw_script
-            else:
-                script = raw_script
+            script = _unwrap_script_with_metadata(raw_script)
                 
             section_count = len(script.get('sections', []))
             logger.debug(f"Loaded script.json with {section_count} sections")

@@ -5,10 +5,12 @@ AI-powered Manim animation generation using centralized prompting engine.
 """
 
 from .generator import ManimGenerator
+from .orchestrator import AnimationOrchestrator
 from app.services.infrastructure.llm import CostTracker, track_cost_safely
 
 __all__ = [
     'ManimGenerator',
+    'AnimationOrchestrator',
     'CostTracker',
     'track_cost_safely',
 ]

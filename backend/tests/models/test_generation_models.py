@@ -1,5 +1,4 @@
 
-import pytest
 from app.models.generation import GenerationRequest, GeneratedVideo, GenerationResponse
 
 def test_generation_request_defaults():
@@ -8,9 +7,8 @@ def test_generation_request_defaults():
         analysis_id="a1",
         selected_topics=[0, 1]
     )
-    assert req.style == "3blue1brown"
-    assert req.max_video_length == 20
-    assert req.voice == "en-US-GuyNeural"
+    assert req.style == "3b1b"
+    assert req.voice == "Charon"  # Gemini TTS default voice
     assert req.pipeline == "default"
 
 def test_generated_video_structure():

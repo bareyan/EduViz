@@ -1,0 +1,430 @@
+"""
+Runtime Validator - Executes Manim code in dry-run mode to catch runtime errors.
+
+Responsibilities:
+- Execute Manim dry-run with optional spatial check injection
+- Parse both standard Python tracebacks and structured spatial JSON
+- Convert structured spatial output into typed ValidationIssue objects
+"""
+
+import asyncio
+import json
+import os
+import re
+import sys
+import subprocess
+import tempfile
+import shutil
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from app.core import get_logger
+from ....config import MAX_ERROR_MESSAGE_LENGTH
+from .models import (
+    IssueCategory,
+    IssueConfidence,
+    IssueSeverity,
+    ValidationIssue,
+)
+from .spatial import SPATIAL_JSON_MARKER
+from .static import ValidationResult
+from .runtime_preflight import RuntimePreflightChecker
+
+# Category map for the spatial JSON parser
+_CATEGORY_MAP = {
+    "out_of_bounds": IssueCategory.OUT_OF_BOUNDS,
+    "text_overlap": IssueCategory.TEXT_OVERLAP,
+    "object_occlusion": IssueCategory.OBJECT_OCCLUSION,
+    "visibility": IssueCategory.VISIBILITY,
+    "visual_quality": IssueCategory.VISUAL_QUALITY,
+}
+_SEVERITY_MAP = {
+    "critical": IssueSeverity.CRITICAL,
+    "warning": IssueSeverity.WARNING,
+    "info": IssueSeverity.INFO,
+}
+_CONFIDENCE_MAP = {
+    "high": IssueConfidence.HIGH,
+    "medium": IssueConfidence.MEDIUM,
+    "low": IssueConfidence.LOW,
+}
+
+logger = get_logger(__name__, component="runtime_validator")
+
+class RuntimeValidator:
+    """
+    Validates Manim code by executing it in a dry-run environment.
+    
+    This catches:
+    - Runtime TypeErrors (wrong arguments)
+    - Logic bugs (division by zero)
+    - LaTeX compilation errors
+    - Missing resources/assets
+    
+    It uses 'manim -ql --dry_run' to execute the construct() method 
+    without performing expensive video rendering/encoding.
+    """
+    
+    def __init__(self):
+        # Resolve manim executable
+        # We prefer 'python -m manim' to ensure we use the same environment
+        self.python_exe = sys.executable
+        self.preflight_checker = RuntimePreflightChecker()
+
+    async def validate(self, code: str, temp_dir: Optional[str] = None, enable_spatial_checks: bool = False, frames_dir: Optional[str] = None) -> ValidationResult:
+        """
+        Executes the code in dry-run mode.
+        """
+        result = ValidationResult(valid=True)
+        preflight_issues = self.preflight_checker.check(code)
+        for issue in preflight_issues:
+            if issue.line and not issue.details.get("code_context"):
+                snippet = self._build_code_context(code, issue.line)
+                if snippet:
+                    issue.details["code_context"] = snippet
+            result.add_issue(issue)
+
+        if preflight_issues:
+            logger.warning(
+                "Runtime preflight detected issues before dry-run",
+                extra={
+                    "issue_count": len(preflight_issues),
+                    "categories": [i.category.value for i in preflight_issues],
+                },
+            )
+            # Avoid expensive dry-run when we already have high-confidence blockers.
+            return result
+
+        if enable_spatial_checks:
+            try:
+                from .spatial import SpatialCheckInjector
+                injector = SpatialCheckInjector()
+                # Inject logic before writing to file
+                code = injector.inject(code)
+            except ImportError:
+                 logger.warning("Spatial validation module not found, skipping checks.")
+            except Exception as e:
+                 logger.warning(f"Failed to inject spatial checks: {e}")
+        
+        # Create temp file
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False, dir=temp_dir, encoding='utf-8') as tmp_file:
+            tmp_path = Path(tmp_file.name)
+            tmp_file.write(code)
+        
+        # Initialize temp_media_dir to None
+        temp_media_dir = None
+            
+        try:
+            # We need to find the scene name to be robust, 
+            # but Manim can often auto-discover if there's only one scene.
+            # For robustness, we let Manim discover.
+            
+            # Command: python -m manim -ql --dry_run --media_dir <tmp> <file>
+            # We use a temp media dir to avoid polluting the workspace
+            temp_media_dir = tmp_path.parent / f"manim_dry_run_{tmp_path.stem}"
+            self._prepare_media_dir(temp_media_dir)
+            
+            cmd = [
+                self.python_exe, "-m", "manim", 
+                "-ql",             # Low quality (faster init)
+                "--dry_run",       # Do not write video files
+                "--media_dir", str(temp_media_dir),
+                str(tmp_path)
+            ]
+
+            env = os.environ.copy()
+            env["PYTHONWARNINGS"] = "ignore::SyntaxWarning"
+            if frames_dir:
+                env["MANIM_SPATIAL_OUTPUT_DIR"] = str(frames_dir)
+            
+            # Use subprocess.run via thread to avoid ProactorEventLoop issues on Windows
+            result_proc = await asyncio.to_thread(
+                subprocess.run,
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=180.0  # 180s timeout - dry-run can be slow with complex loops
+            )
+            
+            # Always check for structured spatial JSON, even if manim exits cleanly.
+            spatial_issues = self._parse_spatial_json(result_proc.stderr)
+            if spatial_issues:
+                for issue in spatial_issues:
+                    result.add_issue(issue)
+
+            spatial_warnings = self._parse_spatial_warnings(result_proc.stderr)
+            if spatial_warnings:
+                for issue in spatial_warnings:
+                    result.add_issue(issue)
+
+            if result_proc.returncode != 0 and not spatial_issues:
+                error_msg, error_line, error_details = self._parse_manim_error(
+                    result_proc.stderr,
+                    code=code,
+                    tmp_path=tmp_path,
+                )
+                result.add_issue(ValidationIssue(
+                    severity=IssueSeverity.CRITICAL,
+                    confidence=IssueConfidence.HIGH,
+                    category=IssueCategory.RUNTIME,
+                    message=error_msg,
+                    line=error_line,
+                    details=error_details,
+                ))
+                
+        except subprocess.TimeoutExpired:
+            result.add_issue(ValidationIssue(
+                severity=IssueSeverity.CRITICAL,
+                confidence=IssueConfidence.HIGH,
+                category=IssueCategory.RUNTIME,
+                message="Execution timed out after 180s - check for large loops or complex operations",
+            ))
+            return result
+                
+        except Exception as e:
+            logger.error(f"Runtime validation failed: {e}")
+            result.add_issue(ValidationIssue(
+                severity=IssueSeverity.CRITICAL,
+                confidence=IssueConfidence.HIGH,
+                category=IssueCategory.SYSTEM,
+                message=f"Internal validation error: {str(e)}",
+            ))
+            
+        finally:
+            # Cleanup source file
+            if tmp_path.exists():
+                try:
+                    os.unlink(tmp_path)
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp file {tmp_path}: {e}")
+            
+            # Cleanup temp media dir
+            if temp_media_dir is not None and temp_media_dir.exists():
+                try:
+                    shutil.rmtree(temp_media_dir)
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp media dir {temp_media_dir}: {e}")
+                    
+        return result
+
+    def _parse_spatial_json(self, stderr: str) -> List[ValidationIssue]:
+        """Extract structured spatial issues from stderr.
+
+        The injected spatial validator outputs a JSON payload prefixed with
+        SPATIAL_ISSUES_JSON: when critical issues are found.  This method
+        parses that payload into typed ValidationIssue objects.
+
+        Returns:
+            List of ValidationIssue objects, or empty list if no marker found.
+        """
+        marker_pos = stderr.find(SPATIAL_JSON_MARKER)
+        if marker_pos == -1:
+            return []
+
+        json_str = stderr[marker_pos + len(SPATIAL_JSON_MARKER):].strip()
+        # The JSON may be followed by additional stderr lines; take first line
+        first_newline = json_str.find("\n")
+        if first_newline != -1:
+            json_str = json_str[:first_newline]
+
+        try:
+            raw_issues = json.loads(json_str)
+        except (json.JSONDecodeError, TypeError) as exc:
+            logger.warning(f"Failed to parse spatial JSON: {exc}")
+            return []
+
+        if not isinstance(raw_issues, list):
+            return []
+
+        issues: List[ValidationIssue] = []
+        for raw in raw_issues:
+            try:
+                issues.append(self._raw_to_validation_issue(raw))
+            except (KeyError, ValueError) as exc:
+                logger.debug(f"Skipping malformed spatial issue: {exc}")
+        return issues
+
+    @staticmethod
+    def _parse_spatial_warnings(stderr: str) -> List[ValidationIssue]:
+        """Extract spatial warnings emitted to stderr.
+
+        Warnings are emitted as: "SPATIAL_WARNING: <message>".
+        """
+        warnings: List[ValidationIssue] = []
+        for line in stderr.splitlines():
+            if not line.startswith("SPATIAL_WARNING:"):
+                continue
+            message = line.split("SPATIAL_WARNING:", 1)[-1].strip()
+            lowered = message.lower()
+            if "out of bounds" in lowered:
+                category = IssueCategory.OUT_OF_BOUNDS
+            elif "overlap" in lowered:
+                category = IssueCategory.TEXT_OVERLAP
+            elif "covers text" in lowered:
+                category = IssueCategory.OBJECT_OCCLUSION
+            elif "visibility" in lowered:
+                category = IssueCategory.VISIBILITY
+            else:
+                category = IssueCategory.SYSTEM
+
+            warnings.append(ValidationIssue(
+                severity=IssueSeverity.WARNING,
+                confidence=IssueConfidence.MEDIUM,
+                category=category,
+                message=message,
+            ))
+        return warnings
+
+    @staticmethod
+    def _raw_to_validation_issue(raw: dict) -> ValidationIssue:
+        """Convert a raw dict from the injected code into a ValidationIssue."""
+        return ValidationIssue(
+            severity=_SEVERITY_MAP[raw["severity"]],
+            confidence=_CONFIDENCE_MAP[raw["confidence"]],
+            category=_CATEGORY_MAP[raw["category"]],
+            message=raw["message"],
+            auto_fixable=raw.get("auto_fixable", False),
+            fix_hint=raw.get("fix_hint"),
+            details=raw.get("details", {}),
+        )
+
+    @staticmethod
+    def _prepare_media_dir(media_dir: Path) -> None:
+        """Ensure Manim dry-run media folders exist before execution.
+
+        Some Windows environments fail to auto-create nested `Tex` output paths
+        during LaTeX rendering. Pre-creating these directories avoids intermittent
+        `FileNotFoundError` in pathlib.mkdir.
+        """
+        media_dir.mkdir(parents=True, exist_ok=True)
+        (media_dir / "Tex").mkdir(parents=True, exist_ok=True)
+
+    def _parse_manim_error(
+        self,
+        stderr: str,
+        code: Optional[str] = None,
+        tmp_path: Optional[Path] = None,
+    ) -> tuple[str, Optional[int], Dict[str, Any]]:
+        """Extract message, best line number, and context from Manim stderr.
+
+        Returns:
+            Tuple of (error_message, line_number_or_None, details_dict).
+        """
+        lines = [self._strip_ansi(line) for line in stderr.splitlines()]
+        if not lines:
+            return "Unknown runtime error (no stderr output)", None, {}
+
+        logger.debug(f"Full Manim stderr (first 2000 chars):\n{stderr[:2000]}")
+
+        # Strategy 1: Look for 'Traceback (most recent call last):' block
+        traceback_block = []
+        in_traceback = False
+        for line in lines:
+            if "Traceback (most recent call last):" in line:
+                traceback_block = [line]
+                in_traceback = True
+            elif in_traceback:
+                if line.startswith("  ") or re.match(r'^[A-Z][a-zA-Z]*Error:', line.strip()) or re.match(r'^[A-Z][a-zA-Z]*:', line.strip()):
+                    traceback_block.append(line)
+                    if not line.startswith("  "):
+                        # End of traceback (the exception line)
+                        in_traceback = False
+                else:
+                    in_traceback = False
+        
+        exception_line = None
+        if traceback_block:
+            # The last line of the traceback block is usually the exception message
+            exception_line = traceback_block[-1].strip()
+        
+        if not exception_line:
+            # Fallback to standard Python exception pattern in whole stderr
+            for line in reversed(lines):
+                stripped = line.strip()
+                if re.match(r'^[A-Z][a-zA-Z]*Error:', stripped) or re.match(r'^[A-Z][a-zA-Z]*:', stripped):
+                    exception_line = stripped
+                    break
+
+        # Strategy 2: Last meaningful non-empty line (if all else fails)
+        if not exception_line:
+            for line in reversed(lines):
+                stripped = line.strip()
+                if stripped and not stripped.startswith('During handling of'):
+                    exception_line = stripped
+                    break
+
+        if not exception_line:
+            exception_line = "Unknown error"
+
+        # Prefer traceback lines that point to our temporary source file.
+        line_num: Optional[int] = None
+        tmp_norm = str(tmp_path).replace("\\", "/") if tmp_path else None
+
+        trace_locs: List[tuple[str, int]] = []
+        for line in lines:
+            match = re.search(r'File "([^"]+\.py)", line (\d+),', line)
+            if not match:
+                continue
+            trace_locs.append((match.group(1).replace("\\", "/"), int(match.group(2))))
+
+        if tmp_norm:
+            for path_text, candidate_line in reversed(trace_locs):
+                if path_text == tmp_norm or path_text.endswith(tmp_norm):
+                    line_num = candidate_line
+                    break
+
+        if line_num is None and trace_locs:
+            line_num = trace_locs[-1][1]
+
+        if line_num is None:
+            # Fallback for formatted tracebacks that omit explicit File lines.
+            for line in reversed(lines):
+                match = re.search(r'\bline\s+(\d+)\b', line)
+                if match:
+                    line_num = int(match.group(1))
+                    break
+
+        details: Dict[str, Any] = {}
+        excerpt = self._build_traceback_excerpt(lines)
+        if excerpt:
+            details["traceback_excerpt"] = excerpt
+        if code and line_num:
+            snippet = self._build_code_context(code, line_num)
+            if snippet:
+                details["code_context"] = snippet
+
+        if len(exception_line) > MAX_ERROR_MESSAGE_LENGTH:
+            exception_line = exception_line[:MAX_ERROR_MESSAGE_LENGTH] + "..."
+
+        return exception_line, line_num, details
+
+    @staticmethod
+    def _strip_ansi(text: str) -> str:
+        """Remove ANSI color/control escapes from stderr lines."""
+        return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+
+    @staticmethod
+    def _build_traceback_excerpt(lines: List[str], max_lines: int = 18, max_chars: int = 1400) -> str:
+        """Take the last useful traceback lines for LLM debugging context."""
+        useful = [ln.rstrip() for ln in lines if ln.strip()]
+        if not useful:
+            return ""
+        excerpt = "\n".join(useful[-max_lines:])
+        if len(excerpt) > max_chars:
+            excerpt = excerpt[-max_chars:]
+        return excerpt
+
+    @staticmethod
+    def _build_code_context(code: str, line_num: int, radius: int = 3) -> str:
+        """Render a small numbered snippet around the failing line."""
+        code_lines = code.splitlines()
+        if line_num < 1 or line_num > len(code_lines):
+            return ""
+        start = max(1, line_num - radius)
+        end = min(len(code_lines), line_num + radius)
+        rendered: List[str] = []
+        for idx in range(start, end + 1):
+            marker = ">>" if idx == line_num else "  "
+            rendered.append(f"{marker} {idx:4}: {code_lines[idx - 1]}")
+        return "\n".join(rendered)

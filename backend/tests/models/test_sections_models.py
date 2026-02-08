@@ -1,5 +1,4 @@
 
-import pytest
 from app.models.sections import SectionProgress, SectionInfo, CodeUpdateRequest
 
 def test_section_progress_defaults():

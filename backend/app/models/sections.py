@@ -19,7 +19,7 @@ class SectionProgress(BaseModel):
     index: int
     id: str
     title: str
-    status: str  # "waiting", "generating_script", "generating_manim", "fixing_manim", "generating_audio", "completed", "failed"
+    status: str  # "waiting", "generating_manim", "fixing_manim", "generating_audio", "generating_video", "fixing_error", "completed", "failed"
     duration_seconds: Optional[float] = None
     narration_preview: Optional[str] = None  # First 200 chars of narration
     has_video: bool = False

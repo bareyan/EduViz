@@ -9,16 +9,49 @@ Also handles narration segmentation and script validation (shared by all modes).
 
 import asyncio
 import json
-from typing import Dict, Any, List
+import os
+import re
+from pathlib import Path
+from typing import Dict, Any, List, Optional
 
 from .base import BaseScriptGenerator
+from .schema_filter import filter_section
 
 
 class SectionGenerator:
     """Generates script sections and post-processes narration."""
 
-    def __init__(self, base: BaseScriptGenerator):
+    _REFERENCE_TOKEN_PATTERN = (
+        r"(?:figure|fig(?:ure)?\.?|table|equation|eq\.?|appendix)\s*(?:\(|#)?\s*[A-Za-z0-9]+\s*\)?"
+    )
+    _REFERENCE_PATTERN = re.compile(
+        r"\b(?P<kind>figure|fig(?:ure)?\.?|table|equation|eq\.?|appendix)\s*(?:\(|#)?\s*(?P<id>[A-Za-z0-9]+)\s*\)?",
+        re.IGNORECASE,
+    )
+    _DEICTIC_REFERENCE_PATTERNS = [
+        re.compile(rf"\bif you look at\s+(?:the\s+)?(?P<ref>{_REFERENCE_TOKEN_PATTERN})\s*,?\s*", re.IGNORECASE),
+        re.compile(rf"\bas you can see in\s+(?:the\s+)?(?P<ref>{_REFERENCE_TOKEN_PATTERN})\s*,?\s*", re.IGNORECASE),
+        re.compile(rf"\bas shown in\s+(?:the\s+)?(?P<ref>{_REFERENCE_TOKEN_PATTERN})\s*,?\s*", re.IGNORECASE),
+        re.compile(rf"\blooking at\s+(?:the\s+)?(?P<ref>{_REFERENCE_TOKEN_PATTERN})\s*,?\s*", re.IGNORECASE),
+    ]
+
+    def __init__(self, base: BaseScriptGenerator, use_pdf_page_slices: Optional[bool] = None):
         self.base = base
+        self.use_pdf_page_slices = (
+            use_pdf_page_slices
+            if use_pdf_page_slices is not None
+            else os.getenv("ENABLE_SECTION_PDF_SLICES", "").strip().lower() in {"1", "true", "yes", "on"}
+        )
+        self.min_pages_for_pdf_slicing = self._read_min_pages_for_slicing()
+
+    @staticmethod
+    def _read_min_pages_for_slicing() -> int:
+        raw = os.getenv("SECTION_PDF_SLICE_MIN_PAGES", "3").strip()
+        try:
+            value = int(raw)
+        except Exception:
+            return 3
+        return max(1, value)
 
     async def generate_sections(
         self,
@@ -27,6 +60,9 @@ class SectionGenerator:
         language_name: str,
         language_instruction: str,
         topic: Dict[str, Any] = None,
+        pdf_path: Optional[str] = None,
+        total_pages: Optional[int] = None,
+        artifacts_dir: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Generate sections from an outline (comprehensive mode only).
         
@@ -38,21 +74,25 @@ class SectionGenerator:
 
         return await self._generate_sections_sequentially(
             sections_outline=sections_outline,
-            full_outline=outline,
             content=content,
             language_name=language_name,
             language_instruction=language_instruction,
             gaps_to_fill=gaps_to_fill,
+            pdf_path=pdf_path,
+            total_pages=total_pages,
+            artifacts_dir=artifacts_dir,
         )
 
     async def _generate_sections_sequentially(
         self,
         sections_outline: List[Dict[str, Any]],
-        full_outline: Dict[str, Any],
         content: str,
         language_name: str,
         language_instruction: str,
         gaps_to_fill: List[str],
+        pdf_path: Optional[str],
+        total_pages: Optional[int],
+        artifacts_dir: Optional[str],
     ) -> List[Dict[str, Any]]:
         """
         Generate sections one by one using individual generate_content calls.
@@ -69,14 +109,42 @@ class SectionGenerator:
             for i, sec in enumerate(sections_outline)
         )
 
-        # For comprehensive mode, use more content initially
-        initial_content_limit = min(25000, max(15000, len(content) // 2))
-        initial_content_excerpt = content[:initial_content_limit]
+        # For comprehensive mode, use more content initially (non-PDF only)
+        initial_content_limit = min(25000, max(15000, len(content) // 2)) if content else 0
+        initial_content_excerpt = content[:initial_content_limit] if content else ""
+
+        allow_pdf_page_slices = (
+            bool(pdf_path)
+            and bool(self.use_pdf_page_slices)
+            and bool(artifacts_dir)
+            and (
+                total_pages is None
+                or total_pages >= self.min_pages_for_pdf_slicing
+            )
+        )
+
+        pdf_slices_dir = None
+        full_pdf_part = None
+        if pdf_path and not allow_pdf_page_slices:
+            full_pdf_part = self.base.build_pdf_part(pdf_path)
+        if self.use_pdf_page_slices and pdf_path and not allow_pdf_page_slices:
+            print(
+                f"[SectionGen] PDF slicing bypassed for {total_pages or 'unknown'} pages "
+                f"(min_pages={self.min_pages_for_pdf_slicing}); using full PDF attachment."
+            )
+        if allow_pdf_page_slices and pdf_path and artifacts_dir:
+            pdf_slices_dir = Path(artifacts_dir) / "pdf_slices"
+            pdf_slices_dir.mkdir(parents=True, exist_ok=True)
+        slice_cache: Dict[tuple, tuple] = {}
 
         for section_idx, section_outline in enumerate(sections_outline):
             # Determine section position and context
             if section_idx == 0:
-                position_note = "FIRST SECTION: Start with engaging hook, may greet viewer."
+                position_note = (
+                    "FIRST SECTION: Hook-first (3Blue1Brown-style). "
+                    "Open with a visual/puzzle or surprising question. "
+                    "No greetings. No agenda listing."
+                )
                 previous_context = ""
             elif section_idx == total_sections - 1:
                 position_note = "FINAL SECTION: Summarize key insights, provide memorable conclusion."
@@ -84,10 +152,19 @@ class SectionGenerator:
             else:
                 position_note = f"MIDDLE SECTION {section_idx + 1}/{total_sections}: Continue naturally, no greetings, reference earlier content."
                 previous_context = self._build_compressed_previous_context(generated_sections)
+            
+            target_seconds = section_outline.get("estimated_duration_seconds")
+            if not target_seconds:
+                if section_idx == 0:
+                    target_seconds = 210
+                elif section_idx == total_sections - 1:
+                    target_seconds = 150
+                else:
+                    target_seconds = 180
 
-            # Get relevant content excerpt for this section
+            # Get relevant content excerpt for this section (non-PDF only)
             supplemental_content = ""
-            if len(content) > initial_content_limit:
+            if content and len(content) > initial_content_limit:
                 section_excerpt = self._get_relevant_content_for_section(
                     content=content,
                     section_outline=section_outline,
@@ -96,6 +173,44 @@ class SectionGenerator:
                 )
                 if section_excerpt and section_excerpt[:500] not in initial_content_excerpt[:5000]:
                     supplemental_content = f"\n\nRELEVANT SOURCE MATERIAL FOR THIS SECTION:\n{section_excerpt[:5000]}"
+
+            # Prepare PDF slice if applicable
+            pdf_part = None
+            source_pages = None
+            source_pdf_path = None
+            if pdf_path:
+                page_start = self._coerce_page(section_outline.get("page_start"))
+                page_end = self._coerce_page(section_outline.get("page_end"))
+                if page_start and page_end:
+                    source_pages = {"start": page_start, "end": page_end}
+                else:
+                    source_pages = {"start": 1, "end": total_pages} if total_pages else None
+
+                slice_path = None
+                if allow_pdf_page_slices and pdf_slices_dir and page_start and page_end:
+                    range_key = (page_start, page_end)
+                    cached = slice_cache.get(range_key)
+                    if cached:
+                        slice_path, pdf_part = cached
+                    else:
+                        slice_filename = f"pages_{page_start}-{page_end}.pdf"
+                        slice_path = self.base.slice_pdf_pages(
+                            source_path=pdf_path,
+                            start_page=page_start,
+                            end_page=page_end,
+                            output_path=str(pdf_slices_dir / slice_filename)
+                        )
+                        if slice_path:
+                            pdf_part = self.base.build_pdf_part(slice_path)
+                            if pdf_part:
+                                slice_cache[range_key] = (slice_path, pdf_part)
+                if slice_path:
+                    source_pdf_path = slice_path
+                else:
+                    source_pdf_path = pdf_path
+                    if full_pdf_part is None:
+                        full_pdf_part = self.base.build_pdf_part(pdf_path)
+                    pdf_part = full_pdf_part
 
             # Build prompt for this section
             prompt = self._build_sequential_prompt(
@@ -107,6 +222,10 @@ class SectionGenerator:
                 position_note=position_note,
                 supplemental_content=supplemental_content,
                 language_instruction=language_instruction,
+                target_seconds=target_seconds,
+                pdf_attached=bool(pdf_part),
+                page_range=source_pages,
+                total_pages=total_pages,
             )
 
             # Generate this section with retries
@@ -124,7 +243,20 @@ class SectionGenerator:
                             "id": {"type": "string"},
                             "title": {"type": "string"},
                             "narration": {"type": "string"},
-                            "tts_narration": {"type": "string"}
+                            "tts_narration": {"type": "string"},
+                            "supporting_data": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"type": "string"},
+                                        "label": {"type": "string"},
+                                        "value": {},
+                                        "notes": {"type": "string"}
+                                    },
+                                    "required": ["type", "value"]
+                                }
+                            }
                         },
                         "required": ["id", "title", "narration", "tts_narration"]
                     }
@@ -136,15 +268,17 @@ class SectionGenerator:
                         # Try with thinking config first
                         config = PromptConfig(
                             temperature=0.7,
-                            max_output_tokens=16536,
+                            max_output_tokens=32768,
                             timeout=150,
                             response_format="json",
                             enable_thinking=True
                         )
+                        contents = self.base.build_prompt_contents(prompt, pdf_part)
                         response_text = await self.base.generate_with_engine(
                             prompt=prompt,
                             config=config,
-                            response_schema=response_schema
+                            response_schema=response_schema,
+                            contents=contents,
                         )
                     except Exception as e:
                         error_msg = str(e)
@@ -152,15 +286,17 @@ class SectionGenerator:
                             print("[SectionGen] Model doesn't support thinking_config, retrying without it...")
                             config = PromptConfig(
                                 temperature=0.7,
-                                max_output_tokens=8192,
+                                max_output_tokens=32768,
                                 timeout=120,
                                 response_format="json",
                                 enable_thinking=False
                             )
+                            contents = self.base.build_prompt_contents(prompt, pdf_part)
                             response_text = await self.base.generate_with_engine(
                                 prompt=prompt,
                                 config=config,
-                                response_schema=response_schema
+                                response_schema=response_schema,
+                                contents=contents,
                             )
                         else:
                             raise
@@ -177,7 +313,20 @@ class SectionGenerator:
                         # Ensure tts_narration exists
                         if not section.get("tts_narration"):
                             section["tts_narration"] = section.get("narration", "")
-                        
+
+                        # Ensure supporting_data exists
+                        if not section.get("supporting_data"):
+                            section["supporting_data"] = []
+
+                        section = self._ensure_reference_content(section)
+
+                        # Store source PDF metadata
+                        if source_pages:
+                            section["source_pages"] = source_pages
+                        if source_pdf_path:
+                            section["source_pdf_path"] = source_pdf_path
+
+                        section = filter_section(section)
                         generated_sections.append(section)
                         print(f"[SectionGen] OK Section {section_idx + 1} generated successfully")
                         success = True
@@ -199,6 +348,9 @@ class SectionGenerator:
                         "title": section_outline.get("title", f"Part {section_idx + 1}"),
                         "narration": f"Let's explore {section_outline.get('title', 'this topic')}. (Generation failed)",
                         "tts_narration": f"Let's explore {section_outline.get('title', 'this topic')}. (Generation failed)",
+                        "supporting_data": [],
+                        **({"source_pages": source_pages} if source_pages else {}),
+                        **({"source_pdf_path": source_pdf_path} if source_pdf_path else {}),
                         "error": "Failed after max retries",
                     }
                 )
@@ -215,9 +367,31 @@ class SectionGenerator:
         position_note: str,
         supplemental_content: str,
         language_instruction: str,
+        target_seconds: int,
+        pdf_attached: bool,
+        page_range: Optional[Dict[str, int]],
+        total_pages: Optional[int],
     ) -> str:
         """Build a comprehensive prompt for sequential section generation."""
-        
+        target_words = max(120, int(target_seconds * 2.2))
+        min_words = int(target_words * 0.85)
+        max_words = int(target_words * 1.15)
+
+        page_note = ""
+        if pdf_attached:
+            total_note = f"{total_pages}" if total_pages is not None else "unknown"
+            if page_range:
+                page_note = (
+                    f"\nPDF NOTE:\n- The PDF for this section is ATTACHED.\n"
+                    f"- Use pages {page_range.get('start')}–{page_range.get('end')} (1-based, inclusive) "
+                    f"out of {total_note}.\n"
+                )
+            else:
+                page_note = (
+                    f"\nPDF NOTE:\n- The PDF for this section is ATTACHED.\n"
+                    f"- Page range is unspecified; use relevant pages. Total pages: {total_note}.\n"
+                )
+
         if section_idx == 0:
             # First section: Include full context
             return f"""You are an expert university professor creating a COMPREHENSIVE lecture video script.
@@ -229,12 +403,24 @@ CONTEXT & INSTRUCTIONS:
 - Explain the WHY, not just the WHAT
 - For definitions: motivation → intuition → formal statement → example
 - For theorems: importance → statement → proof strategy → steps → reinforcement  
-- Be thorough - no length limits for comprehensive mode
+- Be thorough and lecture-level in depth (like a university lecture, not a short explainer)
 - Make content engaging and educational
+- Treat CONTENT TO COVER and KEY POINTS as a non-skippable checklist
+- For worked examples: narrate EVERY step and include ALL intermediate values
+- If you reference a table or matrix, summarize key rows/columns in narration (do not read every value)
+- Avoid placeholder phrasing like "we fill the table" without specifying what the table contains
+- The outline is STRUCTURAL. Do not repeat it verbatim in narration.
+- Put full data and calculations ONLY in supporting_data (no truncation).
+- References to source artifacts (Figure/Table/Equation/Appendix) are allowed ONLY when narration immediately explains what viewers are seeing.
+- Never use deictic-only phrasing like "as shown in Figure X" without describing the contents in plain language.
+- Avoid document-dependent wording like "if you look at ...", "in the paper", or "from the paper".
+- The narration must sound complete and understandable on its own, even without the document.
+- Length target: ~{target_seconds} seconds (~{min_words}–{max_words} words). Stay close.
 
 LECTURE OUTLINE:
 {outline_text}
 
+{page_note}
 SOURCE MATERIAL:
 {initial_content_excerpt}
 
@@ -248,11 +434,25 @@ KEY POINTS: {json.dumps(section_outline.get('key_points', []))}
 
 {position_note}
 
+SUPPORTING DATA (CRITICAL — BE EXHAUSTIVE):
+- Include a "supporting_data" array for visuals.
+- Capture ALL useful data from this section, even if not narrated:
+  full tables (all rows/columns), matrices, formulas with parameters,
+  datasets, distributions, charts/axes data, constants, thresholds,
+  algorithm inputs/outputs, categorical breakdowns, and any percentages.
+- If a table appears, include the COMPLETE table data (no summarizing).
+- Do NOT narrate every table value; summarize key takeaways instead.
+- Prefer structured values (arrays/objects) so visuals can be generated accurately.
+- Each item must include: type, label, value, notes (notes can be empty).
+- If narration cites Figure/Table/Equation/Appendix, add a matching `referenced_content`
+  item with a label like "Figure 3" and value including `recreate_in_video: true`.
+
 OUTPUT: Valid JSON only, no markdown. Generate complete narration:
 {{"id": "{section_outline.get('id', f'section_{section_idx}')}",
 "title": "{section_outline.get('title', f'Part {section_idx + 1}')}",
 "narration": "Complete spoken narration for this section...",
-"tts_narration": "TTS-ready narration: spell out math symbols (e.g., 'theta' not 'θ', 'x squared' not 'x²') AND write letter names as phonetic transcriptions for correct TTS pronunciation in the target language (e.g., in French: 'igrec' instead of 'y', 'double-ve' instead of 'w')..."}}"""
+"tts_narration": "TTS-ready narration: spell out math symbols (e.g., 'theta' not 'θ', 'x squared' not 'x²') AND write letter names as phonetic transcriptions for correct TTS pronunciation in the target language (e.g., in French: 'igrec' instead of 'y', 'double-ve' instead of 'w')...",
+"supporting_data": [{{"type": "statistic", "label": "Example", "value": "42%", "notes": "Use in chart"}}]}}"""
         else:
             # Subsequent sections: Include previous context
             return f"""Continue generating the lecture video script.
@@ -264,6 +464,23 @@ LECTURE OUTLINE:
 PREVIOUS SECTIONS CONTEXT:
 {previous_context}
 
+SECTION REQUIREMENTS:
+- Treat CONTENT TO COVER and KEY POINTS as a non-skippable checklist.
+- For worked examples: narrate EVERY step and include ALL intermediate values.
+- If you reference a table or matrix, summarize key rows/columns in narration (do not read every value).
+- Avoid placeholder phrasing like "we fill the table" without specifying what the table contains.
+- The outline is STRUCTURAL. Do not repeat it verbatim in narration.
+- Put full data and calculations ONLY in supporting_data (no truncation).
+- References to source artifacts (Figure/Table/Equation/Appendix) are allowed ONLY when narration immediately explains what viewers are seeing.
+- Never use deictic-only phrasing like "as shown in Figure X" without describing the contents in plain language.
+- Avoid document-dependent wording like "if you look at ...", "in the paper", or "from the paper".
+- The narration must sound complete and understandable on its own, even without the document.
+
+DEPTH & LENGTH TARGETS:
+- Maintain university-lecture depth (full motivation, intuition, formalism, and careful explanation)
+- Aim for ~{target_seconds} seconds of narration (~{min_words}–{max_words} words)
+
+{page_note}
 ═══════════════════════════════════════════════════════════════════════════════
 REQUEST: Generate narration for SECTION {section_idx + 1}
 ═══════════════════════════════════════════════════════════════════════════════
@@ -274,11 +491,34 @@ KEY POINTS: {json.dumps(section_outline.get('key_points', []))}
 
 {position_note}{supplemental_content}
 
+SUPPORTING DATA (CRITICAL — BE EXHAUSTIVE):
+- Include a "supporting_data" array for visuals.
+- Capture ALL useful data from this section, even if not narrated:
+  full tables (all rows/columns), matrices, formulas with parameters,
+  datasets, distributions, charts/axes data, constants, thresholds,
+  algorithm inputs/outputs, categorical breakdowns, and any percentages.
+- If a table appears, include the COMPLETE table data (no summarizing).
+- Do NOT narrate every table value; summarize key takeaways instead.
+- Prefer structured values (arrays/objects) so visuals can be generated accurately.
+- Each item must include: type, label, value, notes (notes can be empty).
+- If narration cites Figure/Table/Equation/Appendix, add a matching `referenced_content`
+  item with a label like "Figure 3" and value including `recreate_in_video: true`.
+
 OUTPUT: Valid JSON only.
 {{"id": "{section_outline.get('id', f'section_{section_idx}')}",
 "title": "{section_outline.get('title', f'Part {section_idx + 1}')}",
 "narration": "Complete spoken narration...",
-"tts_narration": "TTS-ready: math symbols spelled out, letter names as phonetic transcriptions for correct pronunciation..."}}"""
+"tts_narration": "TTS-ready: math symbols spelled out, letter names as phonetic transcriptions for correct pronunciation...",
+"supporting_data": [{{"type": "statistic", "label": "Example", "value": "42%", "notes": "Use in chart"}}]}}"""
+
+    def _coerce_page(self, value: Any) -> Optional[int]:
+        try:
+            if value is None:
+                return None
+            page = int(value)
+            return page if page > 0 else None
+        except Exception:
+            return None
 
     def _build_compressed_previous_context(self, previous_sections: List[Dict[str, Any]]) -> str:
         if not previous_sections:
@@ -412,6 +652,7 @@ OUTPUT: Valid JSON only.
                 section["narration"] = narration
                 section["tts_narration"] = narration
 
+            section = self._ensure_reference_content(section)
             segments = self._split_narration_into_segments(narration)
             if not segments:
                 segments = [
@@ -541,9 +782,151 @@ OUTPUT: Valid JSON only.
                 section["narration"] = "Let's explore this concept..."
             if "tts_narration" not in section:
                 section["tts_narration"] = section["narration"]
+            if not section.get("supporting_data"):
+                section["supporting_data"] = []
+            script["sections"][i] = self._ensure_reference_content(section)
 
         script["total_duration_seconds"] = sum(s.get("duration_seconds", 0) for s in script.get("sections", []))
         return script
+
+    @classmethod
+    def _normalize_reference_kind(cls, raw_kind: str) -> str:
+        token = (raw_kind or "").strip().lower().rstrip(".")
+        if token.startswith("fig"):
+            return "Figure"
+        if token.startswith("eq"):
+            return "Equation"
+        if token == "table":
+            return "Table"
+        if token == "appendix":
+            return "Appendix"
+        return token.title()
+
+    @classmethod
+    def _reference_key_from_text(cls, text: Any) -> Optional[str]:
+        if text is None:
+            return None
+        raw = str(text).strip()
+        if not raw:
+            return None
+
+        normalized_key = raw.lower()
+        if ":" in normalized_key:
+            prefix, suffix = normalized_key.split(":", 1)
+            if prefix in {"figure", "table", "equation", "appendix"} and suffix:
+                return f"{prefix}:{suffix}"
+
+        match = cls._REFERENCE_PATTERN.search(raw)
+        if not match:
+            return None
+
+        kind = cls._normalize_reference_kind(match.group("kind")).lower()
+        ref_id = match.group("id").strip().lower()
+        return f"{kind}:{ref_id}"
+
+    @classmethod
+    def _extract_reference_mentions(cls, text: str) -> List[str]:
+        mentions: List[str] = []
+        seen: set[str] = set()
+        for match in cls._REFERENCE_PATTERN.finditer(text or ""):
+            kind = cls._normalize_reference_kind(match.group("kind"))
+            ref_id = match.group("id").strip()
+            label = f"{kind} {ref_id}"
+            key = cls._reference_key_from_text(label)
+            if key and key not in seen:
+                mentions.append(label)
+                seen.add(key)
+        return mentions
+
+    @classmethod
+    def _normalize_reference_label(cls, text: str) -> str:
+        match = cls._REFERENCE_PATTERN.search(text or "")
+        if not match:
+            return (text or "").strip()
+        return f"{cls._normalize_reference_kind(match.group('kind'))} {match.group('id').strip()}"
+
+    @classmethod
+    def _rewrite_deictic_reference_language(cls, text: str) -> tuple[str, int]:
+        updated = str(text or "")
+        rewrites = 0
+
+        for pattern in cls._DEICTIC_REFERENCE_PATTERNS:
+            def replace_ref(match: re.Match[str]) -> str:
+                nonlocal rewrites
+                rewrites += 1
+                normalized = cls._normalize_reference_label(match.group("ref"))
+                return f"{normalized} shows "
+
+            updated = pattern.sub(replace_ref, updated)
+
+        for pattern, replacement in (
+            (re.compile(r"\bin the paper\b", re.IGNORECASE), "in this explanation"),
+            (re.compile(r"\bfrom the paper\b", re.IGNORECASE), "from the source material"),
+        ):
+            updated, count = pattern.subn(replacement, updated)
+            rewrites += count
+
+        updated = re.sub(r"\s+", " ", updated).strip()
+        return updated, rewrites
+
+    @classmethod
+    def _ensure_reference_content(cls, section: Dict[str, Any]) -> Dict[str, Any]:
+        narration, narration_rewrites = cls._rewrite_deictic_reference_language(section.get("narration", ""))
+        tts_narration, tts_rewrites = cls._rewrite_deictic_reference_language(section.get("tts_narration", ""))
+        section["narration"] = narration
+        section["tts_narration"] = tts_narration
+        combined_text = f"{narration}\n{tts_narration}"
+        mentions = cls._extract_reference_mentions(combined_text)
+        if not mentions:
+            return section
+
+        supporting_data = section.get("supporting_data")
+        if not isinstance(supporting_data, list):
+            supporting_data = []
+
+        existing_keys: set[str] = set()
+        for item in supporting_data:
+            if not isinstance(item, dict):
+                continue
+            for candidate in (item.get("label"), item.get("type")):
+                key = cls._reference_key_from_text(candidate)
+                if key:
+                    existing_keys.add(key)
+            value = item.get("value")
+            if isinstance(value, dict):
+                for field in ("reference", "binding_key"):
+                    key = cls._reference_key_from_text(value.get(field))
+                    if key:
+                        existing_keys.add(key)
+
+        added = 0
+        for mention in mentions:
+            key = cls._reference_key_from_text(mention)
+            if not key or key in existing_keys:
+                continue
+            supporting_data.append(
+                {
+                    "type": "referenced_content",
+                    "label": mention,
+                    "value": {
+                        "reference": mention,
+                        "binding_key": key,
+                        "recreate_in_video": True,
+                    },
+                    "notes": "Referenced in narration; must be visualized explicitly.",
+                }
+            )
+            existing_keys.add(key)
+            added += 1
+
+        section["supporting_data"] = supporting_data
+        print(
+            f"[SectionGen] reference_mentions={len(mentions)} "
+            f"deictic_rewrites={narration_rewrites + tts_rewrites} "
+            f"synthetic_reference_items_added={added} "
+            f"supporting_data_count={len(supporting_data)}"
+        )
+        return section
 
     def _default_script(self) -> Dict[str, Any]:
         return {

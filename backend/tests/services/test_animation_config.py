@@ -4,18 +4,15 @@ Tests for pipeline/animation/config module
 Tests for animation pipeline configuration constants and settings.
 """
 
-import pytest
 from app.services.pipeline.animation.config import (
     # Generation settings
-    MAX_GENERATION_ITERATIONS,
-    GENERATION_TIMEOUT,
+    MAX_SURGICAL_FIX_ATTEMPTS,
     CORRECTION_TIMEOUT,
     TEMPERATURE_INCREMENT,
     BASE_GENERATION_TEMPERATURE,
     BASE_CORRECTION_TEMPERATURE,
     # Retry settings
     MAX_CLEAN_RETRIES,
-    MAX_CORRECTION_ATTEMPTS,
     # Rendering settings
     RENDER_TIMEOUT,
     QUALITY_DIR_MAP,
@@ -25,31 +22,32 @@ from app.services.pipeline.animation.config import (
     DURATION_PADDING_PERCENTAGE,
     CONSTRUCT_INDENT_SPACES,
     # Validation settings
-    ENABLE_SYNTAX_VALIDATION,
-    ENABLE_STRUCTURE_VALIDATION,
-    ENABLE_IMPORTS_VALIDATION,
-    ENABLE_SPATIAL_VALIDATION,
+    ENABLE_REFINEMENT_CYCLE,
+    ENABLE_VISION_QC,
+    VISION_QC_MAX_FRAMES_PER_CALL,
+    VISION_QC_FRAME_WIDTH,
+    VISION_QC_FRAME_TIME_ROUND,
+    VISION_QC_TEMPERATURE,
+    VISION_QC_TIMEOUT,
+    VISION_QC_MAX_OUTPUT_TOKENS,
+    VISION_QC_FRAME_DIR_NAME,
+    THEME_SETUP_CODES,
+    normalize_theme_style,
+    get_theme_prompt_info,
 )
 
 
 class TestGenerationSettings:
     """Test suite for generation settings"""
 
-    def test_max_generation_iterations_positive(self):
-        """Test MAX_GENERATION_ITERATIONS is positive"""
-        assert MAX_GENERATION_ITERATIONS > 0
-        assert isinstance(MAX_GENERATION_ITERATIONS, int)
-
-    def test_generation_timeout_reasonable(self):
-        """Test GENERATION_TIMEOUT is reasonable"""
-        assert GENERATION_TIMEOUT > 0
-        assert GENERATION_TIMEOUT <= 600  # Max 10 minutes
-        assert isinstance(GENERATION_TIMEOUT, int)
+    def test_max_surgical_fix_attempts_positive(self):
+        """Test MAX_SURGICAL_FIX_ATTEMPTS is positive"""
+        assert MAX_SURGICAL_FIX_ATTEMPTS > 0
+        assert isinstance(MAX_SURGICAL_FIX_ATTEMPTS, int)
 
     def test_correction_timeout_reasonable(self):
         """Test CORRECTION_TIMEOUT is reasonable"""
         assert CORRECTION_TIMEOUT > 0
-        assert CORRECTION_TIMEOUT < GENERATION_TIMEOUT
         assert isinstance(CORRECTION_TIMEOUT, int)
 
     def test_temperature_increment_valid(self):
@@ -77,11 +75,6 @@ class TestRetrySettings:
         """Test MAX_CLEAN_RETRIES is positive"""
         assert MAX_CLEAN_RETRIES > 0
         assert isinstance(MAX_CLEAN_RETRIES, int)
-
-    def test_max_correction_attempts_positive(self):
-        """Test MAX_CORRECTION_ATTEMPTS is positive"""
-        assert MAX_CORRECTION_ATTEMPTS > 0
-        assert isinstance(MAX_CORRECTION_ATTEMPTS, int)
 
 
 class TestRenderingSettings:
@@ -155,15 +148,26 @@ class TestValidationSettings:
 
     def test_validation_flags_are_boolean(self):
         """Test all validation flags are boolean"""
-        assert isinstance(ENABLE_SYNTAX_VALIDATION, bool)
-        assert isinstance(ENABLE_STRUCTURE_VALIDATION, bool)
-        assert isinstance(ENABLE_IMPORTS_VALIDATION, bool)
-        assert isinstance(ENABLE_SPATIAL_VALIDATION, bool)
+        assert isinstance(ENABLE_REFINEMENT_CYCLE, bool)
+        assert isinstance(ENABLE_VISION_QC, bool)
 
     def test_default_validations_enabled(self):
         """Test that default validations are enabled"""
         # At least syntax validation should always be on
-        assert ENABLE_SYNTAX_VALIDATION is True
+        assert ENABLE_REFINEMENT_CYCLE is True
+
+
+class TestVisionQcSettings:
+    """Test suite for vision QC settings"""
+
+    def test_vision_qc_settings_types(self):
+        assert isinstance(VISION_QC_MAX_FRAMES_PER_CALL, int)
+        assert isinstance(VISION_QC_FRAME_WIDTH, int)
+        assert isinstance(VISION_QC_FRAME_TIME_ROUND, float)
+        assert isinstance(VISION_QC_TEMPERATURE, float)
+        assert isinstance(VISION_QC_TIMEOUT, float)
+        assert isinstance(VISION_QC_MAX_OUTPUT_TOKENS, int)
+        assert isinstance(VISION_QC_FRAME_DIR_NAME, str)
 
 
 class TestConfigConsistency:
@@ -171,19 +175,37 @@ class TestConfigConsistency:
 
     def test_timeout_hierarchy(self):
         """Test timeout values make sense relative to each other"""
-        # Correction should be faster than generation
-        assert CORRECTION_TIMEOUT < GENERATION_TIMEOUT
-        # Render can be longer
-        assert RENDER_TIMEOUT >= GENERATION_TIMEOUT or True  # May vary
+        # Render can be longer than correction
+        assert RENDER_TIMEOUT >= CORRECTION_TIMEOUT or True  # May vary
 
     def test_iteration_vs_retries(self):
         """Test iteration settings are consistent"""
         # Total attempts should be reasonable
-        total_max_attempts = MAX_CLEAN_RETRIES * (MAX_GENERATION_ITERATIONS + MAX_CORRECTION_ATTEMPTS)
-        assert total_max_attempts < 50  # Prevent infinite loops
+        total_max_attempts = MAX_CLEAN_RETRIES * MAX_SURGICAL_FIX_ATTEMPTS
+        assert total_max_attempts < 20  # Prevent infinite loops
 
     def test_temperature_increases_bounded(self):
         """Test temperature increase stays bounded"""
-        # After max iterations, temperature should still be valid
-        max_temp = BASE_GENERATION_TEMPERATURE + (MAX_GENERATION_ITERATIONS * TEMPERATURE_INCREMENT)
+        # After max attempts, temperature should still be valid
+        max_temp = BASE_GENERATION_TEMPERATURE + (MAX_SURGICAL_FIX_ATTEMPTS * TEMPERATURE_INCREMENT)
         assert max_temp <= 2.0  # Max allowed temperature for most LLMs
+
+
+class TestThemeStyleNormalization:
+    def test_frontend_styles_are_supported(self):
+        for style in ["3b1b", "clean", "dracula", "solarized", "nord"]:
+            normalized = normalize_theme_style(style)
+            assert normalized in THEME_SETUP_CODES
+
+    def test_aliases_normalize_to_canonical(self):
+        assert normalize_theme_style("3blue1brown") == "3b1b"
+        assert normalize_theme_style("default") == "3b1b"
+        assert normalize_theme_style("light") == "clean"
+
+    def test_unknown_style_falls_back_to_default(self):
+        assert normalize_theme_style("unknown-style") == "3b1b"
+
+    def test_theme_prompt_info_includes_colors(self):
+        info = get_theme_prompt_info("clean")
+        assert "background=#FFFFFF" in info
+        assert "primary_text=#111111" in info

@@ -4,17 +4,15 @@ Tests for pipeline/animation/generation/code_helpers module
 Tests for code utilities including cleaning, normalization, and scene file creation.
 """
 
-import pytest
-from app.services.pipeline.animation.generation.code_helpers import (
+from app.services.pipeline.animation.generation.core.code_helpers import (
     clean_code,
-    normalize_indentation,
     strip_theme_code_from_content,
     create_scene_file,
     fix_translated_code,
     extract_scene_name,
-    remove_markdown_blocks,
     ensure_manim_structure,
 )
+from app.services.infrastructure.parsing.code_parser import normalize_indentation
 
 
 class TestCleanCode:
@@ -32,29 +30,27 @@ self.play(Create(circle))
         assert "circle" in result.lower()
 
     def test_removes_import_statements(self):
-        """Test that import statements are removed"""
+        """Imports are preserved; ensure content remains"""
         code = '''from manim import *
 import math
 
 circle = Circle()
 '''
         result = clean_code(code)
-        
-        assert "from manim" not in result
-        assert "import math" not in result
+        assert "from manim" in result
+        assert "import math" in result
         assert "circle" in result.lower()
 
     def test_removes_class_definition(self):
-        """Test that class definitions are removed"""
+        """Class definitions remain; ensure content is preserved"""
         code = '''class MyScene(Scene):
     def construct(self):
         circle = Circle()
         self.play(Create(circle))
 '''
         result = clean_code(code)
-        
-        assert "class MyScene" not in result
-        assert "def construct" not in result
+        assert "class MyScene" in result
+        assert "def construct" in result
         assert "circle" in result.lower()
 
     def test_preserves_code_content(self):
@@ -76,24 +72,25 @@ class TestNormalizeIndentation:
     def test_tabs_converted_to_spaces(self):
         """Test that tabs are converted to spaces"""
         code = "def test():\n\tprint('hello')"
-        result = normalize_indentation(code)
+        result = normalize_indentation(code, base_spaces=0)
         
         assert "\t" not in result
         assert "    " in result
 
     def test_consistent_4_space_indentation(self):
-        """Test that indentation uses 4-space increments"""
+        """Test that indentation preserves relative structure"""
         code = """def test():
   print("2 spaces")
 """
-        result = normalize_indentation(code)
+        result = normalize_indentation(code, base_spaces=0)
         
-        # Result should have clean 4-space indentation
+        # Infrastructure version preserves actual indentation structure
+        # Just verify it's normalized (no tabs, clean structure)
+        assert "\t" not in result
         lines = result.split("\n")
-        for line in lines:
-            if line.strip():
-                indent = len(line) - len(line.lstrip())
-                assert indent % 4 == 0, f"Line has {indent} spaces: {line}"
+        # First line should have no indent, second should have some indent
+        assert not lines[0].startswith(" ")
+        assert lines[1].startswith(" ")
 
     def test_empty_lines_preserved(self):
         """Test that empty lines are preserved"""
@@ -102,7 +99,7 @@ class TestNormalizeIndentation:
 
 def test2():
     pass"""
-        result = normalize_indentation(code)
+        result = normalize_indentation(code, base_spaces=0)
         
         assert "\n\n" in result
 
@@ -138,34 +135,33 @@ class TestCreateSceneFile:
     """Test suite for create_scene_file function"""
 
     def test_creates_valid_scene_structure(self):
-        """Test that created scene has valid structure"""
+        """Ensure scene file adds imports and padding"""
         code = "circle = Circle()\nself.play(Create(circle))"
         result = create_scene_file(code, "test_section", 10.0)
         
         assert "from manim import *" in result
-        assert "class Scene" in result
-        assert "def construct" in result
+        assert "self.play(Create(circle))" in result
 
     def test_includes_duration_comment(self):
-        """Test that target duration is included in comments"""
+        """Test that target duration does not force padding"""
         code = "circle = Circle()"
         result = create_scene_file(code, "test", 15.0)
         
-        assert "15.0" in result or "TARGET DURATION" in result
+        assert "self.wait" not in result
 
     def test_includes_padding_wait(self):
-        """Test that padding wait is added"""
+        """Test that padding wait is not automatically added"""
         code = "circle = Circle()"
         result = create_scene_file(code, "test", 10.0)
         
-        assert "DURATION PADDING" in result or "self.wait" in result
+        assert "self.wait" not in result
 
     def test_class_name_from_section_id(self):
-        """Test that class name is derived from section_id"""
+        """Class naming is no longer injected; ensure code returned."""
         code = "pass"
         result = create_scene_file(code, "intro_section", 5.0)
         
-        assert "SceneIntroSection" in result
+        assert "pass" in result
 
 
 class TestFixTranslatedCode:
@@ -243,35 +239,6 @@ class MyTestScene(Scene):
         assert result == "Scene123"
 
 
-class TestRemoveMarkdownBlocks:
-    """Test suite for remove_markdown_blocks function"""
-
-    def test_removes_opening_fence(self):
-        """Test removing opening markdown fence"""
-        code = '''```python
-print("hello")
-```'''
-        result = remove_markdown_blocks(code)
-        
-        assert not result.strip().startswith("```")
-        assert "print" in result
-
-    def test_removes_closing_fence(self):
-        """Test removing closing markdown fence"""
-        code = '''```
-code here
-```'''
-        result = remove_markdown_blocks(code)
-        
-        assert not result.strip().endswith("```")
-        assert "code here" in result
-
-    def test_code_without_fences_unchanged(self):
-        """Test that code without fences is unchanged"""
-        code = "print('hello')"
-        result = remove_markdown_blocks(code)
-        
-        assert result == code
 
 
 class TestEnsureManimStructure:

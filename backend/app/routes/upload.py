@@ -24,9 +24,6 @@ router = APIRouter(tags=["upload"])
 
 # Security configuration
 MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", 50 * 1024 * 1024))  # 50MB default
-CHUNK_SIZE = 1024 * 1024
-
-
 @router.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """
@@ -48,42 +45,15 @@ async def upload_file(file: UploadFile = File(...)):
                 "sanitized": file.filename
             })
 
-        # Security: Check file size by reading in chunks
-        size = 0
-        chunks = []
-        while True:
-            chunk = await file.read(CHUNK_SIZE)
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > MAX_UPLOAD_SIZE:
-                logger.warning("File too large", extra={
-                    "size": size,
-                    "max_size": MAX_UPLOAD_SIZE,
-                    "upload_filename": file.filename
-                })
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large. Maximum size: {MAX_UPLOAD_SIZE / (1024*1024):.0f}MB"
-                )
-            chunks.append(chunk)
-
-        # Reconstruct file content
-        content = b''.join(chunks)
-
-        # Reset file for use case
-        import io
-        file.file = io.BytesIO(content)
-        file.file.seek(0)
-
         logger.info("File upload initiated", extra={
             "upload_filename": file.filename,
-            "size": size,
             "content_type": file.content_type
         })
 
         use_case = FileUploadUseCase()
-        response = await use_case.execute(FileUploadRequest(file=file))
+        response = await use_case.execute(
+            FileUploadRequest(file=file, max_size_bytes=MAX_UPLOAD_SIZE)
+        )
 
         logger.info("File upload completed", extra={
             "file_id": response.file_id,

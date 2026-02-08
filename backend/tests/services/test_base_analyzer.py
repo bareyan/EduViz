@@ -4,7 +4,6 @@ Tests for pipeline/content_analysis/base module
 Tests for the BaseAnalyzer class patterns and functionality.
 """
 
-import pytest
 
 
 class TestBaseAnalyzerImport:
@@ -84,7 +83,6 @@ class TestRepresentativeSampleLogic:
 
     def test_sample_division_logic(self):
         """Test logic for dividing content into intro/middle/end"""
-        total_chars = 10000
         max_chars = 1000
         
         # Typical division: 40% intro, 20% middle, 40% end

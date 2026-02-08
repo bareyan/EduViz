@@ -2,13 +2,18 @@
 Outline builder for script generation (Phase 1)
 """
 
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List, Tuple
+
+from app.core import get_logger
+from app.services.infrastructure.parsing.json_parser import is_likely_truncated_json
+from .schema_filter import filter_outline
 
 from .base import BaseScriptGenerator
 
 
 class OutlineBuilder:
     """Generates detailed pedagogical outlines for scripts."""
+    MAX_OUTLINE_ATTEMPTS = 3
 
     LANGUAGE_NAMES = {
         "en": "English",
@@ -22,11 +27,13 @@ class OutlineBuilder:
         "ko": "Korean",
         "ar": "Arabic",
         "ru": "Russian",
+        "ua": "Ukrainian",
         "hy": "Armenian",
     }
 
     def __init__(self, base: BaseScriptGenerator):
         self.base = base
+        self.logger = get_logger(__name__, component="outline_builder")
 
     async def build_outline(
         self,
@@ -37,6 +44,8 @@ class OutlineBuilder:
         content_focus: str,
         document_context: str = "auto",
         video_mode: str = "comprehensive",
+        pdf_path: Optional[str] = None,
+        total_pages: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Generate a detailed outline (Phase 1)."""
 
@@ -51,15 +60,21 @@ class OutlineBuilder:
         focus_instructions = self._build_focus_instructions(content_focus)
         context_instructions = self._build_context_instructions(document_context)
 
+        prompt_content = content
+        if pdf_path and not prompt_content:
+            prompt_content = "PDF attached. Use the document directly."
+
         phase1_prompt = self._build_prompt(
             topic=topic,
-            content=content,
+            content=prompt_content,
             suggested_duration=suggested_duration,
             language_instruction=language_instruction,
             focus_instructions=focus_instructions,
             context_instructions=context_instructions,
             language_name=language_name,
             video_mode=video_mode,
+            total_pages=total_pages,
+            pdf_attached=bool(pdf_path),
         )
 
         # Define response schema for structured JSON output
@@ -69,13 +84,6 @@ class OutlineBuilder:
                 "document_analysis": {
                     "type": "object",
                     "properties": {
-                        "content_type": {"type": "string"},
-                        "content_context": {"type": "string"},
-                        "total_theorems": {"type": "integer"},
-                        "total_proofs": {"type": "integer"},
-                        "total_definitions": {"type": "integer"},
-                        "total_examples": {"type": "integer"},
-                        "complexity_level": {"type": "string"},
                         "gaps_to_fill": {"type": "array", "items": {"type": "string"}}
                     }
                 },
@@ -83,8 +91,6 @@ class OutlineBuilder:
                 "subject_area": {"type": "string"},
                 "overview": {"type": "string"},
                 "learning_objectives": {"type": "array", "items": {"type": "string"}},
-                "prerequisites": {"type": "array", "items": {"type": "string"}},
-                "total_duration_minutes": {"type": "integer"},
                 "sections_outline": {
                     "type": "array",
                     "items": {
@@ -94,47 +100,137 @@ class OutlineBuilder:
                             "title": {"type": "string"},
                             "section_type": {"type": "string"},
                             "content_to_cover": {"type": "string"},
-                            "depth_elements": {
-                                "type": "object",
-                                "properties": {
-                                    "motivation": {"type": "string"},
-                                    "intuition": {"type": "string"},
-                                    "connections": {"type": "string"}
-                                }
-                            },
                             "key_points": {"type": "array", "items": {"type": "string"}},
                             "visual_type": {"type": "string"},
-                            "estimated_duration_seconds": {"type": "integer"}
+                            "estimated_duration_seconds": {"type": "integer"},
+                            "page_start": {"type": "integer"},
+                            "page_end": {"type": "integer"},
                         },
-                        "required": ["id", "title", "section_type", "content_to_cover", "key_points", "visual_type", "estimated_duration_seconds"]
+                        "required": [
+                            "id",
+                            "title",
+                            "section_type",
+                            "content_to_cover",
+                            "key_points",
+                            "visual_type",
+                            "estimated_duration_seconds",
+                        ]
                     }
                 }
             },
             "required": ["title", "subject_area", "overview", "learning_objectives", "sections_outline"]
         }
 
-        try:
-            # Create config with structured JSON output
-            from app.services.infrastructure.llm import PromptConfig
-            config = PromptConfig(
-                temperature=0.7,
-                max_output_tokens=4096,
-                timeout=300,
-                response_format="json"
-            )
+        # Create config with structured JSON output
+        from app.services.infrastructure.llm import PromptConfig
+        config = PromptConfig(
+            temperature=0.7,
+            max_output_tokens=32768,
+            timeout=300,
+            response_format="json"
+        )
 
-            response_text = await self.base.generate_with_engine(
-                prompt=phase1_prompt,
-                config=config,
-                response_schema=response_schema
-            )
-            outline = self.base.parse_json(response_text)
-            if not outline:
-                outline = self._fallback_outline(topic)
-        except Exception:
-            outline = self._fallback_outline(topic)
+        strict_suffix = (
+            "\n\nSTRICT JSON ONLY:\n"
+            "- Return ONLY valid JSON\n"
+            "- Do NOT wrap in markdown\n"
+            "- Include all required keys\n"
+            "- No trailing commas\n"
+        )
 
-        return outline
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.MAX_OUTLINE_ATTEMPTS + 1):
+            prompt = phase1_prompt if attempt == 1 else f"{phase1_prompt}{strict_suffix}"
+            contents = None
+            if pdf_path:
+                pdf_part = self.base.build_pdf_part(pdf_path)
+                if pdf_part:
+                    contents = self.base.build_prompt_contents(prompt, pdf_part)
+
+            try:
+                self.logger.info(
+                    "Outline generation attempt",
+                    extra={
+                        "attempt": attempt,
+                        "max_attempts": self.MAX_OUTLINE_ATTEMPTS,
+                        "pdf_attached": bool(pdf_path),
+                    },
+                )
+
+                response_text = await self.base.generate_with_engine(
+                    prompt=prompt,
+                    config=config,
+                    response_schema=response_schema,
+                    contents=contents,
+                )
+
+                if not response_text:
+                    self.logger.error(
+                        "Outline generation returned empty response",
+                        extra={"attempt": attempt},
+                    )
+                    continue
+
+                outline = self.base.parse_json(response_text)
+                outline = filter_outline(outline)
+                is_valid, issues = self._validate_outline(outline)
+
+                if not is_valid:
+                    self.logger.error(
+                        "Outline parsing/validation failed",
+                        extra={
+                            "attempt": attempt,
+                            "issues": issues,
+                            "response_len": len(response_text),
+                            "truncated_json": is_likely_truncated_json(response_text),
+                            "response_preview": response_text[:2000],
+                        },
+                    )
+                    continue
+
+                self.logger.info(
+                    "Outline generated successfully",
+                    extra={
+                        "attempt": attempt,
+                        "sections_count": len(outline.get("sections_outline", [])),
+                    },
+                )
+                return outline
+            except Exception as exc:
+                last_error = exc
+                self.logger.exception(
+                    "Outline generation attempt raised exception",
+                    extra={"attempt": attempt},
+                )
+
+        error_msg = (
+            f"Outline generation failed after {self.MAX_OUTLINE_ATTEMPTS} attempts"
+        )
+        if last_error:
+            error_msg = f"{error_msg}: {last_error}"
+        raise RuntimeError(error_msg)
+
+    def _validate_outline(self, outline: Dict[str, Any]) -> Tuple[bool, List[str]]:
+        """Basic validation for required outline fields."""
+        issues: List[str] = []
+        if not isinstance(outline, dict) or not outline:
+            return False, ["outline_missing_or_empty"]
+
+        required_keys = [
+            "title",
+            "subject_area",
+            "overview",
+            "learning_objectives",
+            "sections_outline",
+        ]
+        missing = [key for key in required_keys if key not in outline]
+        if missing:
+            issues.append(f"missing_keys:{','.join(missing)}")
+
+        sections = outline.get("sections_outline")
+        if not isinstance(sections, list) or not sections:
+            issues.append("sections_outline_missing_or_empty")
+        return len(issues) == 0, issues
 
     def _build_focus_instructions(self, content_focus: str) -> str:
         if content_focus == "practice":
@@ -168,7 +264,9 @@ CONTENT FOCUS: FOLLOW DOCUMENT STRUCTURE
 
     def _build_context_instructions(self, document_context: str) -> str:
         """Build context instructions based on document_context setting."""
-        if document_context == "standalone":
+        context = (document_context or "auto").strip().lower()
+
+        if context == "standalone":
             return (
                 """
 DOCUMENT CONTEXT: STANDALONE
@@ -177,7 +275,7 @@ DOCUMENT CONTEXT: STANDALONE
 - Don't assume viewers have seen related content
 """
             )
-        if document_context == "part-of-series":
+        if context in {"part-of-series", "series"}:
             return (
                 """
 DOCUMENT CONTEXT: PART OF A SERIES
@@ -205,7 +303,19 @@ DOCUMENT CONTEXT: AUTO-DETECT
         context_instructions: str,
         language_name: str,
         video_mode: str,
+        total_pages: Optional[int],
+        pdf_attached: bool,
     ) -> str:
+        page_note = f"{total_pages}" if total_pages is not None else "unknown"
+        pdf_note = ""
+        if pdf_attached:
+            pdf_note = (
+                "\nPDF NOTE:\n"
+                "- The source PDF is ATTACHED. Use it directly.\n"
+                "- For EACH section, include page_start and page_end (1-based, inclusive).\n"
+                f"- Total pages: {page_note}\n"
+            )
+
         return f"""You are an expert university professor planning a COMPREHENSIVE lecture video that provides DEEP UNDERSTANDING.
 
 Your goal is NOT just to cover the material, but to help viewers truly UNDERSTAND it at a profound level.
@@ -213,6 +323,11 @@ Create a DETAILED PEDAGOGICAL OUTLINE that ensures:
 1. COMPLETE coverage of ALL source material
 2. DEEP understanding through motivation, intuition, and context
 3. SUPPLEMENTARY explanations that go BEYOND the source when needed{language_instruction}
+
+SOURCE-FIRST PRIORITY:
+- Cover EVERY detail from the source material before adding supplementary explanations.
+- Do not skip steps or omit intermediate values in worked examples.
+- Avoid placeholder phrasing like "we fill the table" unless the table is explicitly specified.
 
 {focus_instructions}
 
@@ -240,6 +355,8 @@ For EXAMPLES:
 • Progress to COMPLEX applications
 • Show EDGE CASES when relevant
 • Connect back to theory
+• Break worked examples into FINE-GRAINED steps (one step per section if needed)
+• Specify ALL intermediate values, tables, matrices, and calculations that must be shown
 
 ADD SUPPLEMENTARY CONTENT when it aids understanding:
 • Historical context or motivation (if helpful)
@@ -253,10 +370,10 @@ TOPIC: {topic.get('title', 'Educational Content')}
 DESCRIPTION: {topic.get('description', '')}
 SUBJECT AREA: {topic.get('subject_area', 'general')}
 VIDEO MODE: {video_mode.upper()}
-TARGET DURATION: {suggested_duration}+ minutes (take as long as needed for deep understanding)
 OUTPUT LANGUAGE: {language_name}
 ═══════════════════════════════════════════════════════════════════════════════
 
+{pdf_note}
 SOURCE MATERIAL (analyze ALL of this - nothing should be omitted):
 {content[:60000]}
 
@@ -270,14 +387,32 @@ Create an outline with sections for:
 - Connections and context (how concepts relate to each other)
 - Conclusion (big picture, recap, what comes next)
 
-IMPORTANT: If the source material is terse or assumes background knowledge, 
+OUTLINE LENGTH TARGET (COMPREHENSIVE): 10–20 sections total.
+- Sections should be substantial and lecture-like (avoid tiny fragments).
+- Introduction should be slightly longer and hook-driven (3Blue1Brown style): open with a visual/puzzle or surprising question.
+- Do NOT use greetings or agenda listing (no "Hello everyone, today we'll cover...").
+
+SECTION DURATION GUIDANCE (COMPREHENSIVE):
+- Introduction: ~180–240 seconds
+- Middle sections: ~150–210 seconds (2.5–3.5 minutes)
+- Conclusion: ~120–180 seconds
+
+IMPORTANT: If the source material is terse or assumes background knowledge,
 ADD explanatory sections to fill gaps and provide context.
+
+DETAIL LEVEL REQUIREMENTS:
+- This outline is STRUCTURAL, not exhaustive.
+- Do NOT include full derivations, full tables, datasets, or long explanations here.
+- Full data and calculations will be generated in the SECTION stage.
+- Prefer more, smaller sections over broad summaries.
+- Each section should focus on a single concept or a single step in a worked example.
+- If a table, matrix, or dataset is referenced, outline where its full values will appear.
 
 Respond with ONLY valid JSON:
 {{
     "document_analysis": {{
         "content_type": "[theoretical|practical|factual|problem-solving|mixed]",
-        "content_context": "[standalone|part-of-series]",
+        "content_context": "[standalone|series]",
         "total_theorems": [count],
         "total_proofs": [count],
         "total_definitions": [count],
@@ -290,7 +425,7 @@ Respond with ONLY valid JSON:
     "overview": "[2-3 sentence hook describing what viewers will learn and WHY it matters]",
     "learning_objectives": ["What viewers will understand", "What they will be able to do"],
     "prerequisites": ["Concepts viewers should know beforehand"],
-    "total_duration_minutes": [realistic estimate - comprehensive videos can be 30-60+ min],
+    "total_duration_minutes": [optional estimate, if helpful],
     "sections_outline": [
         {{
             "id": "[unique_id like 'intro', 'motivation_1', 'def_1', 'intuition_1', 'thm_1', 'proof_1', 'example_1']",
@@ -304,7 +439,9 @@ Respond with ONLY valid JSON:
             }},
             "key_points": ["Point 1", "Point 2", "Point 3", "Point 4"],
             "visual_type": "[animated|static|mixed|diagram|graph]",
-            "estimated_duration_seconds": [60-300]
+            "estimated_duration_seconds": [integer],
+            "page_start": [1-based start page],
+            "page_end": [1-based end page]
         }}
     ]
 }}"""

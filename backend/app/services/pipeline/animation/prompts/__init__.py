@@ -1,0 +1,78 @@
+from .system import (
+    IMPLEMENTER_SYSTEM,
+    FIXER_SYSTEM,
+    CHOREOGRAPHER_SYSTEM,
+    VERIFIER_SYSTEM
+)
+from .user import (
+    CHOREOGRAPHY_USER,
+    CHOREOGRAPHY_COMPACT_USER,
+    CHOREOGRAPHY_OBJECTS_USER,
+    CHOREOGRAPHY_SEGMENTS_USER,
+    FULL_IMPLEMENTATION_USER,
+    SURGICAL_FIX_USER,
+    SURGICAL_FIX_FOLLOWUP
+)
+from .schemas import (
+    CHOREOGRAPHY_SCHEMA,
+    CODE_EDIT_SCHEMA,
+    VISION_QC_SCHEMA
+)
+from .visual_qc_prompts import (
+    VISION_QC_USER,
+)
+from .library import (
+    COMMON_MISTAKES,
+    AVAILABLE_RATE_FUNCS,
+    VALID_COLORS,
+    VALID_ANIMATIONS,
+    DIRECTION_CONSTANTS
+)
+from .fixer_prompts import (
+    INITIAL_RETRY_NOTE,
+    RETRY_FAILURE_NOTE,
+    CODE_CONTEXT_NOTE,
+    CODE_TRUNCATION_NOTE
+)
+
+def get_compact_patterns() -> str:
+    """Return a compact, ordered bundle of Manim rules and constraints."""
+    return "\n\n".join(
+        block.strip()
+        for block in (
+            COMMON_MISTAKES,
+            VALID_COLORS,
+            VALID_ANIMATIONS,
+            AVAILABLE_RATE_FUNCS,
+            DIRECTION_CONSTANTS,
+        )
+        if block
+    ).strip()
+
+__all__ = [
+    "IMPLEMENTER_SYSTEM",
+    "FIXER_SYSTEM",
+    "CHOREOGRAPHER_SYSTEM",
+    "VERIFIER_SYSTEM",
+    "CHOREOGRAPHY_USER",
+    "CHOREOGRAPHY_COMPACT_USER",
+    "CHOREOGRAPHY_OBJECTS_USER",
+    "CHOREOGRAPHY_SEGMENTS_USER",
+    "CHOREOGRAPHY_SCHEMA",
+    "CODE_EDIT_SCHEMA",
+    "VISION_QC_SCHEMA",
+    "FULL_IMPLEMENTATION_USER",
+    "SURGICAL_FIX_USER",
+    "SURGICAL_FIX_FOLLOWUP",
+    "COMMON_MISTAKES",
+    "AVAILABLE_RATE_FUNCS",
+    "VALID_COLORS",
+    "VALID_ANIMATIONS",
+    "DIRECTION_CONSTANTS",
+    "INITIAL_RETRY_NOTE",
+    "RETRY_FAILURE_NOTE",
+    "CODE_CONTEXT_NOTE",
+    "CODE_TRUNCATION_NOTE",
+    "VISION_QC_USER",
+    "get_compact_patterns",
+]

@@ -43,6 +43,9 @@ pip install -r requirements.txt
 # Copy environment template
 cp .env.example .env
 
+# Optional: review advanced knobs
+# cp .env.advanced.example .env.advanced
+
 # Edit .env with your settings (see above)
 nano .env
 
@@ -54,6 +57,8 @@ python -m uvicorn app.main:app --reload
 
 - Full setup guide: [docs/VERTEX_AI_SETUP.md](../docs/VERTEX_AI_SETUP.md)
 - Model configuration: [app/config/models.py](app/config/models.py)
+- Environment strategy: [ENVIRONMENT.md](ENVIRONMENT.md)
+- Advanced env knobs: [.env.advanced.example](.env.advanced.example)
 
 ## Switching Backends
 

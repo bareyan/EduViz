@@ -10,7 +10,7 @@ from pathlib import Path
 from dataclasses import dataclass
 
 from ..animation.generation import ManimGenerator
-from ..audio import TTSEngine
+from ..audio import TTSEngine, AnyTTSEngine
 from .sections import (
     clean_narration_for_tts,
     process_single_subsection,
@@ -31,7 +31,7 @@ class SectionResult:
     duration: float
     title: str
     manim_code_path: Optional[str] = None
-    manim_code: Optional[str] = None
+    choreography_plan_path: Optional[str] = None
     error: Optional[str] = None
 
     def is_successful(self) -> bool:
@@ -57,7 +57,7 @@ class SectionOrchestrator:
     def __init__(
         self,
         manim_generator: ManimGenerator,
-        tts_engine: TTSEngine,
+        tts_engine: "AnyTTSEngine",
         progress_tracker: ProgressTracker,
         max_concurrent: int = 3
     ):
@@ -87,7 +87,8 @@ class SectionOrchestrator:
         voice: str,
         style: str,
         language: str,
-        resume: bool = False
+        resume: bool = False,
+        job_id: Optional[str] = None
     ) -> List[SectionResult]:
         """
         Process all sections in parallel with controlled concurrency
@@ -141,7 +142,8 @@ class SectionOrchestrator:
                         language=language,
                         resume=resume,
                         completed_count=completed_count,
-                        total_sections=total_sections
+                        total_sections=total_sections,
+                        job_id=job_id
                     )
 
             # Create tasks for all sections
@@ -198,7 +200,8 @@ class SectionOrchestrator:
         language: str,
         resume: bool,
         completed_count: List[int],
-        total_sections: int
+        total_sections: int,
+        job_id: Optional[str] = None
     ) -> SectionResult:
         """
         Process a single section (internal method)
@@ -289,8 +292,9 @@ class SectionOrchestrator:
                 if subsection_results.get("manim_code_path"):
                     result.manim_code_path = subsection_results["manim_code_path"]
                     section["manim_code_path"] = subsection_results["manim_code_path"]
-                if subsection_results.get("manim_code"):
-                    result.manim_code = subsection_results["manim_code"]
+                if subsection_results.get("choreography_plan_path"):
+                    result.choreography_plan_path = subsection_results["choreography_plan_path"]
+                    section["choreography_plan_path"] = subsection_results["choreography_plan_path"]
 
             else:
                 # Multi-segment processing
@@ -317,8 +321,9 @@ class SectionOrchestrator:
                 if segment_result.get("manim_code_path"):
                     result.manim_code_path = segment_result["manim_code_path"]
                     section["manim_code_path"] = segment_result["manim_code_path"]
-                if segment_result.get("manim_code"):
-                    result.manim_code = segment_result["manim_code"]
+                if segment_result.get("choreography_plan_path"):
+                    result.choreography_plan_path = segment_result["choreography_plan_path"]
+                    section["choreography_plan_path"] = segment_result["choreography_plan_path"]
 
             # Mark as complete and report progress
             self.progress_tracker.mark_section_complete(section_index)
@@ -422,6 +427,8 @@ class SectionOrchestrator:
                 sections[i]["manim_code_path"] = result.manim_code_path
                 if "manim_code" in sections[i]:
                     del sections[i]["manim_code"]
+            if result.choreography_plan_path and i < len(sections):
+                sections[i]["choreography_plan_path"] = result.choreography_plan_path
 
             # Build chapter metadata (only for sections with video)
             if result.video_path:

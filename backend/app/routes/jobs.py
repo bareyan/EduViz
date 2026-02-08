@@ -8,7 +8,10 @@ Extracted helper functions handle complex logic like building section progress
 to keep routes focused on HTTP handling.
 """
 
+import os
 import shutil
+import json
+from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
@@ -21,6 +24,9 @@ from ..core import (
     get_script_metadata,
     validate_job_id,
     validate_path_within_directory,
+    job_intermediate_artifacts_available,
+    job_is_final_only,
+    assert_runtime_tools_available,
 )
 from .jobs_helpers import (
     get_stage_from_status,
@@ -29,6 +35,40 @@ from .jobs_helpers import (
 )
 
 router = APIRouter(tags=["jobs"])
+
+
+def _load_visual_script(section: dict, section_dir: "Path") -> str:
+    """
+    Resolve visual script text for section details.
+
+    Priority:
+    1) section.visual_description from script.json
+    2) choreography_plan.json persisted in section directory
+    """
+    visual_description = str(section.get("visual_description", "") or "").strip()
+    if visual_description:
+        return visual_description
+
+    candidates = []
+    if section.get("choreography_plan_path"):
+        candidates.append(Path(str(section.get("choreography_plan_path"))).resolve())
+    candidates.append((section_dir / "choreography_plan.json").resolve())
+
+    for candidate in candidates:
+        try:
+            if not validate_path_within_directory(candidate, OUTPUT_DIR):
+                continue
+            if not candidate.exists() or not candidate.is_file():
+                continue
+            with open(candidate, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if isinstance(payload, (dict, list)):
+                return json.dumps(payload, ensure_ascii=False, indent=2)
+            return str(payload)
+        except Exception:
+            continue
+
+    return ""
 
 
 @router.get("/job/{job_id}", response_model=JobResponse)
@@ -68,7 +108,7 @@ async def get_video(video_id: str):
     if not validate_job_id(video_id):
         raise HTTPException(status_code=400, detail="Invalid video ID format")
 
-    video_path = (OUTPUT_DIR / f"{video_id}.mp4").resolve()
+    video_path = (OUTPUT_DIR / video_id / "final_video.mp4").resolve()
     if not validate_path_within_directory(video_path, OUTPUT_DIR):
         raise HTTPException(status_code=403, detail="Access denied")
 
@@ -107,32 +147,33 @@ async def get_section_video(job_id: str, section_index: int):
     raise HTTPException(status_code=404, detail="Section video not found")
 
 
-@router.get("/job/{job_id}/section/{section_index}/visual_script")
-async def get_section_visual_script(job_id: str, section_index: int):
-    """Get section visual script (markdown)"""
-    if not validate_job_id(job_id):
-        raise HTTPException(status_code=400, detail="Invalid job ID format")
-
-    section_dir = OUTPUT_DIR / job_id / "sections" / str(section_index)
-    if not validate_path_within_directory(section_dir, OUTPUT_DIR):
-        raise HTTPException(status_code=403, detail="Access denied")
-    script_path = section_dir / f"visual_script_{section_index}.md"
-    
-    if script_path.exists():
-        return {"visual_script": script_path.read_text()}
-    
-    raise HTTPException(status_code=404, detail="Visual script not found")
-
-
 @router.get("/voices")
 async def get_available_voices(language: str = "en"):
-    """Get list of available TTS voices"""
-
+    """Get list of available TTS voices based on configured TTS engine"""
+    from ..core.voice_catalog import (
+        get_gemini_tts_voices_for_language,
+        get_gemini_tts_available_languages,
+        get_gemini_tts_default_voice
+    )
+    
+    tts_engine = os.getenv("TTS_ENGINE", "edge").lower().strip()
+    
+    if tts_engine == "gemini":
+        return {
+            "voices": get_gemini_tts_voices_for_language(language),
+            "languages": get_gemini_tts_available_languages(),
+            "current_language": language,
+            "default_voice": get_gemini_tts_default_voice(language),
+            "engine": "gemini"
+        }
+    
+    # Default: Edge TTS
     return {
         "voices": TTSEngine.get_voices_for_language(language),
         "languages": TTSEngine.get_available_languages(),
         "current_language": language,
-        "default_voice": TTSEngine.get_default_voice_for_language(language)
+        "default_voice": TTSEngine.get_default_voice_for_language(language),
+        "engine": "edge"
     }
 
 
@@ -338,17 +379,8 @@ async def get_section_details(job_id: str, section_index: int):
     # Get full narration
     narration = section.get("tts_narration") or section.get("narration", "")
 
-    # Get visual description from script OR from visual script file
-    visual_description = section.get("visual_description", "")
-
-    # Try to read the visual script file (markdown format)
-    visual_script_file = section_dir / f"visual_script_{section_index}.md"
-    if visual_script_file.exists():
-        try:
-            with open(visual_script_file, "r") as f:
-                visual_description = f.read()
-        except Exception as e:
-            print(f"Error reading visual script: {e}")
+    # Get visual script from script metadata or persisted choreography plan
+    visual_description = _load_visual_script(section, section_dir)
 
     # Get narration segments if available
     narration_segments = section.get("narration_segments", [])
@@ -393,12 +425,33 @@ async def get_section_details(job_id: str, section_index: int):
 @router.post("/job/{job_id}/compile-high-quality")
 async def compile_high_quality(job_id: str, request: HighQualityCompileRequest):
     """Recompile the video in high quality"""
-    from ..services.job_manager import get_job_manager, JobStatus
+    assert_runtime_tools_available(("manim", "ffmpeg"), context="high-quality recompilation")
+
+    import asyncio
+    from ..services.infrastructure.orchestration import get_job_manager, JobStatus
+    from ..services.pipeline.animation import ManimGenerator
+    from ..services.pipeline.animation.generation.core import render_scene, extract_scene_name
+    from ..services.pipeline.assembly.ffmpeg import concatenate_videos
 
     repo = FileBasedJobRepository()
     job = repo.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+
+    if job_is_final_only(job_id):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This job was cleaned to final-video-only retention. "
+                "High-quality recompilation requires script and section artifacts."
+            ),
+        )
+
+    if not job_intermediate_artifacts_available(job_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Required script/section artifacts are missing for high-quality recompilation",
+        )
 
     # Check if script exists
     try:
@@ -417,8 +470,6 @@ async def compile_high_quality(job_id: str, request: HighQualityCompileRequest):
 
     async def recompile_high_quality():
         try:
-            from ..services.manim_generator import ManimGenerator
-
             job_manager.update_job(hq_job_id, JobStatus.CREATING_ANIMATIONS, 0, f"Recompiling in {request.quality} quality...")
 
             manim_generator = ManimGenerator()
@@ -445,6 +496,8 @@ async def compile_high_quality(job_id: str, request: HighQualityCompileRequest):
                 # Find the code file
                 code_files = list(section_dir.glob("scene_*.py"))
                 if not code_files:
+                    code_files = list(section_dir.glob("*.py"))
+                if not code_files:
                     print(f"[HighQuality] No code file found for section {idx}, skipping")
                     continue
 
@@ -457,15 +510,16 @@ async def compile_high_quality(job_id: str, request: HighQualityCompileRequest):
                 shutil.copy(code_file, hq_code_file)
 
                 # Render with high quality
-                from ..services.manim_generator.renderer import render_scene
-
-                scene_name = f"Section{section_id.title().replace('_', '')}"
+                with open(hq_code_file, "r", encoding="utf-8", errors="ignore") as f:
+                    code_content = f.read()
+                scene_name = extract_scene_name(code_content) or f"Section{section_id.title().replace('_', '')}"
                 output_video = await render_scene(
                     manim_generator,
                     hq_code_file,
                     scene_name,
                     str(hq_section_dir),
                     idx,
+                    file_manager=manim_generator.file_manager,
                     section=section,
                     quality=request.quality
                 )
@@ -479,8 +533,6 @@ async def compile_high_quality(job_id: str, request: HighQualityCompileRequest):
             # Combine videos
             if section_videos:
                 job_manager.update_job(hq_job_id, JobStatus.COMPOSING_VIDEO, 90, "Combining sections...")
-
-                from ..services.video_generator.ffmpeg import concatenate_videos
                 final_video_path = hq_output_dir / "final_video.mp4"
 
                 await concatenate_videos(section_videos, str(final_video_path))
@@ -504,8 +556,6 @@ async def compile_high_quality(job_id: str, request: HighQualityCompileRequest):
             traceback.print_exc()
             job_manager.update_job(hq_job_id, JobStatus.FAILED, 0, f"Error: {str(e)}")
 
-    # Import BackgroundTasks properly and run the task
-    import asyncio
     asyncio.create_task(recompile_high_quality())
 
     return {

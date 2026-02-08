@@ -1,5 +1,4 @@
 
-import pytest
 from pathlib import Path
 from app.core.files import find_file_by_id, ensure_directory, get_file_extension
 

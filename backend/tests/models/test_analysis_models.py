@@ -1,5 +1,4 @@
 
-import pytest
 from app.models.analysis import AnalysisRequest, AnalysisResult, TopicSuggestion
 
 def test_analysis_request():

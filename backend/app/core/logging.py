@@ -11,10 +11,14 @@ Provides consistent logging across the entire application with:
 import logging
 import sys
 import json
+import os
 from typing import Any, Dict, Optional
-from datetime import datetime
+from datetime import datetime, UTC
 from contextvars import ContextVar
 from pathlib import Path
+from logging.handlers import RotatingFileHandler
+
+SENSITIVE_KEY_TOKENS = ("password", "secret", "token", "api_key", "apikey", "authorization")
 
 # Context variable for request correlation
 request_id_var: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
@@ -26,10 +30,10 @@ class StructuredFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         log_data: Dict[str, Any] = {
-            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "timestamp": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": _sanitize_for_logging("message", record.getMessage()),
             "module": record.module,
             "function": record.funcName,
             "line": record.lineno,
@@ -102,9 +106,36 @@ class StructuredFormatter(logging.Formatter):
                 extra[key] = value
 
         if extra:
-            log_data["extra"] = extra
+            log_data["extra"] = _sanitize_for_logging("extra", extra)
 
         return json.dumps(log_data)
+
+
+def _is_sensitive_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(token in lowered for token in SENSITIVE_KEY_TOKENS)
+
+
+def _sanitize_for_logging(key: str, value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: Dict[str, Any] = {}
+        for child_key, child_value in value.items():
+            if _is_sensitive_key(str(child_key)):
+                sanitized[child_key] = "***REDACTED***"
+            else:
+                sanitized[child_key] = _sanitize_for_logging(str(child_key), child_value)
+        return sanitized
+
+    if isinstance(value, list):
+        return [_sanitize_for_logging(key, item) for item in value]
+
+    if isinstance(value, tuple):
+        return tuple(_sanitize_for_logging(key, item) for item in value)
+
+    if isinstance(value, str) and _is_sensitive_key(key):
+        return "***REDACTED***"
+
+    return value
 
 
 class DevelopmentFormatter(logging.Formatter):
@@ -181,7 +212,8 @@ class LoggerAdapter(logging.LoggerAdapter):
 def setup_logging(
     level: str = "INFO",
     log_file: Optional[Path] = None,
-    use_json: bool = False
+    use_json: bool = False,
+    pipeline_log_file: Optional[Path] = None
 ) -> None:
     """
     Configure application logging
@@ -190,6 +222,7 @@ def setup_logging(
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
         log_file: Optional file path for logging to file
         use_json: If True, use structured JSON logging; otherwise human-readable
+        pipeline_log_file: Optional file path for a separate pipeline log file
     """
     # Convert level string to logging constant
     numeric_level = getattr(logging, level.upper(), logging.INFO)
@@ -214,12 +247,33 @@ def setup_logging(
     root_logger.addHandler(console_handler)
 
     # File handler (if specified)
+    log_max_bytes = int(os.getenv("LOG_MAX_BYTES", str(20 * 1024 * 1024)))
+    log_backup_count = int(os.getenv("LOG_BACKUP_COUNT", "5"))
+
     if log_file:
         log_file.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file)
+        file_handler = RotatingFileHandler(
+            log_file,
+            maxBytes=log_max_bytes,
+            backupCount=log_backup_count,
+            encoding="utf-8",
+        )
         file_handler.setLevel(numeric_level)
         file_handler.setFormatter(StructuredFormatter())  # Always use JSON for file logs
         root_logger.addHandler(file_handler)
+
+    # Separate pipeline log handler (if specified)
+    if pipeline_log_file:
+        pipeline_log_file.parent.mkdir(parents=True, exist_ok=True)
+        pipeline_handler = RotatingFileHandler(
+            pipeline_log_file,
+            maxBytes=log_max_bytes,
+            backupCount=log_backup_count,
+            encoding="utf-8",
+        )
+        pipeline_handler.setLevel(numeric_level)
+        pipeline_handler.setFormatter(StructuredFormatter())
+        root_logger.addHandler(pipeline_handler)
 
     # Suppress noisy third-party loggers
     logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -278,7 +332,7 @@ class LogTimer:
         self.logger.log(self.level, f"Starting: {self.operation}")
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+    def __exit__(self, exc_type, exc_val, _exc_tb) -> None:
         duration = datetime.now().timestamp() - self.start_time
 
         if exc_type:

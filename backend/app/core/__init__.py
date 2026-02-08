@@ -64,12 +64,36 @@ from .validation import (
     validate_upload_path,
     validate_job_path,
     find_uploaded_file,
+    job_intermediate_artifacts_available,
+    job_is_final_only,
+)
+
+# Runtime guards
+from .runtime import (
+    REQUIRED_RENDER_TOOLS,
+    parse_bool_env,
+    missing_runtime_tools,
+    assert_runtime_tools_available,
+    assert_directory_writable,
+    run_startup_runtime_checks,
 )
 
 # Constants
 from .constants import (
     LANGUAGE_NAMES,
     get_language_name,
+)
+
+# Voice catalog
+from .voice_catalog import (
+    TTS_VOICES_BY_LANGUAGE,
+    TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE,
+    get_tts_available_languages,
+    get_tts_available_voices_flat,
+    get_tts_default_voice_for_language,
+    get_tts_voices_for_language,
+    get_translation_default_voice,
+    get_translation_languages,
 )
 
 __all__ = [
@@ -105,8 +129,26 @@ __all__ = [
     "validate_upload_path",
     "validate_job_path",
     "find_uploaded_file",
+    "job_intermediate_artifacts_available",
+    "job_is_final_only",
+    # Runtime guards
+    "REQUIRED_RENDER_TOOLS",
+    "parse_bool_env",
+    "missing_runtime_tools",
+    "assert_runtime_tools_available",
+    "assert_directory_writable",
+    "run_startup_runtime_checks",
     # Constants
     "LANGUAGE_NAMES",
     "get_language_name",
+    # Voice catalog
+    "TTS_VOICES_BY_LANGUAGE",
+    "TRANSLATION_DEFAULT_VOICE_BY_LANGUAGE",
+    "get_tts_available_languages",
+    "get_tts_available_voices_flat",
+    "get_tts_default_voice_for_language",
+    "get_tts_voices_for_language",
+    "get_translation_default_voice",
+    "get_translation_languages",
 ]
 

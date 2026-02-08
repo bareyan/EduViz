@@ -9,7 +9,167 @@ This module provides common utilities for:
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Dict, Any, List, Optional
+
+
+@dataclass(frozen=True)
+class JsonParseResult:
+    value: Optional[Any]
+    error: Optional[str]
+    truncated: bool
+
+
+def looks_truncated_json(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return True
+    if stripped.endswith("..."):
+        return True
+    # Remove string contents before counting braces to avoid false positives.
+    no_strings = re.sub(r'"(?:\\.|[^"\\])*"', '""', stripped)
+    if no_strings.count("{") != no_strings.count("}"):
+        return True
+    if no_strings.count("[") != no_strings.count("]"):
+        return True
+    if stripped[-1] not in ("}", "]"):
+        return True
+    return False
+
+
+def parse_json_strict(text: str) -> JsonParseResult:
+    """Parse JSON strictly without fallback heuristics.
+    
+    Returns JsonParseResult with error metadata when parsing fails.
+    """
+    if not text or not text.strip():
+        return JsonParseResult(value=None, error="empty_response", truncated=True)
+
+    cleaned = remove_markdown_wrappers(text)
+
+    try:
+        value = json.loads(cleaned)
+        return JsonParseResult(value=value, error=None, truncated=False)
+    except json.JSONDecodeError as e:
+        truncated = looks_truncated_json(cleaned)
+        return JsonParseResult(value=None, error=f"json_decode_error: {e.msg}", truncated=truncated)
+
+
+def extract_largest_balanced_json(text: str, expect_array: bool = False) -> Optional[str]:
+    """Extract the largest balanced JSON object/array from text.
+
+    Scans for balanced braces/brackets while respecting string literals and escapes.
+
+    Args:
+        text: Source text potentially containing JSON.
+        expect_array: If True, only return a JSON array (starts with '[').
+
+    Returns:
+        The largest balanced JSON substring, or None if not found.
+    """
+    if not text:
+        return None
+
+    in_string = False
+    string_char = ""
+    escape = False
+    stack: List[str] = []
+    start_idx: Optional[int] = None
+    best: Optional[str] = None
+
+    for i, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == string_char:
+                in_string = False
+            continue
+
+        if ch in ("\"", "'"):
+            in_string = True
+            string_char = ch
+            continue
+
+        if ch in "{[":
+            if not stack:
+                start_idx = i
+            stack.append(ch)
+            continue
+
+        if ch in "}]":
+            if not stack:
+                continue
+            open_ch = stack[-1]
+            if (open_ch == "{" and ch == "}") or (open_ch == "[" and ch == "]"):
+                stack.pop()
+                if not stack and start_idx is not None:
+                    candidate = text[start_idx:i + 1]
+                    if expect_array and candidate.lstrip().startswith("{"):
+                        start_idx = None
+                        continue
+                    if best is None or len(candidate) > len(best):
+                        best = candidate
+                    start_idx = None
+            else:
+                # Mismatched closing; reset state.
+                stack.clear()
+                start_idx = None
+
+    if best and expect_array and not best.lstrip().startswith("["):
+        return None
+    return best
+
+
+def is_likely_truncated_json(text: str) -> bool:
+    """Heuristic check for truncated JSON payloads.
+
+    Detects unterminated strings or unbalanced braces/brackets while
+    respecting escape sequences. Useful for distinguishing partial
+    responses from other invalid JSON errors.
+    """
+    if not text:
+        return False
+
+    in_string = False
+    string_char = ""
+    escape = False
+    stack: List[str] = []
+
+    for ch in text:
+        if in_string:
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == string_char:
+                in_string = False
+            continue
+
+        if ch in ("\"", "'"):
+            in_string = True
+            string_char = ch
+            continue
+
+        if ch in "{[":
+            stack.append(ch)
+            continue
+        if ch in "}]":
+            if not stack:
+                continue
+            open_ch = stack[-1]
+            if (open_ch == "{" and ch == "}") or (open_ch == "[" and ch == "]"):
+                stack.pop()
+            else:
+                # Mismatched closure; treat as invalid but not necessarily truncation.
+                return False
+
+    return bool(stack) or in_string
 
 
 # ============================================================================
@@ -61,6 +221,59 @@ def fix_json_escapes(text: str) -> str:
     return text
 
 
+def repair_json_payload(text: str) -> Optional[str]:
+    """Attempt to repair malformed JSON payloads from LLM responses.
+
+    Strategy:
+    - Strip markdown fences while preserving content.
+    - Extract the largest balanced JSON object.
+    - If parsing fails, attempt to fix escape sequences.
+    - If fix-schema JSON appears to contain a code block, convert it to
+      full_code_lines with empty edits.
+
+    Returns:
+        A repaired JSON string or None if repair fails.
+    """
+    if not text:
+        return None
+
+    normalized = text.strip()
+    if normalized.startswith("```"):
+        lines = normalized.split("\n")
+        lines = [l for l in lines if not l.strip().startswith("```")]
+        normalized = "\n".join(lines).strip()
+
+    candidate = extract_largest_balanced_json(normalized, expect_array=False)
+    if not candidate:
+        return None
+
+    try:
+        json.loads(candidate)
+        return candidate
+    except json.JSONDecodeError:
+        pass
+
+    try:
+        fixed = fix_json_escapes(candidate)
+        json.loads(fixed)
+        return fixed
+    except json.JSONDecodeError:
+        pass
+
+    has_fix_keys = (
+        "\"edits\"" in candidate
+        or "\"full_code\"" in candidate
+        or "\"full_code_lines\"" in candidate
+    )
+    code_block = re.search(r"```(?:python|py)?\n([\s\S]*?)```", text)
+    if has_fix_keys and code_block:
+        code_lines = [line.rstrip("\n") for line in code_block.group(1).splitlines()]
+        payload = {"edits": [], "full_code_lines": code_lines}
+        return json.dumps(payload)
+
+    return None
+
+
 def parse_json_response(text: str, default: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Parse JSON from LLM response with comprehensive error recovery.
     
@@ -98,6 +311,14 @@ def parse_json_response(text: str, default: Optional[Dict[str, Any]] = None) -> 
     try:
         fixed_text = fix_json_escapes(text)
         return json.loads(fixed_text)
+    except json.JSONDecodeError:
+        pass
+
+    # Try balanced JSON extraction (brace matching)
+    try:
+        candidate = extract_largest_balanced_json(text, expect_array=False)
+        if candidate:
+            return json.loads(candidate)
     except json.JSONDecodeError:
         pass
 
@@ -157,6 +378,16 @@ def parse_json_array_response(text: str, default: Optional[List[Dict[str, Any]]]
     except json.JSONDecodeError:
         pass
 
+    # Try balanced JSON extraction (brace matching)
+    try:
+        candidate = extract_largest_balanced_json(text, expect_array=True)
+        if candidate:
+            result = json.loads(candidate)
+            if isinstance(result, list):
+                return result
+    except json.JSONDecodeError:
+        pass
+
     # Last resort: extract array
     try:
         match = re.search(r'\[[\s\S]*\]', text)
@@ -174,59 +405,27 @@ def parse_json_array_response(text: str, default: Optional[List[Dict[str, Any]]]
 # Code Parsing and Validation Utilities
 # ============================================================================
 
-def extract_markdown_code_blocks(text: str, language: str = "python") -> List[str]:
-    """Extract code blocks from markdown text.
-    
-    Args:
-        text: Text containing markdown code blocks
-        language: Programming language to extract (e.g., "python", "json")
-        
-    Returns:
-        List of code block contents
-    """
-    blocks = []
-
-    # Pattern for fenced code blocks with optional language
-    pattern = rf'```{language}\n(.*)```'
-    matches = re.findall(pattern, text, re.DOTALL)
-    blocks.extend(matches)
-
-    return blocks
-
+# Forward compatible imports - deprecated, import from code_parser instead
+from .code_parser import (
+    extract_markdown_code_blocks as _extract_markdown_code_blocks_impl,
+    remove_markdown_wrappers as _remove_markdown_wrappers_impl,
+    validate_python_syntax as _validate_python_syntax_impl
+)
 
 def remove_markdown_wrappers(text: str) -> str:
-    """Remove markdown code fence wrappers from text.
-    
-    Args:
-        text: Text potentially wrapped in ```...```
-        
-    Returns:
-        Unwrapped text
-    """
-    if text.startswith("```"):
-        lines = text.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        text = "\n".join(lines)
+    """Delegate to code_parser implementation."""
+    return _remove_markdown_wrappers_impl(text)
 
-    return text.strip()
+
+def extract_markdown_code_blocks(text: str, language: str = "python") -> List[str]:
+    """Delegate to code_parser implementation."""
+    return _extract_markdown_code_blocks_impl(text, language=language)
 
 
 def validate_python_syntax(code: str) -> Optional[str]:
-    """Validate Python code syntax.
-    
-    Args:
-        code: Python code to validate
-        
-    Returns:
-        Error message if invalid, None if valid
-    """
-    try:
-        compile(code, '<string>', 'exec')
-        return None
-    except SyntaxError as e:
-        return f"SyntaxError at line {e.lineno}: {e.msg}"
-    except Exception as e:
-        return f"{type(e).__name__}: {str(e)}"
+    """Delegate to code_parser implementation."""
+    return _validate_python_syntax_impl(code)
+
 
 
 # ============================================================================

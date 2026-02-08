@@ -6,7 +6,6 @@ Note: These tests document current behavior, including potential limitations.
 """
 
 import json
-import pytest
 from app.services.infrastructure.parsing.json_parser import (
     fix_json_escapes,
     parse_json_response,
@@ -162,7 +161,7 @@ class TestPythonValidation:
         """Test invalid code."""
         error = validate_python_syntax("if True\n  pass")
         assert error is not None
-        assert "SyntaxError" in error
+        assert "syntax error" in error.lower()
 
     def test_validate_python_syntax_exception(self):
         """Test something that might raise a non-SyntaxError (though compile usually raises SyntaxError)."""

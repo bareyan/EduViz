@@ -110,200 +110,69 @@ class PipelineModels:
         description="Efficient content translation"
     ))
 
-    # Step 4.5: Visual Script Generation
-    # Generate detailed visual script (storyboard)
-    visual_script_generation: ModelConfig = field(default_factory=lambda: ModelConfig(
+    # Step 5: Animation Pipeline (New)
+    # Stage 5.1: Choreography Planning
+    animation_choreography: ModelConfig = field(default_factory=lambda: ModelConfig(
         model_name="gemini-3-flash-preview",
         thinking_level=ThinkingLevel.HIGH,
-        description="Generate visual descriptions and layout"
+        description="Plan visual movements and timing"
     ))
 
-    # Step 5: Manim Code Generation
-    # Generate Manim animation code from script
-    manim_generation: ModelConfig = field(default_factory=lambda: ModelConfig(
+    # Stage 5.2: Manim Code Implementation
+    animation_implementation: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-3-flash-preview",
+        thinking_level=ThinkingLevel.HIGH,
+        description="Convert plan to Manim code"
+    ))
+
+    # Stage 5.3: Animation Refinement (Checks & Fixes)
+    animation_refinement: ModelConfig = field(default_factory=lambda: ModelConfig(
         model_name="gemini-3-flash-preview",
         thinking_level=ThinkingLevel.MEDIUM,
-        description="Generate Manim animation code",
-        max_correction_attempts=5  # Increased: diff-based corrections are cheap
+        description="Refine code and fix errors"
     ))
 
-    # Step 6a: Code Correction (Primary - Diff-based)
-    # Fix errors using SEARCH/REPLACE blocks - needs good format compliance
-    code_correction: ModelConfig = field(default_factory=lambda: ModelConfig(
-        model_name="gemini-2.5-flash",  # Better format compliance than flash-lite
+    # Step 7: Visual QC (Post-render review)
+    visual_qc: ModelConfig = field(default_factory=lambda: ModelConfig(
+        model_name="gemini-2.5-flash",
         thinking_level=None,
-        description="Diff-based code error correction"
-    ))
-
-    # Step 6b: Code Correction (Strong Fallback)
-    # Fix errors when primary correction fails - final attempts
-    code_correction_strong: ModelConfig = field(default_factory=lambda: ModelConfig(
-        model_name="gemini-2.5-flash",  # Same model, used on retries
-        thinking_level=ThinkingLevel.MEDIUM,  # Enable thinking for complex fixes
-        description="Stronger model for complex code fixes"
-    ))
-
-    # Step 7: Manual Code Fix
-    # User-requested code improvements via API
-    manual_code_fix: ModelConfig = field(default_factory=lambda: ModelConfig(
-        model_name="gemini-3-flash-preview",
-        thinking_level=ThinkingLevel.LOW,
-        description="Interactive code fixing"
+        description="Visual quality inspection for rendered frames"
     ))
 
 
-# Default pipeline configuration
+# Built-in pipeline configurations.
+# Keep "default" as the stable baseline and add named variants here when needed.
 DEFAULT_PIPELINE_MODELS = PipelineModels()
-
-
-# Alternative configurations for different use cases
-
-# High Quality - Use stronger models with more thinking
-HIGH_QUALITY_PIPELINE = PipelineModels(
-    analysis=ModelConfig(
-        model_name="gemini-2.5-flash",
-        thinking_level=None,
-        description="Higher quality analysis"
-    ),
-    script_generation=ModelConfig(
-        model_name="gemini-3-pro-preview",
-        thinking_level=ThinkingLevel.HIGH,
-        description="Deep reasoning for script generation"
-    ),
-    language_detection=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        thinking_level=None,
-        description="Quick language detection"
-    ),
-    translation=ModelConfig(
-        model_name="gemini-2.5-flash",
-        thinking_level=None,
-        description="Higher quality translation"
-    ),
-    visual_script_generation=ModelConfig(
-        model_name="gemini-3-pro-preview",
-        thinking_level=ThinkingLevel.MEDIUM,
-        description="Detailed visual script generation"
-    ),
-    manim_generation=ModelConfig(
-        model_name="gemini-3-pro-preview",
-        thinking_level=ThinkingLevel.MEDIUM,
-        description="High quality Manim generation",
-        max_correction_attempts=3
-    ),
-    code_correction=ModelConfig(
-        model_name="gemini-2.5-flash",
-        thinking_level=None,
-        description="Fast code correction"
-    ),
-    code_correction_strong=ModelConfig(
-        model_name="gemini-3-pro-preview",
-        thinking_level=ThinkingLevel.HIGH,
-        description="Deep reasoning for complex fixes"
-    ),
-    manual_code_fix=ModelConfig(
-        model_name="gemini-3-pro-preview",
-        thinking_level=ThinkingLevel.MEDIUM,
-        description="High quality code fixes"
-    ),
-)
-
-
-# Cost Optimized - Use cheapest models everywhere
-COST_OPTIMIZED_PIPELINE = PipelineModels(
-    analysis=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Budget analysis"
-    ),
-    script_generation=ModelConfig(
-        model_name="gemini-3-flash-preview",
-        thinking_level=ThinkingLevel.LOW,
-        description="Cost-effective script generation"
-    ),
-    language_detection=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Quick language detection"
-    ),
-    translation=ModelConfig(
-        model_name="gemini-flash-lite-latest",
-        description="Budget translation"
-    ),
-    visual_script_generation=ModelConfig(
-        model_name="gemini-2.0-flash",
-        description="Budget visual script generation",
-    ),
-    manim_generation=ModelConfig(
-        model_name="gemini-2.0-flash",
-        description="Budget Manim generation",
-        max_correction_attempts=3
-    ),
-    code_correction=ModelConfig(
-        model_name="gemini-2.0-flash",
-        max_correction_attempts=3,
-        description="Budget code correction"
-    ),
-    code_correction_strong=ModelConfig(
-        model_name="gemini-2.0-flash",
-        description="Fallback code correction"
-    ),
-    manual_code_fix=ModelConfig(
-        model_name="gemini-2.5-flash",
-        description="Budget code fixes"
-    ),
-)
-
-
-# Current active configuration
-# Change this to switch between configurations
-ACTIVE_PIPELINE = COST_OPTIMIZED_PIPELINE
-
-# Available pipeline configurations
-# - default: Balanced quality and cost
-# - high_quality: Best quality, higher cost
-# - cost_optimized: Budget-friendly, use for overview mode or when cost matters
-AVAILABLE_PIPELINES = {
+PIPELINE_REGISTRY: dict[str, PipelineModels] = {
     "default": DEFAULT_PIPELINE_MODELS,
-    "high_quality": HIGH_QUALITY_PIPELINE,
-    "cost_optimized": COST_OPTIMIZED_PIPELINE,
 }
 
 
-def set_active_pipeline(pipeline_name: str) -> None:
-    """
-    Set the active pipeline configuration.
-    
-    Args:
-        pipeline_name: Name of pipeline configuration ('default', 'high_quality', 'cost_optimized')
-    """
-    global ACTIVE_PIPELINE
-    if pipeline_name not in AVAILABLE_PIPELINES:
-        raise ValueError(f"Unknown pipeline: {pipeline_name}. Available: {list(AVAILABLE_PIPELINES.keys())}")
-    ACTIVE_PIPELINE = AVAILABLE_PIPELINES[pipeline_name]
-
-
-def get_active_pipeline_name() -> str:
-    """Get the name of the currently active pipeline"""
-    for name, pipeline in AVAILABLE_PIPELINES.items():
-        if ACTIVE_PIPELINE is pipeline:
-            return name
-    return "custom"
-
-
-def get_model_config(step: str, pipeline: Optional[str] = None) -> ModelConfig:
+def get_model_config(step: str) -> ModelConfig:
     """
     Get the model configuration for a specific pipeline step.
     
     Args:
         step: Pipeline step name (e.g., 'analysis', 'script_generation')
-        pipeline: Optional pipeline name to use instead of active pipeline
         
     Returns:
         ModelConfig for the specified step
     """
-    target_pipeline = AVAILABLE_PIPELINES.get(pipeline, ACTIVE_PIPELINE) if pipeline else ACTIVE_PIPELINE
-    if hasattr(target_pipeline, step):
-        return getattr(target_pipeline, step)
+    if hasattr(DEFAULT_PIPELINE_MODELS, step):
+        return getattr(DEFAULT_PIPELINE_MODELS, step)
     raise ValueError(f"Unknown pipeline step: {step}")
+
+
+def get_pipeline_models(pipeline_name: str = "default") -> PipelineModels:
+    """Get pipeline configuration by name."""
+    if pipeline_name in PIPELINE_REGISTRY:
+        return PIPELINE_REGISTRY[pipeline_name]
+    raise ValueError(f"Unknown pipeline: {pipeline_name}")
+
+
+def list_available_pipelines() -> dict[str, PipelineModels]:
+    """Return available pipeline configurations."""
+    return dict(PIPELINE_REGISTRY)
 
 
 def get_thinking_config(model_config: ModelConfig):
@@ -328,10 +197,8 @@ def list_pipeline_steps() -> list[str]:
         "script_generation",
         "language_detection",
         "translation",
-        "visual_script_generation",
-        "manim_generation",
-        "code_correction",
-        "code_correction_strong",
+        "animation_choreography",
+        "animation_implementation",
+        "animation_refinement",
         "visual_qc",
-        "manual_code_fix",
     ]

@@ -2,6 +2,8 @@ FROM python:3.11-slim
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
+    build-essential \
+    pkg-config \
     ffmpeg \
     texlive-full \
     libcairo2-dev \
@@ -20,8 +22,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create directories
-RUN mkdir -p uploads outputs job_data
+# Create runtime directories
+RUN mkdir -p uploads outputs job_data logs
 
 # Expose port
 EXPOSE 8000

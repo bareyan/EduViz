@@ -3,7 +3,6 @@ Tests for app.services.use_cases.generation_use_case
 """
 
 import pytest
-import uuid
 from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import HTTPException, BackgroundTasks
 from app.services.use_cases.generation_use_case import GenerationUseCase
@@ -16,21 +15,31 @@ class TestGenerationUseCase:
 
     @pytest.fixture
     def use_case(self):
-        with patch("app.services.use_cases.generation_use_case.get_job_manager") as mock_get_mgr:
+        with patch("app.services.use_cases.generation_use_case.get_job_manager") as mock_get_mgr, \
+             patch("app.services.use_cases.generation_use_case.FileBasedAnalysisRepository") as mock_analysis_repo_cls:
             self.job_manager = MagicMock()
             mock_get_mgr.return_value = self.job_manager
+            self.analysis_repo = mock_analysis_repo_cls.return_value
+            self.analysis_repo.get.return_value = {
+                "analysis_id": "anal-1",
+                "file_id": "file-1",
+                "summary": "summary",
+                "subject_area": "math",
+                "suggested_topics": [
+                    {"index": 0, "title": "Topic A", "description": "A", "estimated_duration": 120},
+                    {"index": 1, "title": "Topic B", "description": "B", "estimated_duration": 60},
+                ],
+            }
             return GenerationUseCase()
 
     def test_validate_pipeline_success(self, use_case):
-        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["p1", "default"]):
-            assert use_case._validate_pipeline("p1") == "p1"
-            assert use_case._validate_pipeline(None) == "default"
+        assert use_case._validate_pipeline("default") == "default"
+        assert use_case._validate_pipeline(None) == "default"
 
-    def test_validate_pipeline_failure(self, use_case):
-        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["default"]):
-            with pytest.raises(HTTPException) as exc:
-                use_case._validate_pipeline("unknown")
-            assert exc.value.status_code == 400
+    def test_validate_pipeline_invalid(self, use_case):
+        with pytest.raises(HTTPException) as exc:
+            use_case._validate_pipeline("unknown")
+        assert exc.value.status_code == 400
 
     def test_select_job_new(self, use_case):
         job_id, resume = use_case._select_job(None)
@@ -52,12 +61,11 @@ class TestGenerationUseCase:
             file_id="file-1", 
             pipeline="default", 
             analysis_id="anal-1", 
-            selected_topics=[]
+            selected_topics=[0]
         )
         background_tasks = MagicMock(spec=BackgroundTasks)
         
-        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["default"]), \
-             patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
              patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
             
             response = use_case.start_generation(request, background_tasks)
@@ -68,6 +76,50 @@ class TestGenerationUseCase:
             # Verify VideoGenerator was instantiated
             mock_vg_class.assert_called_once()
 
+    def test_start_generation_resume_without_file_when_script_exists(self, use_case):
+        existing_id = "job-123"
+        self.job_manager.get_job.return_value = MagicMock(id=existing_id)
+
+        request = GenerationRequest(
+            file_id="missing-file",
+            pipeline="default",
+            analysis_id="anal-1",
+            selected_topics=[0],
+            resume_job_id=existing_id,
+        )
+        background_tasks = MagicMock(spec=BackgroundTasks)
+
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", side_effect=HTTPException(status_code=404, detail="missing")), \
+             patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
+            mock_vg_class.return_value.check_existing_progress.return_value = {"has_script": True}
+
+            response = use_case.start_generation(request, background_tasks)
+
+            assert response.status == "resuming"
+            background_tasks.add_task.assert_called_once()
+
+    def test_start_generation_resume_without_file_and_script_raises(self, use_case):
+        existing_id = "job-456"
+        self.job_manager.get_job.return_value = MagicMock(id=existing_id)
+
+        request = GenerationRequest(
+            file_id="missing-file",
+            pipeline="default",
+            analysis_id="anal-1",
+            selected_topics=[0],
+            resume_job_id=existing_id,
+        )
+        background_tasks = MagicMock(spec=BackgroundTasks)
+
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", side_effect=HTTPException(status_code=404, detail="missing")), \
+             patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
+            mock_vg_class.return_value.check_existing_progress.return_value = {"has_script": False}
+
+            with pytest.raises(HTTPException) as exc:
+                use_case.start_generation(request, background_tasks)
+
+            assert exc.value.status_code == 400
+
     @pytest.mark.asyncio
     async def test_run_generation_execution_success(self, use_case):
         """Test the actual execution of the background task (success case)."""
@@ -75,13 +127,12 @@ class TestGenerationUseCase:
             file_id="file-1", 
             pipeline="default", 
             analysis_id="anal-1", 
-            selected_topics=[]
+            selected_topics=[0]
         )
         background_tasks = BackgroundTasks()
         
         # Setup mocks
-        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["default"]), \
-             patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
              patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
             
             mock_vg = mock_vg_class.return_value
@@ -118,18 +169,48 @@ class TestGenerationUseCase:
             )
 
     @pytest.mark.asyncio
+    async def test_run_generation_passes_focus_and_context(self, use_case):
+        request = GenerationRequest(
+            file_id="file-1",
+            pipeline="default",
+            analysis_id="anal-1",
+            selected_topics=[0],
+            content_focus="practice",
+            document_context="series",
+        )
+        background_tasks = BackgroundTasks()
+
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+             patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
+            mock_vg = mock_vg_class.return_value
+            mock_vg.generate_video = AsyncMock(return_value={"status": "failed", "error": "x"})
+
+            use_case.start_generation(request, background_tasks)
+            task_func = background_tasks.tasks[0].func
+            await task_func()
+
+            kwargs = mock_vg.generate_video.await_args.kwargs
+            assert kwargs["content_focus"] == "practice"
+            assert kwargs["document_context"] == "series"
+
+    @pytest.mark.asyncio
     async def test_run_generation_execution_failure(self, use_case):
         """Test the actual execution of the background task (failure case)."""
         request = GenerationRequest(
             file_id="file-1", 
             pipeline="default",
             analysis_id="dummy-analysis",
-            selected_topics=[]
+            selected_topics=[0]
         )
+        self.analysis_repo.get.return_value = {
+            "analysis_id": "dummy-analysis",
+            "file_id": "file-1",
+            "summary": "summary",
+            "suggested_topics": [{"index": 0, "title": "Topic A", "description": "A", "estimated_duration": 120}],
+        }
         background_tasks = BackgroundTasks()
         
-        with patch("app.services.use_cases.generation_use_case.AVAILABLE_PIPELINES", ["default"]), \
-             patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
              patch("app.services.use_cases.generation_use_case.VideoGenerator") as mock_vg_class:
             
             mock_vg = mock_vg_class.return_value
@@ -191,3 +272,23 @@ class TestGenerationUseCase:
             assert info.can_resume is True
             assert info.completed_sections == 2
             assert info.total_sections == 5
+
+    def test_start_generation_requires_analysis_match(self, use_case):
+        request = GenerationRequest(
+            file_id="file-1",
+            pipeline="default",
+            analysis_id="anal-1",
+            selected_topics=[0],
+        )
+        background_tasks = MagicMock(spec=BackgroundTasks)
+        self.analysis_repo.get.return_value = {
+            "analysis_id": "anal-1",
+            "file_id": "another-file",
+            "suggested_topics": [{"index": 0, "title": "Topic A"}],
+        }
+
+        with patch("app.services.use_cases.generation_use_case.find_uploaded_file", return_value="/path/file.pdf"), \
+             patch("app.services.use_cases.generation_use_case.VideoGenerator"):
+            with pytest.raises(HTTPException) as exc:
+                use_case.start_generation(request, background_tasks)
+            assert exc.value.status_code == 400

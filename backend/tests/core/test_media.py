@@ -1,9 +1,7 @@
 
 import pytest
 from unittest.mock import MagicMock, patch
-import asyncio
 import json
-from pathlib import Path
 from app.core.media import get_media_duration, get_video_info
 
 @pytest.mark.asyncio

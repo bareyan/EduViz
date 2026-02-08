@@ -9,7 +9,13 @@ try:
 except ImportError:
     fitz = None
 
-from typing import Dict, Any
+import os
+import tempfile
+from typing import Dict, Any, Optional, Tuple, List
+
+from app.core import get_logger
+
+logger = get_logger(__name__, component="pdf_analyzer")
 from .base import BaseAnalyzer
 
 
@@ -20,50 +26,160 @@ class PDFAnalyzer(BaseAnalyzer):
     MASSIVE_DOC_PAGES = 15
 
     async def analyze(self, file_path: str, file_id: str) -> Dict[str, Any]:
-        """Analyze a PDF document"""
-        if not fitz:
-            raise ImportError("PyMuPDF (fitz) is required for PDF analysis")
+        """Analyze a PDF document using direct attachment (no text extraction)."""
+        total_pages = None
+        if fitz:
+            try:
+                doc = fitz.open(file_path)
+                total_pages = len(doc)
+                doc.close()
+            except Exception:
+                total_pages = None
 
-        # Extract text from PDF
-        doc = fitz.open(file_path)
-        total_pages = len(doc)
+        pdf_part = None
+        content_sample = "PDF attached. Analyze the document directly from the file."
 
-        all_text = []
-        for page_num in range(total_pages):
-            page = doc[page_num]
-            text = page.get_text()
-            all_text.append(f"=== Page {page_num + 1} ===\n{text}")
-
-        doc.close()
-        full_text = "\n\n".join(all_text)
+        coverage_part, coverage_note = self._build_coverage_pdf_part(file_path, total_pages)
+        if coverage_part:
+            pdf_part = coverage_part
+            content_sample = coverage_note
+            logger.info("Using coverage PDF slice for analysis", extra={
+                "total_pages": total_pages,
+                "file_path": file_path
+            })
+        else:
+            pdf_part = self._build_pdf_part(file_path)
+            logger.info("Using full PDF for analysis", extra={
+                "total_pages": total_pages,
+                "file_path": file_path
+            })
 
         # Use Gemini to analyze the content
-        analysis = await self._gemini_analyze(full_text, total_pages)
+        analysis = await self._gemini_analyze(pdf_part, total_pages, content_sample)
 
         return {
             "analysis_id": f"analysis_{file_id}",
             "file_id": file_id,
             "material_type": "pdf",
-            "total_content_pages": total_pages,
+            "total_content_pages": total_pages if total_pages is not None else 0,
             **analysis
         }
 
-    async def _gemini_analyze(self, text: str, total_pages: int) -> Dict[str, Any]:
-        """Use Gemini to analyze text content and suggest video topics"""
+    def _build_pdf_part(self, file_path: str):
+        """Build a Gemini-compatible PDF Part attachment."""
+        try:
+            with open(file_path, "rb") as f:
+                pdf_bytes = f.read()
+        except Exception:
+            logger.warning("Failed to read PDF bytes for analysis", extra={"file_path": file_path})
+            return None
+        logger.info("Read PDF bytes for analysis", extra={
+            "file_path": file_path,
+            "byte_count": len(pdf_bytes)
+        })
+        return self._build_pdf_part_from_bytes(pdf_bytes)
+
+    def _build_pdf_part_from_bytes(self, pdf_bytes: bytes):
+        try:
+            return self.engine.types.Part.from_data(
+                data=pdf_bytes,
+                mime_type="application/pdf"
+            )
+        except AttributeError:
+            try:
+                return self.engine.types.Part.from_bytes(
+                    data=pdf_bytes,
+                    mime_type="application/pdf"
+                )
+            except Exception:
+                return None
+        except Exception:
+            return None
+
+    def _build_prompt_contents(self, prompt: str, pdf_part):
+        if not pdf_part:
+            return None
+        logger.info("Built list payload for PDF analysis", extra={
+            "parts": 2,
+            "ordering": "attachment_then_prompt"
+        })
+        return [pdf_part, prompt]
+
+    def _build_coverage_pdf_part(
+        self, file_path: str, total_pages: Optional[int]
+    ) -> Tuple[Optional[Any], Optional[str]]:
+        """Build a representative PDF slice covering start/middle/end pages."""
+        if not fitz or not total_pages or total_pages < 8:
+            return None, None
+
+        indices = self._sample_page_indices(total_pages)
+        if not indices:
+            return None, None
+
+        tmp_path = None
+        try:
+            doc = fitz.open(file_path)
+            new_doc = fitz.open()
+            for idx in indices:
+                new_doc.insert_pdf(doc, from_page=idx, to_page=idx)
+
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+            new_doc.save(tmp_path)
+            new_doc.close()
+            doc.close()
+
+            with open(tmp_path, "rb") as f:
+                pdf_bytes = f.read()
+            part = self._build_pdf_part_from_bytes(pdf_bytes)
+
+            pages_note = ", ".join(str(i + 1) for i in indices)
+            note = (
+                "PDF attached contains representative pages across the document "
+                f"(pages: {pages_note}). Analyze overall structure and topics."
+            )
+            return part, note
+        except Exception:
+            return None, None
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+    def _sample_page_indices(self, total_pages: int) -> List[int]:
+        """Select representative page indices (0-based) across the document."""
+        if total_pages <= 0:
+            return []
+        if total_pages <= 6:
+            return list(range(total_pages))
+
+        mid = total_pages // 2
+        candidates = {0, 1, mid, min(mid + 1, total_pages - 1), total_pages - 2, total_pages - 1}
+        return sorted(i for i in candidates if 0 <= i < total_pages)
+
+    async def _gemini_analyze(
+        self,
+        pdf_part,
+        total_pages: Optional[int],
+        content_sample: str,
+    ) -> Dict[str, Any]:
+        """Use Gemini to analyze PDF content and suggest video topics"""
 
         # Determine if document is massive (warrants multiple videos)
-        is_massive = total_pages >= self.MASSIVE_DOC_PAGES
+        total_pages_safe = total_pages or 0
+        is_massive = total_pages_safe >= self.MASSIVE_DOC_PAGES
 
-        # OPTIMIZED: Use adaptive content sampling for analysis
-        # - For short docs: use all content
-        # - For long docs: use beginning (intro/abstract), middle (core content), and end (conclusions)
-        content_sample = self._get_representative_sample(text, max_chars=15000)
+        content_sample = content_sample or "PDF attached. Analyze the document directly from the file."
 
         size_note = (
             "This is a LARGE document - consider splitting into logical chapter-based videos"
             if is_massive else
             "This is a standard-sized document - create ONE comprehensive video"
         )
+        if total_pages is None:
+            size_note = "Page count unavailable - infer structure from the PDF content."
         instructions = (
             "LARGE DOCUMENT INSTRUCTIONS:\n"
             "Since this is a large document with multiple distinct chapters/sections:\n"
@@ -89,11 +205,11 @@ class PDFAnalyzer(BaseAnalyzer):
         from app.services.infrastructure.llm import format_prompt
         prompt = format_prompt(
             "ANALYZE_PDF_CONTENT",
-            total_pages=total_pages,
+            total_pages=total_pages_safe,
             size_note=size_note,
             content_sample=content_sample,
             instructions=instructions,
-            detected_math_elements=total_pages * 3,
+            detected_math_elements=total_pages_safe * 3,
             closing_instruction=closing_instruction
         )
 
@@ -138,11 +254,29 @@ class PDFAnalyzer(BaseAnalyzer):
             response_format="json"
         )
 
+        contents = self._build_prompt_contents(prompt, pdf_part)
+        if contents is None:
+            logger.warning("PDF analysis has no attachment content; prompt-only request")
         result = await self.engine.generate(
             prompt=prompt,
             config=config,
-            response_schema=response_schema
+            response_schema=response_schema,
+            contents=contents
         )
 
-        response_text = result.get("response", "") if result.get("success") else ""
+        response_text = result.get("response", "")
+        if not result.get("success"):
+            logger.warning(
+                "PDF analysis LLM call did not return valid JSON",
+                extra={
+                    "error": result.get("error"),
+                    "error_reason": result.get("error_reason"),
+                    "response_preview": response_text[:500],
+                },
+            )
+        else:
+            logger.info(
+                "PDF analysis LLM call succeeded",
+                extra={"response_length": len(response_text)},
+            )
         return self._parse_json_response(response_text)

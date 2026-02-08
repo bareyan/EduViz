@@ -1,98 +1,79 @@
 """
-Manim Generator - Uses Tool-based Generation
+Manim Generator - New Pipeline Implementation
 
-Generates Manim animations using the unified prompting engine with tool calling.
-All generation logic uses: app.services.manim_generator.tools
-
-Flow:
-1. Generate Visual Script from audio segments (structured storyboard)
-2. Generate Manim code from Visual Script (tool-based)
-3. Validate and fix errors iteratively
-4. Render the final animation
+Handles the multi-stage animation generation workflow:
+1. Choreograph: Plan visuals from narration
+2. Implement: Convert plans to Manim code
+3. Refine: Automated fixing with static and runtime validation
+4. Render: Produce final video sections
 """
 
-import json
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 
-# Prompting engine
-from app.services.infrastructure.llm import PromptingEngine, PromptConfig, CostTracker
+from app.core import get_logger
+from app.services.infrastructure.llm import PromptingEngine, CostTracker
+from app.utils.section_status import write_status, SectionState
 
-# Model configuration
-from app.config.models import get_model_config
-
-# Visual Script generation (Step 1)
-from app.services.pipeline.visual_script import (
-    VisualScriptGenerator,
-    VisualScriptPlan,
-    load_visual_script,
+from .orchestrator import AnimationOrchestrator
+from .core import (
+    RefinementError,
+    ImplementationError,
+    RenderingError, 
+    create_scene_file, 
+    render_scene,
+    AnimationFileManager
 )
-
-# Tool-based generation (unified approach)
-from .tools import (
-    GenerationToolHandler,
-    build_context,
+from .core.validation import VisionValidator
+from .core.validation.models import ValidationIssue
+from ..config import (
+    ENABLE_VISION_QC,
+    MAX_CLEAN_RETRIES,
+    normalize_theme_style,
+    get_theme_prompt_info,
 )
-from .code_helpers import clean_code, create_scene_file
-from .validation import CodeValidator
-from . import renderer
-from ..config import MAX_CLEAN_RETRIES, MAX_CORRECTION_ATTEMPTS
+from .constants import DEFAULT_THEME_CODE
+
+logger = get_logger(__name__, component="manim_generator")
 
 
 class ManimGenerator:
     """
-    Generates Manim animations using tool-based approach.
+    Manim Animation Orchestrator.
     
-    Pipeline:
-    1. VisualScriptGenerator: Converts audio segments -> visual storyboard
-    2. GenerationToolHandler: Converts visual script -> Manim code
-    3. CodeValidator: Validates generated code
-    4. Renderer: Creates final video
-    
-    All logic centralized in respective modules.
+    Coordinates the multi-stage pipeline (Choreograph -> Implement -> Refine)
+    and handles rendering. Follows SRP by delegating generation stages to 
+    dedicated processor classes.
     """
 
     def __init__(self, pipeline_name: Optional[str] = None):
         self.pipeline_name = pipeline_name
 
-        # Initialize cost tracker
+        # Infrastructure
         self.cost_tracker = CostTracker()
         
-        # Initialize Visual Script Generator (Step 1)
-        self.visual_script_generator = VisualScriptGenerator(
-            cost_tracker=self.cost_tracker,
-            pipeline_name=pipeline_name
+        # Services
+        self.file_manager = AnimationFileManager()
+        
+        # Initialize the Animation Orchestrator (Modular Architecture)
+        self.orchestrator = AnimationOrchestrator(
+            engine=PromptingEngine("animation_implementation", self.cost_tracker, pipeline_name=pipeline_name),
+            cost_tracker=self.cost_tracker
         )
-        
-        # Initialize prompting engines for different stages (pipeline-aware)
-        self.script_engine = PromptingEngine("visual_script_generation", self.cost_tracker, pipeline_name=pipeline_name)
-        self.code_engine = PromptingEngine("manim_generation", self.cost_tracker, pipeline_name=pipeline_name)
-        self.correction_engine = PromptingEngine("code_correction", self.cost_tracker, pipeline_name=pipeline_name)
-        
-        # Initialize validator
-        self.validator = CodeValidator()
-        
-        # Initialize tool handlers (unified approach - same handler for generation and correction)
-        self.generation_handler = GenerationToolHandler(self.code_engine, self.validator)
-        self.correction_handler = GenerationToolHandler(self.correction_engine, self.validator)
 
-        # Initialize stats
+        self.vision_engine = PromptingEngine(
+            "visual_qc",
+            self.cost_tracker,
+            pipeline_name=pipeline_name,
+        )
+        self.vision_validator = VisionValidator(self.vision_engine)
+
+        # Execution stats
         self.stats = {
             "total_sections": 0,
-            "regenerated_sections": 0,
-            "total_retries": 0,
-            "skipped_sections": 0,
-            "failed_sections": []
+            "failed_sections": [],
+            "skipped_sections": 0
         }
-        
-        # Load config and set limits
-        self._refresh_config()
-        self.MAX_CLEAN_RETRIES = MAX_CLEAN_RETRIES
-        self.MAX_CORRECTION_ATTEMPTS = MAX_CORRECTION_ATTEMPTS
-
-    def _refresh_config(self):
-        """Refresh model configuration"""
-        self._manim_config = get_model_config("manim_generation", self.pipeline_name)
 
     def get_cost_summary(self) -> Dict[str, Any]:
         """Get cost summary"""
@@ -102,252 +83,366 @@ class ManimGenerator:
         """Print cost summary"""
         self.cost_tracker.print_summary()
 
-    async def generate_section_video(
+    async def generate_animation(
         self,
+        section: Dict[str, Any],
+        output_dir: str,
+        section_index: int,
+        audio_duration: float,
+        style: str = DEFAULT_THEME_CODE,
+        job_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Orchestrates the animation generation pipeline for a section.
+        
+        Args:
+            section: Section metadata from narration stage.
+            output_dir: Where to save generated code and video.
+            section_index: Index of the current section.
+            audio_duration: Duration of the narration audio.
+            style: Visual style (e.g., '3b1b').
+            job_id: Optional job identifier for logging context.
+            
+        Returns:
+            Dict containing render artifacts (video path + code path metadata).
+            
+        Raises:
+            AnimationError or its subclasses: if any stage fails.
+        """
+        self.stats["total_sections"] += 1
+        logger.info(f"Starting animation pipeline for section {section_index} (Job: {job_id})")
+
+        normalized_style = normalize_theme_style(style)
+        section_input = dict(section)
+        section_input["style"] = normalized_style
+        section_input["theme_info"] = section.get("theme_info") or get_theme_prompt_info(normalized_style)
+
+        # Build context for logging
+        context = {
+            "section_index": section_index,
+            "job_id": job_id or "unknown"
+        }
+
+        # Modular Pipeline Flow (Choreograph -> Implement -> Refine)
+        section_dir = Path(output_dir)
+        write_status(section_dir, "generating_manim")
+        choreography_plan_path: Optional[str] = None
+
+        def on_choreography_plan(plan: str, attempt_idx: int) -> None:
+            nonlocal choreography_plan_path
+            plan_file = self.file_manager.prepare_choreography_plan_file(
+                output_dir=output_dir,
+                plan_content=plan,
+            )
+            choreography_plan_path = str(plan_file)
+            logger.info(
+                "Choreography plan generated",
+                extra={
+                    "section_index": section_index,
+                    "attempt": attempt_idx + 1,
+                    "plan_chars": len(plan),
+                    "pipeline_stage": "choreography_generated",
+                    "choreography_plan_path": choreography_plan_path,
+                },
+            )
+
+        def on_raw_code(code: str, attempt_idx: int) -> None:
+            self.file_manager.prepare_scene_file(
+                output_dir=output_dir,
+                section_index=section_index,
+                code_content=code
+            )
+            logger.info(
+                "Raw Manim code generated",
+                extra={
+                    "section_index": section_index,
+                    "attempt": attempt_idx + 1,
+                    "code_chars": len(code),
+                    "pipeline_stage": "code_generated",
+                },
+            )
+
+        def status_callback(status: SectionState) -> None:
+            write_status(section_dir, status)
+
+        final_manim_code = await self.orchestrator.generate(
+            section_input,
+            audio_duration,
+            context,
+            on_choreography_plan=on_choreography_plan,
+            on_raw_code=on_raw_code,
+            status_callback=status_callback
+        )
+        
+        # Check if generation succeeded
+        if not final_manim_code or not final_manim_code.strip():
+            logger.error(
+                f"Orchestrator failed to generate valid code for section {section_index} "
+                f"after all retry attempts"
+            )
+            raise ImplementationError(
+                f"Failed to generate valid animation code for section {section_index} "
+                f"after {MAX_CLEAN_RETRIES} attempts"
+            )
+
+        # Stage 4: Rendering (Production)
+        result = await self.process_code_and_render(
+            manim_code=final_manim_code,
+            section=section_input,
+            output_dir=output_dir,
+            section_index=section_index,
+            audio_duration=audio_duration,
+            style=normalized_style
+        )
+        if choreography_plan_path:
+            result["choreography_plan_path"] = choreography_plan_path
+        return result
+
+    async def process_code_and_render(
+        self,
+        manim_code: str,
         section: Dict[str, Any],
         output_dir: str,
         section_index: int,
         audio_duration: Optional[float] = None,
-        style: str = "3b1b",
-        language: str = "en",
-        clean_retry: int = 0,
-        audio_segments: List[Dict[str, Any]] = None
+        style: str = DEFAULT_THEME_CODE,
     ) -> Dict[str, Any]:
-        """
-        Generate a Manim video for a section.
+        """Validates, prepares, and renders Manim code.
         
-        Args:
-            section: Section data
-            output_dir: Output directory
-            section_index: Section index
-            audio_duration: Actual audio duration (total)
-            style: Visual style
-            language: Language code
-            clean_retry: Current retry attempt
-            audio_segments: Optional list of audio segments with actual durations
-                           [{"text": "...", "duration": 5.2}, ...]
-            
-        Returns:
-            Dict with video_path and manim_code
+        This stage is the final production step. It asserts that the code is
+        valid before attempting to render, ensuring engineering stability.
         """
-        if clean_retry == 0:
-            self._refresh_config()
-            self.stats["total_sections"] += 1
+        target_duration = audio_duration or section.get("duration_seconds", 60)
+        
+        # Validate code presence
+        if not manim_code:
+            logger.error(f"No code generated for section {section_index}")
+            raise RefinementError(f"No code generated for section {section_index}")
 
-        target_duration = audio_duration if audio_duration else section.get("duration_seconds", 60)
-        section["target_duration"] = target_duration
-        section["language"] = language
-        section["style"] = style
-
-        retry_note = f" (clean retry {clean_retry})" if clean_retry > 0 else ""
-        print(f"[ManimGenerator] Generating code for section {section_index}{retry_note}")
-
-        # Generate code (2-shot with visual script)
-        reuse_visual_script = (clean_retry > 0)
-        manim_code, visual_script = await self._generate_manim_code(
-            section,
-            target_duration,
-            output_dir=output_dir,
-            section_index=section_index,
-            reuse_visual_script=reuse_visual_script,
-            audio_segments=audio_segments
-        )
-
-        # Write code file
+        # 2. File Preparation via Manager
         section_id = section.get("id", f"section_{section_index}").replace("-", "_").replace(" ", "_")
         scene_name = f"Section{section_id.title().replace('_', '')}"
-        code_file = Path(output_dir) / f"scene_{section_index}.py"
+        
+        logger.info(f"Preparing scene: {scene_name}")
         
         full_code = create_scene_file(manim_code, section_id, target_duration, style)
         
-        with open(code_file, "w", encoding="utf-8") as f:
-            f.write(full_code)
-
-        # Render
-        output_video = await renderer.render_scene(
-            self,
-            code_file,
-            scene_name,
-            output_dir,
-            section_index,
-            section=section,
-            clean_retry=clean_retry
+        # Delegate I/O to FileManager
+        code_file = self.file_manager.prepare_scene_file(
+            output_dir=output_dir,
+            section_index=section_index,
+            code_content=full_code
         )
 
-        # Retry if needed
-        if output_video is None and clean_retry < self.MAX_CLEAN_RETRIES:
-            print(f"[ManimGenerator] WARN Section {section_index} failed, retry {clean_retry + 1}/{self.MAX_CLEAN_RETRIES}")
-            if clean_retry == 0:
-                self.stats["regenerated_sections"] += 1
-            self.stats["total_retries"] += 1
-            
-            return await self.generate_section_video(
-                section, output_dir, section_index,
-                audio_duration, style, language, clean_retry + 1,
-                audio_segments=audio_segments  # Pass audio segments for retry
-            )
-        elif output_video is None:
-            self.stats["skipped_sections"] += 1
-            self.stats["failed_sections"].append(section_index)
+        # 3. Execution (Rendering)
+        write_status(Path(output_dir), "generating_video")
+        output_video = await render_scene(
+            self, 
+            code_file, 
+            scene_name, 
+            output_dir,
+            section_index, 
+            file_manager=self.file_manager,  # Inject manager
+            section=section, 
+            clean_retry=0
+        )
 
-        with open(code_file, "r", encoding="utf-8") as f:
-            final_code = f.read()
+        if not output_video:
+            logger.error(f"Rendering stage failed to produce output for section {section_index}")
+            raise RenderingError(f"Manim failed to render video for section {section_index}")
+
+        confirmed_vision_issues: List[ValidationIssue] = []
+        if ENABLE_VISION_QC:
+            vision_messages, confirmed_vision_issues = await self._run_vision_verification(
+                output_video=output_video,
+                output_dir=output_dir,
+                section_index=section_index,
+            )
+
+            # One-pass recovery loop: if Visual QC confirms real issues, try
+            # applying fixes and re-rendering once.
+            if confirmed_vision_issues:
+                logger.warning(
+                    f"Applying post-render fixes for {len(confirmed_vision_issues)} "
+                    f"Visual QC-confirmed issues in section {section_index}"
+                )
+                try:
+                    fixed_code, triage_stats = await self.orchestrator.refiner.apply_issues(
+                        code=full_code,
+                        issues=confirmed_vision_issues,
+                        section_title=section.get("title", f"section_{section_index}"),
+                        context={"section_index": section_index, "stage": "visual_qc_post_render"},
+                    )
+                except Exception as exc:
+                    logger.warning(f"Post-render fix application failed: {exc}")
+                    triage_stats = {"deterministic": 0, "llm": 0}
+                    fixed_code = full_code
+
+                if (
+                    fixed_code != full_code
+                    and (triage_stats.get("deterministic", 0) > 0 or triage_stats.get("llm", 0) > 0)
+                ):
+                    full_code = fixed_code
+                    code_file = self.file_manager.prepare_scene_file(
+                        output_dir=output_dir,
+                        section_index=section_index,
+                        code_content=full_code
+                    )
+                    rerendered_video = await render_scene(
+                        self,
+                        code_file,
+                        scene_name,
+                        output_dir,
+                        section_index,
+                        file_manager=self.file_manager,
+                        section=section,
+                        clean_retry=0
+                    )
+                    if rerendered_video:
+                        output_video = rerendered_video
+                        vision_messages, _ = await self._run_vision_verification(
+                            output_video=output_video,
+                            output_dir=output_dir,
+                            section_index=section_index,
+                        )
+        else:
+            vision_messages = []
 
         return {
             "video_path": output_video,
-            "manim_code": final_code,
+            "manim_code": full_code,
             "manim_code_path": str(code_file),
-            "visual_script": visual_script.to_dict() if visual_script else None
+            "vision_issues": vision_messages,
         }
 
-    async def _generate_manim_code(
+    async def _run_vision_verification(
         self,
-        section: Dict[str, Any],
-        audio_duration: float,
+        output_video: str,
         output_dir: str,
         section_index: int,
-        reuse_visual_script: bool = False,
-        audio_segments: List[Dict[str, Any]] = None
-    ) -> Tuple[str, Optional[VisualScriptPlan]]:
-        """
-        Generate Manim code using visual script + tool-based approach.
-        
-        Flow:
-        1. Generate or load Visual Script (storyboard with timing)
-        2. Use Visual Script to generate Manim code with proper pauses
-        
-        Args:
-            section: Section data with narration, title, etc.
-            audio_duration: Target audio duration
-            output_dir: Directory for output files
-            section_index: Index of the section
-            reuse_visual_script: Whether to try reusing existing visual script
-            audio_segments: Optional audio segments with actual durations
+    ) -> Tuple[List[str], List[ValidationIssue]]:
+        """Run Visual QC to verify uncertain spatial issues.
+
+        Architecture (Certain vs. Uncertain model):
+            The spatial validator catches most issues deterministically.
+            Uncertain issues are deferred to this Visual QC step.
             
-        Returns:
-            Tuple of (manim_code, visual_script_plan)
+            Flow:
+            1. Get pending uncertain issues from Refiner
+            2. Run Vision LLM to verify each issue
+            3. If real → track for fixing (would require re-render)
+            4. If false positive → add to whitelist (skip next time)
         """
-        style = section.get('style', '3b1b')
-        language = section.get('language', 'en')
-        
-        visual_script_plan = None
-        
-        # Step 1: Try to load existing visual script
-        if reuse_visual_script and output_dir:
-            json_file = Path(output_dir) / f"visual_script_{section_index}.json"
-            if json_file.exists():
-                print("[ManimGenerator] ♻️ Reusing existing visual script")
-                visual_script_plan = load_visual_script(str(json_file))
-        
-        # Step 2: Generate Visual Script if not available
-        if visual_script_plan is None:
-            print("[ManimGenerator] 📝 Generating visual script...")
-            
-            vs_result = await self.visual_script_generator.generate_and_save(
-                section=section,
-                output_dir=output_dir,
-                section_index=section_index,
-                source_context=section.get("narration", "")[:500],
-                audio_segments=audio_segments
+        # Get uncertain issues that were deferred during refinement
+        uncertain_issues = self.orchestrator.refiner.get_pending_uncertain_issues()
+
+        if not uncertain_issues:
+            return [], []
+
+        logger.info(
+            f"Visual QC: verifying {len(uncertain_issues)} uncertain "
+            f"spatial issues for section {section_index}"
+        )
+        logger.info(
+            "Visual QC input",
+            extra={
+                "section_index": section_index,
+                "pipeline_stage": "visual_qc_input",
+                "issue_count": len(uncertain_issues),
+                "issues": [
+                    {
+                        "category": i.category.value,
+                        "severity": i.severity.value,
+                        "confidence": i.confidence.value,
+                        "whitelist_key": i.whitelist_key,
+                        "message": i.message[:160],
+                    }
+                    for i in uncertain_issues[:8]
+                ],
+            },
+        )
+
+        confirmed = await self.vision_validator.verify_issues(
+            video_path=output_video,
+            uncertain_issues=uncertain_issues,
+            output_dir=output_dir,
+            context={"section_index": section_index},
+        )
+
+        if confirmed:
+            # Mark confirmed issues as real
+            self.orchestrator.refiner.mark_as_real_issues(confirmed)
+            logger.warning(
+                f"Visual QC confirmed {len(confirmed)} issues in section "
+                f"{section_index} (queued for post-render fix/re-render)"
             )
-            
-            if vs_result.success and vs_result.visual_script:
-                visual_script_plan = vs_result.visual_script
-                print(f"[ManimGenerator] ✓ Visual script generated: {len(visual_script_plan.segments)} segments, "
-                      f"total duration: {visual_script_plan.total_duration:.1f}s")
-            else:
-                print(f"[ManimGenerator] WARN Visual script generation failed: {vs_result.error}")
-                # Fallback: continue without visual script
+            logger.warning(
+                "Visual QC confirmed issues",
+                extra={
+                    "section_index": section_index,
+                    "pipeline_stage": "visual_qc_confirmed",
+                    "issue_count": len(confirmed),
+                    "issues": [
+                        {
+                            "category": i.category.value,
+                            "severity": i.severity.value,
+                            "confidence": i.confidence.value,
+                            "whitelist_key": i.whitelist_key,
+                            "message": i.message[:160],
+                        }
+                        for i in confirmed[:8]
+                    ],
+                },
+            )
         
-        # Step 3: Generate Manim code using tool handler
-        print("[ManimGenerator] 🎬 Generating Manim code...")
-        result = await self.generation_handler.generate(
-            section=section,
-            style=style,
-            target_duration=audio_duration,
-            language=language,
-            visual_script=visual_script_plan  # Pass visual script for guided generation
-        )
-        
-        if result.success and result.code:
-            code = clean_code(result.code)
-            print(f"[ManimGenerator] ✓ Code generated: {len(code)} chars")
-            return (code, visual_script_plan)
-        
-        # Fallback: basic generation without visual script
-        print(f"[ManimGenerator] Tool generation failed: {result.error}")
-        print("[ManimGenerator] Using fallback...")
-        
-        code = await self._generate_fallback(section, audio_duration, style, language)
-        return (code, visual_script_plan)
+        # Issues not confirmed are false positives - add to whitelist
+        confirmed_keys = {i.whitelist_key for i in confirmed}
+        false_positives = [
+            i for i in uncertain_issues
+            if i.whitelist_key not in confirmed_keys
+        ]
+        if false_positives:
+            self.orchestrator.refiner.mark_as_false_positives(false_positives)
+            logger.info(
+                f"Visual QC cleared {len(false_positives)} false positives "
+                f"in section {section_index}"
+            )
+            logger.info(
+                "Visual QC false positives",
+                extra={
+                    "section_index": section_index,
+                    "pipeline_stage": "visual_qc_false_positive",
+                    "issue_count": len(false_positives),
+                    "issues": [
+                        {
+                            "category": i.category.value,
+                            "severity": i.severity.value,
+                            "confidence": i.confidence.value,
+                            "whitelist_key": i.whitelist_key,
+                            "message": i.message[:160],
+                        }
+                        for i in false_positives[:8]
+                    ],
+                },
+            )
 
-    async def _generate_fallback(
-        self,
-        section: Dict[str, Any],
-        audio_duration: float,
-        style: str,
-        language: str
-    ) -> str:
-        """Fallback single-shot code generation"""
-        title = section.get("title", "Section")
-        narration = section.get("narration", section.get("tts_narration", ""))[:300]
-        
-        context = build_context(
-            style=style,
-            animation_type="text",
-            target_duration=audio_duration,
-            language=language
-        )
-        
-        prompt = f"""Generate simple Manim code for this section:
-
-TITLE: {title}
-NARRATION: {narration}
-DURATION: {audio_duration}s
-
-Generate code for the construct() method only. Keep it simple and reliable."""
-        
-        config = PromptConfig(enable_thinking=True, timeout=300.0)
-        result = await self.code_engine.generate(
-            prompt, 
-            config,
-            system_prompt=context.to_system_prompt()
-        )
-        
-        if result.get("success"):
-            code = clean_code(result["response"])
-            validation = self.validator.validate_code(code)
-            
-            if validation["valid"]:
-                print("[ManimGenerator] OK Fallback code passed validation")
-            else:
-                print("[ManimGenerator] WARN Fallback validation issues")
-            
-            return code
-        else:
-            # Ultimate fallback - guaranteed to work
-            return f'''        title = Text("{title[:30]}", font_size=36).to_edge(UP)
-        self.play(Write(title))
-        self.wait({max(1.0, audio_duration - 2)})
-        self.play(FadeOut(title))'''
+        return [issue.message for issue in confirmed], confirmed
 
     async def render_from_code(
         self,
         manim_code: str,
         output_dir: str,
-        section_index: int = 0
+        section_index: int = 0,
+        audio_duration: float = 60.0
     ) -> Optional[str]:
-        """Render video from existing code"""
-        section_id = f"section_{section_index}"
-        scene_name = f"Section{section_id.title().replace('_', '')}"
-        code_file = Path(output_dir) / f"scene_{section_index}.py"
+        """Render Manim code directly to video.
         
-        full_code = create_scene_file(manim_code, section_id, 60, "3b1b")
-        
-        with open(code_file, "w", encoding="utf-8") as f:
-            f.write(full_code)
-
-        return await renderer.render_scene(
-            self, code_file, scene_name, output_dir,
-            section_index, section={}, clean_retry=0
+        Used by translation pipeline to render translated animations.
+        """
+        result = await self.process_code_and_render(
+            manim_code=manim_code,
+            section={"id": f"manual_{section_index}"},
+            output_dir=output_dir,
+            section_index=section_index,
+            audio_duration=audio_duration
         )
+        return result.get("video_path")

@@ -11,12 +11,11 @@ from dataclasses import dataclass
 
 from app.services.infrastructure.llm.gemini.client import (
     create_client,
-    get_types_module,
     GenerationConfig as UnifiedGenerationConfig
 )
 from app.config.models import get_model_config, get_thinking_config
 from app.services.infrastructure.llm.cost_tracker import CostTracker
-from app.services.infrastructure.parsing import parse_json_response
+from app.services.infrastructure.parsing import parse_json_strict
 
 
 @dataclass
@@ -33,6 +32,7 @@ class PromptConfig:
     response_format: str = "text"  # "text", "json", or "function_call"
     system_instruction: Optional[str] = None
     response_schema: Optional[Any] = None
+    require_json_valid: bool = True
 
 
 class PromptingEngine:
@@ -63,12 +63,12 @@ class PromptingEngine:
         self.config_key = config_key
         self.pipeline_name = pipeline_name
         self.client = create_client()
-        self.types = get_types_module()
+        self.types = self.client.types
         self.cost_tracker = cost_tracker or CostTracker()
 
     def _get_config(self):
         """Resolve the model config with optional pipeline override."""
-        return get_model_config(self.config_key, self.pipeline_name)
+        return get_model_config(self.config_key)
 
     def _get_generation_config(
         self,
@@ -132,7 +132,9 @@ class PromptingEngine:
                 - success: bool
                 - response: str (text response)
                 - function_calls: List[Dict] (if using function calling)
-                - parsed_json: Dict (if response_format is "json")
+                - parsed_json: Any (if response_format is "json")
+                - json_error: str (if JSON parsing fails)
+                - json_truncated: bool (if JSON appears truncated)
                 - error: str (if failed)
                 - usage: Dict (token usage info)
         """
@@ -158,7 +160,8 @@ class PromptingEngine:
                             model=model_name,
                             contents=payload,
                             tools=tools,
-                            config=gen_config
+                            config=gen_config,
+                            context=context
                         ),
                         timeout=config.timeout,
                     )
@@ -168,7 +171,8 @@ class PromptingEngine:
                         model=model_name,
                         contents=payload,
                         tools=tools,
-                        config=gen_config
+                        config=gen_config,
+                        context=context
                     )
                 
                 # Track costs
@@ -210,14 +214,28 @@ class PromptingEngine:
                 
                 # Get text response
                 text_response = response.text if hasattr(response, 'text') else ""
+                if text_response is None:
+                    text_response = ""
                 result["response"] = text_response
                 
-                # Parse JSON if requested
-                if config.response_format == "json" and text_response:
-                    try:
-                        result["parsed_json"] = parse_json_response(text_response)
-                    except Exception as e:
-                        result["json_parse_error"] = str(e)
+                # Parse JSON if requested (strict)
+                if config.response_format == "json":
+                    if text_response:
+                        json_result = parse_json_strict(text_response)
+                        result["parsed_json"] = json_result.value
+                        result["json_error"] = json_result.error
+                        result["json_truncated"] = json_result.truncated
+                    else:
+                        result["parsed_json"] = None
+                        result["json_error"] = "empty_response"
+                        result["json_truncated"] = True
+
+                    if config.require_json_valid and result["parsed_json"] is None:
+                        if attempt < config.max_retries - 1:
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                        result["success"] = False
+                        result["error"] = result.get("json_error") or "invalid_json"
                 
                 return result
                 

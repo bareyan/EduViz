@@ -39,4 +39,6 @@ ignore = [
     "W191",  # Indentation contains tabs (cosmetic)
     "W291",  # Trailing whitespace (cosmetic)
     "W293",  # Blank line contains whitespace (cosmetic)
+    "F403",  # Star import used (standard in Manim)
+    "F405",  # Name may be undefined, or defined from star imports
 ]

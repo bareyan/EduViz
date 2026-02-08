@@ -4,11 +4,11 @@ Tests for app.services.infrastructure.llm.prompting_engine.base_engine
 
 import pytest
 import asyncio
+import time
 from unittest.mock import MagicMock, patch, AsyncMock
 from app.services.infrastructure.llm.prompting_engine.base_engine import PromptingEngine, PromptConfig
 
 
-@pytest.mark.asyncio
 class TestPromptingEngine:
     """Test PromptingEngine functionality."""
 
@@ -17,14 +17,13 @@ class TestPromptingEngine:
         """Setup global patches for all tests in this class."""
         with patch("app.services.infrastructure.llm.prompting_engine.base_engine.create_client") as self.mock_create_client, \
              patch("app.services.infrastructure.llm.prompting_engine.base_engine.get_model_config") as self.mock_get_model_config, \
-             patch("app.services.infrastructure.llm.prompting_engine.base_engine.get_thinking_config") as self.mock_get_thinking_config, \
-             patch("app.services.infrastructure.llm.prompting_engine.base_engine.get_types_module") as self.mock_get_types:
+             patch("app.services.infrastructure.llm.prompting_engine.base_engine.get_thinking_config") as self.mock_get_thinking_config:
             
             self.client = MagicMock()
             self.mock_create_client.return_value = self.client
             self.mock_get_model_config.return_value = MagicMock(model_name="test-model")
             self.mock_get_thinking_config.return_value = None
-            self.mock_get_types.return_value = MagicMock()
+            self.client._types_module = MagicMock()
             
             yield
 
@@ -32,6 +31,7 @@ class TestPromptingEngine:
     def engine(self):
         return PromptingEngine(config_key="test_key")
 
+    @pytest.mark.asyncio
     async def test_generate_success(self, engine):
         """Test successful generation."""
         mock_response = MagicMock()
@@ -49,6 +49,7 @@ class TestPromptingEngine:
         assert result["usage"]["input_tokens"] == 10
         self.client.models.generate_content.assert_called_once()
 
+    @pytest.mark.asyncio
     async def test_generate_retry_on_failure(self, engine):
         """Test that generate retries on exception."""
         self.client.models.generate_content.side_effect = [
@@ -64,10 +65,11 @@ class TestPromptingEngine:
             assert result["response"] == "Second Success"
             assert self.client.models.generate_content.call_count == 2
 
+    @pytest.mark.asyncio
     async def test_generate_timeout(self, engine):
         """Test timeout handling."""
-        async def slow_call(*args, **kwargs):
-            await asyncio.sleep(1)
+        def slow_call(*args, **kwargs):
+            time.sleep(0.1)
             return MagicMock()
             
         self.client.models.generate_content.side_effect = slow_call
@@ -78,6 +80,7 @@ class TestPromptingEngine:
         assert result["success"] is False
         assert "timed out" in result["error"].lower()
 
+    @pytest.mark.asyncio
     async def test_generate_json_parsing(self, engine):
         """Test JSON response parsing."""
         mock_response = MagicMock()
@@ -89,6 +92,20 @@ class TestPromptingEngine:
         
         assert result["success"] is True
         assert result["parsed_json"] == {"key": "value"}
+
+    @pytest.mark.asyncio
+    async def test_generate_json_invalid_fails(self, engine):
+        """Test invalid JSON returns failure when strict validation is enabled."""
+        mock_response = MagicMock()
+        mock_response.text = '{"key": "value"'
+        self.client.models.generate_content.return_value = mock_response
+
+        config = PromptConfig(response_format="json", max_retries=1)
+        result = await engine.generate("Get JSON", config=config)
+
+        assert result["success"] is False
+        assert result["parsed_json"] is None
+        assert "json_decode_error" in result["error"]
 
     def test_generate_sync(self, engine):
         """Test synchronous wrapper."""

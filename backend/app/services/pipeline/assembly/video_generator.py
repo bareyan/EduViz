@@ -10,12 +10,14 @@ from pathlib import Path
 from ..content_analysis import MaterialAnalyzer
 from ..script_generation import ScriptGenerator
 from ..animation import ManimGenerator
-from ..audio import TTSEngine
+from ..animation.config import normalize_theme_style
+from ..audio import TTSEngine, create_tts_engine
 
 from .processor import VideoProcessor
 from .progress import ProgressTracker
 from .orchestrator import SectionOrchestrator
 from app.core import get_logger, set_job_id, LogTimer
+from app.services.pipeline.animation.generation.constants import DEFAULT_THEME_CODE
 
 logger = get_logger(__name__, component="video_generator")
 
@@ -53,7 +55,7 @@ class VideoGenerator:
         self.analyzer = MaterialAnalyzer(pipeline_name=pipeline_name)
         self.script_generator = ScriptGenerator(pipeline_name=pipeline_name)
         self.manim_generator = ManimGenerator(pipeline_name=pipeline_name)
-        self.tts_engine = TTSEngine()
+        self.tts_engine = create_tts_engine()
 
         # Initialize processing components
         self.video_processor = VideoProcessor()
@@ -83,14 +85,59 @@ class VideoGenerator:
             "total_sections": progress.total_sections
         }
 
+    @staticmethod
+    def _normalize_language_code(language: Optional[str]) -> Optional[str]:
+        """Normalize language values to lowercase ISO-like codes."""
+        if not language:
+            return None
+        normalized = str(language).strip().lower()
+        return normalized or None
+
+    @classmethod
+    def _resolve_output_language(
+        cls,
+        requested_language: str,
+        script_payload: Dict[str, Any],
+        script_data: Dict[str, Any],
+    ) -> str:
+        """Resolve a concrete output language, handling 'auto' requests."""
+        requested = cls._normalize_language_code(requested_language)
+        if requested and requested != "auto":
+            return requested
+
+        sections = script_data.get("sections", [])
+        first_section_language = None
+        if sections and isinstance(sections[0], dict):
+            first_section_language = sections[0].get("language")
+
+        candidates = (
+            script_payload.get("output_language"),
+            script_payload.get("language"),
+            script_payload.get("detected_language"),
+            script_data.get("output_language"),
+            script_data.get("language"),
+            script_data.get("detected_language"),
+            first_section_language,
+        )
+
+        for candidate in candidates:
+            normalized = cls._normalize_language_code(candidate)
+            if normalized and normalized != "auto":
+                return normalized
+
+        return "en"
+
     async def generate_video(
         self,
         job_id: str,
         material_path: Optional[str] = None,
+        topic: Optional[Dict[str, Any]] = None,
         voice: str = "en-US-Neural2-J",
-        style: str = "default",
+        style: str = DEFAULT_THEME_CODE,
         language: str = "en",
         video_mode: str = "comprehensive",
+        content_focus: str = "as_document",
+        document_context: str = "auto",
         resume: bool = False,
         progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
         max_concurrent_sections: int = 3
@@ -110,10 +157,13 @@ class VideoGenerator:
         Args:
             job_id: Unique job identifier
             material_path: Path to source material (PDF, image, etc.)
+            topic: Topic payload derived from selected analysis topics
             voice: Voice identifier for TTS
             style: Style identifier for TTS
             language: Language code (e.g., "en", "es")
             video_mode: "comprehensive" for detailed videos, "overview" for short summaries
+            content_focus: "practice", "theory", or "as_document"
+            document_context: "standalone", "series", or "auto"
             resume: Whether to resume from existing progress
             progress_callback: Optional callback for progress updates
             max_concurrent_sections: Maximum sections to process in parallel
@@ -140,13 +190,17 @@ class VideoGenerator:
                 sections_dir.mkdir(parents=True, exist_ok=True)
 
                 tracker = ProgressTracker(job_id, self.output_base_dir, progress_callback)
+                style = normalize_theme_style(style)
 
                 logger.info("Starting video generation", extra={
                     "job_id": job_id,
                     "resume": resume,
                     "voice": voice,
+                    "style": style,
                     "language": language,
                     "video_mode": video_mode,
+                    "content_focus": content_focus,
+                    "document_context": document_context,
                     "max_concurrent": max_concurrent_sections
                 })
 
@@ -174,9 +228,13 @@ class VideoGenerator:
                     script = await self._generate_script(
                         job_id=job_id,
                         material_path=material_path,
+                        topic=topic,
                         language=language,
                         video_mode=video_mode,
-                        tracker=tracker
+                        content_focus=content_focus,
+                        document_context=document_context,
+                        tracker=tracker,
+                        artifacts_dir=str(sections_dir),
                     )
                     tracker.save_script(script)
 
@@ -186,8 +244,20 @@ class VideoGenerator:
                 if not sections:
                     raise ValueError("Script has no sections")
 
+                effective_language = self._resolve_output_language(language, script, script_data)
+                script_data["language"] = effective_language
+                script_data["output_language"] = effective_language
+                script["output_language"] = effective_language
+
+                for section in sections:
+                    section.setdefault("content_focus", content_focus)
+                    section.setdefault("video_mode", video_mode)
+                    section.setdefault("document_context", document_context)
+                    section["language"] = effective_language
+
                 logger.info(f"Processing {len(sections)} sections", extra={
-                    "section_count": len(sections)
+                    "section_count": len(sections),
+                    "effective_language": effective_language,
                 })
 
                 # Step 3: Process sections in parallel
@@ -203,8 +273,9 @@ class VideoGenerator:
                     sections_dir=sections_dir,
                     voice=voice,
                     style=style,
-                    language=language,
-                    resume=resume
+                    language=effective_language,
+                    resume=resume,
+                    job_id=job_id
                 )
 
                 # Step 4: Aggregate results
@@ -289,9 +360,13 @@ class VideoGenerator:
         self,
         job_id: str,
         material_path: Optional[str],
+        topic: Optional[Dict[str, Any]],
         language: str,
         video_mode: str,
-        tracker: ProgressTracker
+        content_focus: str,
+        document_context: str,
+        tracker: ProgressTracker,
+        artifacts_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate script from material (internal helper)
@@ -301,8 +376,11 @@ class VideoGenerator:
         Args:
             job_id: Unique job identifier
             material_path: Path to source material
+            topic: Selected-topic context payload from analysis
             language: Language code
             video_mode: "comprehensive" or "overview"
+            content_focus: "practice", "theory", or "as_document"
+            document_context: "standalone", "series", or "auto"
             tracker: Progress tracker instance
         """
         if not material_path:
@@ -312,16 +390,21 @@ class VideoGenerator:
 
         logger.info("Generating script from material", extra={
             "material_path": material_path,
-            "video_mode": video_mode
+            "video_mode": video_mode,
+            "content_focus": content_focus,
+            "document_context": document_context,
         })
         
         # Generate script directly from material
         # The script generator handles content extraction and processing internally
         script = await self.script_generator.generate_script(
             file_path=material_path,
-            topic={"title": "Educational Content", "description": ""},
+            topic=topic or {"title": "Educational Content", "description": ""},
             language=language,
             video_mode=video_mode,
+            content_focus=content_focus,
+            document_context=document_context,
+            artifacts_dir=artifacts_dir,
         )
 
         tracker.report_stage_progress("script", 100, "Script generated")
@@ -330,43 +413,40 @@ class VideoGenerator:
 
     async def _cleanup_intermediate_files(self, sections_dir: Path) -> None:
         """
-        Remove intermediate files after successful generation
-        
-        Preserves:
-        - Final .mp4 files
-        - Final .mp3 files
-        - Manim .py source code
-        
+        Remove all generation intermediates after a successful run.
+
+        Keeps:
+        - final_video.mp4
+        - translations/ (if it exists)
+
         Removes:
-        - Manim media folders
-        - Fallback files
-        - __pycache__
+        - sections/
+        - script.json
+        - all other temporary artifacts in the job directory
         """
         try:
+            job_dir = sections_dir.parent
+            keep_entries = {"final_video.mp4", "translations"}
+
             logger.info("Cleaning up intermediate files", extra={
-                "sections_dir": str(sections_dir)
+                "sections_dir": str(sections_dir),
+                "job_dir": str(job_dir)
             })
 
             cleanup_count = 0
-            for section_path in sections_dir.iterdir():
-                if not section_path.is_dir():
+            if sections_dir.exists():
+                shutil.rmtree(sections_dir)
+                cleanup_count += 1
+
+            for entry in job_dir.iterdir():
+                if entry.name in keep_entries:
                     continue
 
-                # Remove manim media folders
-                media_dir = section_path / "media"
-                if media_dir.exists():
-                    shutil.rmtree(media_dir)
+                if entry.is_dir():
+                    shutil.rmtree(entry)
                     cleanup_count += 1
-
-                # Remove fallback files
-                for f in section_path.glob("fallback_*.py"):
-                    f.unlink()
-                    cleanup_count += 1
-
-                # Remove __pycache__
-                pycache_dir = section_path / "__pycache__"
-                if pycache_dir.exists():
-                    shutil.rmtree(pycache_dir)
+                else:
+                    entry.unlink(missing_ok=True)
                     cleanup_count += 1
 
             logger.info("Cleanup complete", extra={

@@ -4,6 +4,7 @@ Unified Script Generator - Uses PromptingEngine
 Refactored to use the centralized prompting engine instead of direct client calls.
 """
 
+import os
 from typing import Dict, Any, Optional
 
 from app.core import get_logger
@@ -54,19 +55,28 @@ class ScriptGenerator:
         self,
         file_path: str,
         topic: Dict[str, Any],
-        max_duration_minutes: int = 20,
         video_mode: str = "comprehensive",
         language: str = "en",
         content_focus: str = "as_document",
         document_context: str = "auto",
+        artifacts_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Generate script using unified prompting engine"""
         
-        # Extract content
-        content = await self.base.extract_content(file_path)
-        
+        ext = os.path.splitext(file_path)[1].lower()
+        pdf_path = file_path if ext == ".pdf" else None
+        total_pages = self.base.get_pdf_page_count(file_path) if pdf_path else None
+
+        # Extract content (non-PDF only)
+        content = ""
+        if not pdf_path:
+            content = await self.base.extract_content(file_path)
+
         # Detect language using engine
-        detected_language = await self._detect_language(content[:5000])
+        if pdf_path:
+            detected_language = await self._detect_language_from_pdf(pdf_path)
+        else:
+            detected_language = await self._detect_language(content[:5000])
 
         output_language = self._determine_output_language(language, detected_language)
         language_name = self.LANGUAGE_NAMES.get(output_language, "English")
@@ -84,6 +94,8 @@ class ScriptGenerator:
                 topic=topic,
                 language_name=language_name,
                 language_instruction=language_instruction,
+                pdf_path=pdf_path,
+                total_pages=total_pages,
             )
             
             # Duration estimation
@@ -117,6 +129,8 @@ class ScriptGenerator:
             language_instruction=language_instruction,
             content_focus=content_focus,
             document_context=document_context,
+            pdf_path=pdf_path,
+            total_pages=total_pages,
         )
 
         # Phase 2: Generate sections (returns a list of section dicts)
@@ -126,6 +140,9 @@ class ScriptGenerator:
             topic=topic,
             language_name=language_name,
             language_instruction=language_instruction,
+            pdf_path=pdf_path,
+            total_pages=total_pages,
+            artifacts_dir=artifacts_dir,
         )
 
         # Add duration estimation for each section
@@ -173,6 +190,34 @@ class ScriptGenerator:
                 return lang
         
         # Default fallback
+        return "en"
+
+    async def _detect_language_from_pdf(self, pdf_path: str) -> str:
+        """Detect language from a PDF using direct attachment."""
+        pdf_part = self.base.build_pdf_part(pdf_path)
+        if not pdf_part:
+            return "en"
+
+        from app.services.infrastructure.llm import format_prompt, PromptConfig
+        prompt = format_prompt(
+            "LANGUAGE_DETECTION",
+            content="Analyze the attached PDF and return its 2-letter language code."
+        )
+
+        config = PromptConfig(temperature=0.1, timeout=30.0)
+        # Gemini PDF processing expects attachment first, then the prompt.
+        contents = [pdf_part, prompt]
+
+        result = await self.lang_engine.generate(
+            prompt=prompt,
+            config=config,
+            contents=contents
+        )
+
+        if result.get("success"):
+            lang = result.get("response", "").strip().lower()
+            if len(lang) == 2 and lang.isalpha():
+                return lang
         return "en"
 
     def _determine_output_language(self, requested: str, detected: str) -> str:

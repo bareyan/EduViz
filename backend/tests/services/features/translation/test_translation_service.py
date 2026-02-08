@@ -49,7 +49,7 @@ class TestTranslationService:
         
         assert result == ["Apple", "Banana"]
 
-    def test_convert_latex_to_spoken(self, service):
+    async def test_convert_latex_to_spoken(self, service):
         """Test LaTeX to spoken form conversion."""
         # Using double backslashes for LaTeX in raw strings or escaped strings
         text = "The integral $\\int_0^\\pi \\sin(x) dx$ is equal to 2."
@@ -155,10 +155,9 @@ Perevod dva
         # Check that math is preserved
         assert 'MathTex(r"x")' in result
 
-    def test_singleton(self):
+    async def test_singleton(self):
         """Test get_translation_service singleton behavior."""
         with patch("app.services.infrastructure.llm.PromptingEngine"):
-            from app.services.features.translation.translation_service import _translation_service
             import app.services.features.translation.translation_service as ts_mod
             # Save original
             original = ts_mod._translation_service

@@ -4,6 +4,7 @@ Section management and editing routes with security hardening
 
 import os
 import re
+import asyncio
 import subprocess
 import shutil
 from pathlib import Path
@@ -16,11 +17,32 @@ from ..config import OUTPUT_DIR, GEMINI_API_KEY
 from ..services.infrastructure.orchestration import JobStatus, get_job_manager
 from ..core import load_script, load_section_script, save_script
 from ..core import validate_job_id, validate_path_within_directory
+from ..core import job_is_final_only
+from ..core import assert_runtime_tools_available
 from ..core import get_logger
 
 logger = get_logger(__name__, component="sections_routes")
 
 router = APIRouter(tags=["sections"])
+
+
+async def _run_subprocess_async(
+    cmd: list[str],
+    *,
+    capture_output: bool = True,
+    text: bool = True,
+    timeout: int | float | None = None,
+    cwd: str | None = None,
+):
+    """Run subprocess.run in a worker thread to avoid blocking the event loop."""
+    return await asyncio.to_thread(
+        subprocess.run,
+        cmd,
+        capture_output=capture_output,
+        text=text,
+        timeout=timeout,
+        cwd=cwd,
+    )
 
 
 class CodeUpdateRequest(BaseModel):
@@ -231,11 +253,20 @@ async def get_file_content(path: str):
 @router.post("/job/{job_id}/recompile")
 async def recompile_job(job_id: str, background_tasks: BackgroundTasks):
     """Recompile a job's video from existing section files"""
+    assert_runtime_tools_available(("ffmpeg", "ffprobe"), context="job recompilation")
 
     job_dir = OUTPUT_DIR / job_id
     sections_dir = job_dir / "sections"
 
     if not sections_dir.exists():
+        if job_is_final_only(job_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This job was cleaned to final-video-only retention. "
+                    "Recompile is unavailable because section artifacts were removed."
+                ),
+            )
         raise HTTPException(status_code=404, detail="Job sections not found")
 
     async def run_recompile():
@@ -303,17 +334,17 @@ async def recompile_job(job_id: str, background_tasks: BackgroundTasks):
                 combined = job_dir / f"combined_{i:03d}.mp4"
 
                 if audio_file:
-                    def get_duration(file_path):
+                    async def get_duration(file_path):
                         try:
                             probe_cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
                                         "-of", "default=noprint_wrappers=1:nokey=1", file_path]
-                            result = subprocess.run(probe_cmd, capture_output=True, text=True, timeout=30)
+                            result = await _run_subprocess_async(probe_cmd, timeout=30)
                             return float(result.stdout.strip())
                         except:
                             return 0.0
 
-                    video_duration = get_duration(video_file)
-                    audio_duration = get_duration(audio_file)
+                    video_duration = await get_duration(video_file)
+                    audio_duration = await get_duration(audio_file)
 
                     if video_duration >= audio_duration:
                         cmd = [
@@ -346,7 +377,7 @@ async def recompile_job(job_id: str, background_tasks: BackgroundTasks):
                         str(combined)
                     ]
 
-                result = subprocess.run(cmd, capture_output=True, text=True)
+                result = await _run_subprocess_async(cmd)
                 if result.returncode != 0:
                     print(f"ffmpeg error for section {section_id}: {result.stderr}")
 
@@ -370,7 +401,7 @@ async def recompile_job(job_id: str, background_tasks: BackgroundTasks):
                 "-c", "copy",
                 str(final_video)
             ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = await _run_subprocess_async(cmd)
 
             if final_video.exists():
                 get_job_manager().update_job(job_id, JobStatus.COMPLETED, 100, "Video recompiled successfully!")
@@ -460,6 +491,7 @@ async def fix_section_code(job_id: str, section_id: str, request: FixCodeRequest
 @router.post("/job/{job_id}/section/{section_id}/regenerate")
 async def regenerate_section(job_id: str, section_id: str):
     """Regenerate the video for a single section using its current Manim code"""
+    assert_runtime_tools_available(("manim",), context="section regeneration")
 
     sections_dir = OUTPUT_DIR / job_id / "sections" / section_id
     if not validate_path_within_directory(sections_dir, OUTPUT_DIR / job_id / "sections"):
@@ -522,12 +554,10 @@ async def regenerate_section(job_id: str, section_id: str):
             class_name
         ]
 
-        result = subprocess.run(
+        result = await _run_subprocess_async(
             cmd,
-            capture_output=True,
-            text=True,
             cwd=str(sections_dir),
-            timeout=120
+            timeout=120,
         )
 
         if result.returncode != 0:

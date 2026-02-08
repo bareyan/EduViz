@@ -241,7 +241,7 @@ class TranslationService:
 
     # Non-Latin scripts that can't mix with LaTeX in Tex()
     NON_LATIN_LANGUAGES = {
-        'hy', 'ar', 'he', 'zh', 'ja', 'ko', 'ru', 'el', 'th',
+        'hy', 'ar', 'he', 'zh', 'ja', 'ko', 'ru', 'ua', 'el', 'th',
         'hi', 'bn', 'ta', 'te', 'ml', 'kn', 'gu', 'pa', 'mr',
         'fa', 'ur', 'am', 'ka', 'my', 'km', 'lo', 'si', 'ne'
     }
@@ -252,10 +252,10 @@ class TranslationService:
         target_language: str,
         source_language: str = "en"
     ) -> str:
-        """Translate Text() strings in Manim code to target language.
+        """Translate text-containing objects in Manim code to target language.
         
-        This extracts only the text content from Text("...") calls,
-        translates them in batch with context, and replaces them back.
+        This extracts text content from Text(), MarkupText(), Paragraph(), and Title()
+        calls, translates them in batch with context, and replaces them back.
         The code structure is preserved exactly.
         
         For non-Latin languages, Tex() with mixed text/math is converted to
@@ -267,7 +267,7 @@ class TranslationService:
             source_language: Source language code
         
         Returns:
-            Manim code with translated Text() strings
+            Manim code with translated text objects
         """
         self.logger.info("translate_manim_code called", extra={
             "source_language": source_language,
@@ -292,15 +292,15 @@ class TranslationService:
             })
             manim_code = await self._convert_tex_for_non_latin(manim_code, target_language, source_language)
 
-        # Extract all Text("...") strings with their positions
-        # Match Text("string") or Text('string') with various arguments after
-        text_pattern = r'(Text)\s*\(\s*(["\'])((?:(?!\2)[^\\]|\\.)*)\2'
+        # Extract all text-containing Manim objects with their positions
+        # Match Text(), MarkupText(), Paragraph(), Title() with string arguments
+        text_pattern = r'(Text|MarkupText|Paragraph|Title)\s*\(\s*(["\'])((?:(?!\2)[^\\]|\\.)*)\2'
 
         matches = list(re.finditer(text_pattern, manim_code))
-        self.logger.info("Found Text() matches", extra={"match_count": len(matches)})
+        self.logger.info("Found text object matches", extra={"match_count": len(matches)})
 
         if not matches:
-            self.logger.info("No Text() strings found in Manim code")
+            self.logger.info("No text objects found in Manim code")
             return manim_code
 
         # Extract the text content (group 3 is the string content)
@@ -308,7 +308,7 @@ class TranslationService:
         match_info = []  # Store (match_object, func_name, quote_char, original_text)
 
         for match in matches:
-            func_name = match.group(1)  # Text
+            func_name = match.group(1)  # Text, MarkupText, Paragraph, or Title
             quote_char = match.group(2)  # ' or "
             text_content = match.group(3)  # The actual string content
 
@@ -320,10 +320,10 @@ class TranslationService:
             match_info.append((match, func_name, quote_char, text_content))
 
         if not texts_to_translate:
-            self.logger.info("No translatable Text() strings found")
+            self.logger.info("No translatable text objects found")
             return manim_code
 
-        self.logger.info("Found Text() strings to translate", extra={
+        self.logger.info("Found text objects to translate", extra={
             "text_count": len(texts_to_translate)
         })
 
@@ -433,9 +433,10 @@ class TranslationService:
         source_language: str,
         target_language: str
     ) -> List[str]:
-        """Translate Text() string contents for Manim code.
+        """Translate text object contents for Manim code.
         
-        These are display texts that appear in the video, not narration.
+        These are display texts from Text(), MarkupText(), Paragraph(), Title() 
+        that appear in the video, not narration.
         """
         if not texts:
             return []
@@ -448,24 +449,13 @@ class TranslationService:
         for i, text in enumerate(texts):
             texts_block += f"[TEXT_{i}]\n{text}\n[/TEXT_{i}]\n\n"
 
-        prompt = f"""Translate display text for an educational animation from {source_name} to {target_name}.
-
-These texts appear ON SCREEN in a video. Keep them concise and natural.
-
-RULES:
-1. Translate the meaning naturally, keep similar length
-2. These are Python strings - preserve any escape sequences: \\n, \\t, etc.
-3. DO NOT translate:
-   - Variable placeholders: {{x}}, {{n}}, {{value}}
-   - Mathematical symbols that should stay as-is
-4. Keep bullet points (•, -, *) and formatting
-5. Output ONLY the translations
-
-TEXTS:
-{texts_block}
-
-TRANSLATIONS (same format):
-"""
+        from app.services.infrastructure.llm import format_prompt
+        prompt = format_prompt(
+            "TRANSLATE_MANIM_TEXTS",
+            source_name=source_name,
+            target_name=target_name,
+            texts_block=texts_block
+        )
         for i in range(len(texts)):
             prompt += f"[TEXT_{i}]\n...\n[/TEXT_{i}]\n"
 
@@ -520,34 +510,14 @@ TRANSLATIONS (same format):
         source_name = LANGUAGE_NAMES.get(source_language, source_language)
         target_name = LANGUAGE_NAMES.get(target_language, target_language)
 
-        prompt = f"""You are converting educational text for text-to-speech. Translate from {source_name} to {target_name} and convert ALL math to spoken words.
-
-CRITICAL: Convert mathematical expressions to how a teacher would SAY them aloud in {target_name}:
-
-Examples of math-to-speech conversion:
-- "$x$" → "x" (just say the letter)
-- "$x^2$" → "x au carré" (French) / "x squared" (English) / "x hoch zwei" (German)
-- "$x^n$" → "x à la puissance n" (French) / "x to the power of n" (English)
-- "$\\frac{{a}}{{b}}$" → "a sur b" (French) / "a over b" (English) / "a durch b" (German)
-- "$\\sqrt{{x}}$" → "racine carrée de x" (French) / "square root of x" (English)
-- "$\\alpha$" → "alpha"
-- "$\\sum_{{i=1}}^{{n}}$" → "la somme de i égal 1 à n" (French) / "the sum from i equals 1 to n" (English)
-- "$f(x)$" → "f de x" (French) / "f of x" (English)
-- "$x \\leq y$" → "x inférieur ou égal à y" (French) / "x less than or equal to y" (English)
-- "$\\lim_{{x \\to 0}}$" → "la limite quand x tend vers zéro" (French) / "the limit as x approaches zero" (English)
-- "$\\int_{{a}}^{{b}}$" → "l'intégrale de a à b" (French) / "the integral from a to b" (English)
-
-RULES:
-1. Remove ALL $ signs, backslashes, and LaTeX commands
-2. Output ONLY speakable text - a person must be able to read it aloud naturally
-3. Keep the educational, explanatory tone
-4. Preserve [pause] markers if present
-5. Output ONLY the translated text, nothing else
-
-INPUT TEXT:
-{text}
-
-SPOKEN {target_name.upper()} VERSION:"""
+        from app.services.infrastructure.llm import format_prompt
+        prompt = format_prompt(
+            "TRANSLATE_TTS_SPEAKABLE",
+            source_name=source_name,
+            target_name=target_name,
+            target_name_upper=target_name.upper(),
+            text=text
+        )
 
         try:
             from app.services.infrastructure.llm import PromptConfig
@@ -700,14 +670,13 @@ SPOKEN {target_name.upper()} VERSION:"""
         separator = "\n---ITEM---\n"
         combined = separator.join(items)
 
-        prompt = f"""Translate each item from {source_name} to {target_name}.
-Keep the items separated by "---ITEM---".
-Preserve formatting and technical terms.
-
-ITEMS:
-{combined}
-
-TRANSLATIONS:"""
+        from app.services.infrastructure.llm import format_prompt
+        prompt = format_prompt(
+            "TRANSLATE_ITEMS_BATCH",
+            source_name=source_name,
+            target_name=target_name,
+            combined=combined
+        )
 
         try:
             from app.services.infrastructure.llm import PromptConfig

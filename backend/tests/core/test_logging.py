@@ -8,8 +8,7 @@ logger adapters, context variables, and the LogTimer context manager.
 import pytest
 import logging
 import json
-from unittest.mock import MagicMock, patch
-from io import StringIO
+from unittest.mock import MagicMock
 from app.core.logging import (
     StructuredFormatter,
     DevelopmentFormatter,

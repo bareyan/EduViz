@@ -140,3 +140,26 @@ def find_uploaded_file(file_id: str) -> str:
         if potential_path.exists():
             return str(potential_path)
     raise HTTPException(status_code=404, detail="File not found")
+
+
+def job_intermediate_artifacts_available(job_id: str) -> bool:
+    """
+    Check whether a job still has intermediates needed for editing/recompile flows.
+
+    Required intermediates:
+    - script.json
+    - sections/ directory
+    """
+    job_dir = OUTPUT_DIR / job_id
+    return (job_dir / "script.json").exists() and (job_dir / "sections").is_dir()
+
+
+def job_is_final_only(job_id: str) -> bool:
+    """
+    Check whether a job was pruned to final-only retention mode.
+    """
+    job_dir = OUTPUT_DIR / job_id
+    has_final = (job_dir / "final_video.mp4").exists()
+    has_script = (job_dir / "script.json").exists()
+    has_sections = (job_dir / "sections").is_dir()
+    return has_final and not has_script and not has_sections

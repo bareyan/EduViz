@@ -427,7 +427,7 @@ export default function GenerationPage() {
                   }
                 `}
               >
-                🌐 Auto (Document)
+                Auto (Document)
               </button>
               {languages.map(lang => (
                 <button

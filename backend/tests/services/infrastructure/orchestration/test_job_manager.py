@@ -4,10 +4,8 @@ Tests for app.services.infrastructure.orchestration.job_manager
 Tests job tracking and file-based persistence.
 """
 
-import os
 import json
 import pytest
-from pathlib import Path
 from app.services.infrastructure.orchestration.job_manager import Job, JobManager, JobStatus
 
 
@@ -55,7 +53,7 @@ class TestJobManager:
 
     def test_create_job_persists_to_disk(self, manager, temp_job_dir):
         """Verify that creating a job creates a file."""
-        job = manager.create_job("job-abc")
+        manager.create_job("job-abc")
         job_file = temp_job_dir / "job-abc.json"
         
         assert job_file.exists()
@@ -155,3 +153,19 @@ class TestJobManager:
         assert len(manager.get_all_jobs()) == 0
         captured = capsys.readouterr()
         assert "Error loading job" in captured.out
+
+    def test_cache_is_bounded_for_terminal_jobs(self, temp_job_dir):
+        """Completed jobs should not grow in-memory cache without bound."""
+        manager = JobManager(storage_dir=str(temp_job_dir), cache_limit=25)
+
+        for i in range(80):
+            job_id = f"job-{i}"
+            manager.create_job(job_id)
+            manager.update_job(job_id, status=JobStatus.COMPLETED, progress=100.0)
+
+        # Access all records from disk-backed listing
+        jobs = manager.list_all_jobs()
+        assert len(jobs) == 80
+
+        # Cache should stay bounded by cache_limit for terminal jobs
+        assert len(manager._jobs) <= 25

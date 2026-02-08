@@ -5,15 +5,27 @@ Translation routes
 import os
 import json
 import asyncio
+import shutil
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
 from ..config import OUTPUT_DIR
 from ..services.features.translation import get_translation_service
-from ..services.pipeline.audio import TTSEngine
+from ..services.pipeline.audio import TTSEngine, create_tts_engine
 from ..services.pipeline.animation import ManimGenerator
-from ..core import get_media_duration, load_script, load_script_raw
+from ..core import (
+    get_media_duration,
+    load_script,
+    load_script_raw,
+    job_intermediate_artifacts_available,
+    job_is_final_only,
+    assert_runtime_tools_available,
+)
+from ..core.voice_catalog import (
+    get_translation_default_voice,
+    get_translation_languages as list_translation_languages,
+)
 
 router = APIRouter(tags=["translation"])
 
@@ -31,30 +43,37 @@ class TranslationResponse(BaseModel):
     message: str
 
 
-# Voice mapping for languages
-VOICE_MAP = {
-    "en": "en-US-GuyNeural",
-    "fr": "fr-FR-HenriNeural",
-    "es": "es-ES-AlvaroNeural",
-    "de": "de-DE-ConradNeural",
-    "it": "it-IT-DiegoNeural",
-    "pt": "pt-BR-AntonioNeural",
-    "zh": "zh-CN-YunxiNeural",
-    "ja": "ja-JP-KeitaNeural",
-    "ko": "ko-KR-InJoonNeural",
-    "ar": "ar-SA-HamedNeural",
-    "ru": "ru-RU-DmitryNeural",
-    "hy": "hy-AM-HaykNeural",
-    "hi": "hi-IN-MadhurNeural",
-    "tr": "tr-TR-AhmetNeural",
-    "pl": "pl-PL-MarekNeural",
-    "nl": "nl-NL-MaartenNeural",
-}
-
-
 def get_voice_for_language(language: str) -> str:
     """Get appropriate TTS voice for a language"""
-    return VOICE_MAP.get(language, "en-US-GuyNeural")
+    return get_translation_default_voice(language)
+
+
+@router.get("/translation/languages")
+async def get_translation_languages():
+    """Get supported target languages for video translation."""
+    return {"languages": list_translation_languages()}
+
+
+def _cleanup_translation_artifacts(translation_dir: str) -> None:
+    """
+    Keep only final_video.mp4 in a translation output directory.
+    """
+    path = os.path.abspath(translation_dir)
+    if not os.path.isdir(path):
+        return
+
+    for name in os.listdir(path):
+        if name == "final_video.mp4":
+            continue
+
+        entry = os.path.join(path, name)
+        if os.path.isdir(entry):
+            shutil.rmtree(entry, ignore_errors=True)
+        else:
+            try:
+                os.remove(entry)
+            except FileNotFoundError:
+                pass
 
 
 @router.get("/job/{job_id}/translations")
@@ -98,13 +117,30 @@ async def get_job_translations(job_id: str):
 @router.post("/job/{job_id}/translate", response_model=TranslationResponse)
 async def create_translation(job_id: str, request: TranslationRequest, background_tasks: BackgroundTasks):
     """Start translation of a completed video to a new language"""
+    assert_runtime_tools_available(("manim", "ffmpeg", "ffprobe"), context="translation generation")
+
     job_dir = OUTPUT_DIR / job_id
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="Job not found")
 
+    final_video = job_dir / "final_video.mp4"
+    if not final_video.exists():
+        raise HTTPException(status_code=400, detail="Original video not yet generated")
+
+    if not job_intermediate_artifacts_available(job_id):
+        if job_is_final_only(job_id):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "This job was cleaned to final-video-only retention. "
+                    "Translation requires script and section artifacts."
+                ),
+            )
+        raise HTTPException(status_code=400, detail="Job artifacts are incomplete for translation")
+
     script_path = job_dir / "script.json"
     if not script_path.exists():
-        raise HTTPException(status_code=400, detail="Original video not yet generated")
+        raise HTTPException(status_code=400, detail="Script not found for this job")
 
     target_language = request.target_language
     translation_id = f"{job_id}_{target_language}"
@@ -176,9 +212,9 @@ async def generate_translated_video(
     voice: str
 ):
     """Generate video from translated script with translated Manim animations"""
-    from ..services.translation_service import TranslationService
+    from ..services.features.translation import TranslationService
 
-    tts_engine = TTSEngine()
+    tts_engine = create_tts_engine()
     manim_gen = ManimGenerator()
     translation_service = TranslationService()
 
@@ -367,4 +403,6 @@ async def generate_translated_video(
         )
         await process.communicate()
 
-        print(f"[Translation] Final video created: {final_video}")
+        if os.path.exists(final_video):
+            _cleanup_translation_artifacts(output_dir)
+            print(f"[Translation] Final video created: {final_video}")

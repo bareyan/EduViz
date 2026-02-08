@@ -39,7 +39,7 @@ class TestVideoGenerator:
         
         # Patch internal helper for parallel processing
         # Actually it uses SectionOrchestrator
-        with patch.object(generator, "_generate_script", AsyncMock(return_value={"sections": [{"title": "S1"}]})) as mock_gs, \
+        with patch.object(generator, "_generate_script", AsyncMock(return_value={"sections": [{"title": "S1"}]})), \
              patch("app.services.pipeline.assembly.video_generator.SectionOrchestrator") as mock_orch_class:
             
             mock_orch = mock_orch_class.return_value
@@ -85,7 +85,145 @@ class TestVideoGenerator:
                 # Should fail at combine if no videos, but we check if _generate_script was NOT called
                 generator._generate_script = AsyncMock()
                 
-                result = await generator.generate_video(job_id=job_id, resume=True)
+                await generator.generate_video(job_id=job_id, resume=True)
                 
                 generator._generate_script.assert_not_called()
                 mock_tracker.load_script.assert_called_once()
+
+    async def test_cleanup_keeps_only_final_and_translations(self, generator, tmp_path):
+        """Completed jobs should keep only final video artifacts."""
+        job_dir = tmp_path / "job-keep-final"
+        sections_dir = job_dir / "sections"
+        sections_dir.mkdir(parents=True)
+
+        (job_dir / "final_video.mp4").write_text("video")
+        (job_dir / "script.json").write_text("{}")
+        (job_dir / "concat_list.txt").write_text("tmp")
+        (sections_dir / "0").mkdir(parents=True)
+        (sections_dir / "0" / "scene.py").write_text("code")
+        (job_dir / "translations").mkdir()
+
+        await generator._cleanup_intermediate_files(sections_dir)
+
+        assert (job_dir / "final_video.mp4").exists()
+        assert (job_dir / "translations").exists()
+        assert not (job_dir / "sections").exists()
+        assert not (job_dir / "script.json").exists()
+        assert not (job_dir / "concat_list.txt").exists()
+
+    async def test_generate_script_forwards_focus_and_context(self, generator):
+        """Script generation should receive content focus and document context."""
+        tracker = MagicMock()
+        tracker.report_stage_progress = MagicMock()
+
+        generator.script_generator.generate_script = AsyncMock(return_value={"script": {"sections": []}})
+
+        await generator._generate_script(
+            job_id="job-ctx",
+            material_path="source.pdf",
+            topic={"title": "Picked Topic"},
+            language="en",
+            video_mode="comprehensive",
+            content_focus="theory",
+            document_context="series",
+            tracker=tracker,
+            artifacts_dir="artifacts",
+        )
+
+        kwargs = generator.script_generator.generate_script.await_args.kwargs
+        assert kwargs["content_focus"] == "theory"
+        assert kwargs["document_context"] == "series"
+
+    async def test_generate_video_propagates_focus_context_to_sections(self, generator):
+        """Section payload should carry generation intent into animation pipeline."""
+        with patch.object(
+            generator,
+            "_generate_script",
+            AsyncMock(
+                return_value={
+                    "sections": [{"title": "S1", "narration": "N1"}],
+                }
+            ),
+        ), patch("app.services.pipeline.assembly.video_generator.SectionOrchestrator") as mock_orch_class:
+            mock_orch = mock_orch_class.return_value
+            mock_orch.process_sections_parallel = AsyncMock(return_value=[{}])
+            mock_orch.aggregate_results = MagicMock(
+                return_value=(["v1.mp4"], ["a1.mp3"], [{"duration": 5.0}])
+            )
+            generator.video_processor.combine_sections = AsyncMock()
+            generator._cleanup_intermediate_files = AsyncMock()
+
+            await generator.generate_video(
+                job_id="job-ctx-sections",
+                material_path="source.pdf",
+                content_focus="practice",
+                video_mode="comprehensive",
+                document_context="series",
+            )
+
+            sections_arg = mock_orch.process_sections_parallel.await_args.kwargs["sections"]
+            assert sections_arg[0]["content_focus"] == "practice"
+            assert sections_arg[0]["video_mode"] == "comprehensive"
+            assert sections_arg[0]["document_context"] == "series"
+
+    async def test_generate_video_resolves_auto_language_from_script_metadata(self, generator):
+        """Auto language should resolve to script output language for animation prompts."""
+        with patch.object(
+            generator,
+            "_generate_script",
+            AsyncMock(
+                return_value={
+                    "script": {"sections": [{"title": "S1", "narration": "Bonjour"}]},
+                    "output_language": "fr",
+                    "detected_language": "fr",
+                }
+            ),
+        ), patch("app.services.pipeline.assembly.video_generator.SectionOrchestrator") as mock_orch_class:
+            mock_orch = mock_orch_class.return_value
+            mock_orch.process_sections_parallel = AsyncMock(return_value=[{}])
+            mock_orch.aggregate_results = MagicMock(
+                return_value=(["v1.mp4"], ["a1.mp3"], [{"duration": 5.0}])
+            )
+            generator.video_processor.combine_sections = AsyncMock()
+            generator._cleanup_intermediate_files = AsyncMock()
+
+            await generator.generate_video(
+                job_id="job-lang-auto",
+                material_path="source.pdf",
+                language="auto",
+            )
+
+            kwargs = mock_orch.process_sections_parallel.await_args.kwargs
+            assert kwargs["language"] == "fr"
+            assert kwargs["sections"][0]["language"] == "fr"
+
+    async def test_generate_video_honors_explicit_language_over_script_metadata(self, generator):
+        """Explicit language should override detected/output language metadata."""
+        with patch.object(
+            generator,
+            "_generate_script",
+            AsyncMock(
+                return_value={
+                    "script": {"sections": [{"title": "S1", "narration": "Bonjour"}]},
+                    "output_language": "fr",
+                    "detected_language": "fr",
+                }
+            ),
+        ), patch("app.services.pipeline.assembly.video_generator.SectionOrchestrator") as mock_orch_class:
+            mock_orch = mock_orch_class.return_value
+            mock_orch.process_sections_parallel = AsyncMock(return_value=[{}])
+            mock_orch.aggregate_results = MagicMock(
+                return_value=(["v1.mp4"], ["a1.mp3"], [{"duration": 5.0}])
+            )
+            generator.video_processor.combine_sections = AsyncMock()
+            generator._cleanup_intermediate_files = AsyncMock()
+
+            await generator.generate_video(
+                job_id="job-lang-explicit",
+                material_path="source.pdf",
+                language="es",
+            )
+
+            kwargs = mock_orch.process_sections_parallel.await_args.kwargs
+            assert kwargs["language"] == "es"
+            assert kwargs["sections"][0]["language"] == "es"

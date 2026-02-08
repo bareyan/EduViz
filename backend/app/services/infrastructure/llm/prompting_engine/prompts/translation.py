@@ -107,21 +107,50 @@ Speakable version:""",
 TRANSLATE_TTS_SPEAKABLE = PromptTemplate(
     template="""You are converting educational text for text-to-speech. Translate from {source_name} to {target_name} and convert ALL math to spoken words.
 
+CRITICAL: Convert mathematical expressions to how a teacher would SAY them aloud in {target_name}:
+
+Examples of math-to-speech conversion:
+- "$x$" → "x" (just say the letter)
+- "$x^2$" → "x squared" (English) / "x au carré" (French)
+- "$\\frac{{{{a}}}}{{{{b}}}}$" → "a over b" (English) / "a sur b" (French)
+- "$\\sqrt{{{{x}}}}$" → "square root of x" (English) / "racine carrée de x" (French)
+- "$\\alpha$" → "alpha"
+- "$f(x)$" → "f of x" (English) / "f de x" (French)
+
 RULES:
-1. Translate naturally to {target_name}
-2. Convert ALL LaTeX/math to SPOKEN form:
-   - "$x^2 + 3x$" → say "x squared plus three x" in {target_name}
-   - "$\\frac{{{{a}}}}{{{{b}}}}$" → say "a divided by b" or "a over b"
-   - Remove ALL $ symbols and LaTeX commands
-3. Numbers: spell out 0-20, use digits for larger
-4. NO variable preservation - translate everything
-5. NO special characters - pure speakable text
+1. Remove ALL $ signs, backslashes, and LaTeX commands
+2. Output ONLY speakable text - a person must be able to read it aloud naturally
+3. Keep the educational, explanatory tone
+4. Preserve [pause] markers if present
+5. Output ONLY the translated text, nothing else
 
 INPUT TEXT:
 {text}
 
 SPOKEN {target_name_upper} VERSION:""",
     description="Translate for TTS with math converted to speech"
+)
+
+TRANSLATE_MANIM_TEXTS = PromptTemplate(
+    template="""Translate display text for an educational animation from {source_name} to {target_name}.
+
+These texts appear ON SCREEN in a video. Keep them concise and natural.
+
+RULES:
+1. Translate the meaning naturally, keep similar length
+2. These are Python strings - preserve any escape sequences: \\n, \\t, etc.
+3. DO NOT translate:
+   - Variable placeholders: {{{{x}}}}, {{{{n}}}}, {{{{value}}}}
+   - Mathematical symbols that should stay as-is
+4. Keep bullet points (•, -, *) and formatting
+5. Output ONLY the translations
+
+TEXTS:
+{texts_block}
+
+TRANSLATIONS (same format):
+""",
+    description="Translate display text for Manim code with preservation of Python string patterns"
 )
 
 

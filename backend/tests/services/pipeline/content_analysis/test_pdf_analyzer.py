@@ -54,14 +54,24 @@ class TestPDFAnalyzer:
         mock_fitz.open.assert_called_once_with("/fake/path.pdf")
 
     async def test_analyze_no_fitz(self, analyzer):
-        """Test error when fitz is missing."""
-        # Need to patch it where it's used in PDFAnalyzer
+        """Test that analysis works even when fitz is missing (graceful degradation)."""
+        # Mock Gemini response
+        self.mock_engine.generate.return_value = {
+            "success": True,
+            "response": '{"summary": "Test summary", "main_subject": "Math", "subject_area": "math", "key_concepts": [], "suggested_topics": [], "estimated_total_videos": 1}'
+        }
+        
+        # Patch fitz to None to simulate missing PyMuPDF
         with patch("app.services.pipeline.content_analysis.pdf.fitz", None):
-            with pytest.raises(ImportError) as exc:
-                await analyzer.analyze("any.pdf", "id")
-            assert "PyMuPDF" in str(exc.value)
+            result = await analyzer.analyze("any.pdf", "id")
+            
+            # Should still work but won't have page count info
+            assert result["file_id"] == "id"
+            assert result["material_type"] == "pdf"
+            assert result["total_content_pages"] == 0  # No page count without fitz
+            assert result["summary"] == "Test summary"
 
-    def test_representative_sample(self, analyzer):
+    async def test_representative_sample(self, analyzer):
         """Test sampling logic in BaseAnalyzer."""
         long_text = "A" * 20000
         sample = analyzer._get_representative_sample(long_text, max_chars=100)
