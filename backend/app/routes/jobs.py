@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from ..config import OUTPUT_DIR
-from ..models import JobResponse, DetailedProgress, HighQualityCompileRequest
+from ..models import JobResponse, DetailedProgress, HighQualityCompileRequest, JobUpdateRequest
 from ..services.infrastructure.storage import FileBasedJobRepository
 from ..services.pipeline.audio import TTSEngine
 from ..core import (
@@ -31,6 +31,8 @@ from ..core import (
     list_all_videos,
     load_error_info,
     list_all_failures,
+    save_video_info,
+    save_script,
 )
 from .jobs_helpers import (
     get_stage_from_status,
@@ -95,6 +97,80 @@ async def get_job_status(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
 
     # Normalize progress to 0-1 range for API consistency
+    normalized_progress = min(job.progress / 100.0, 1.0) if job.progress else 0.0
+
+    return JobResponse(
+        job_id=job_id,
+        status=job.status,
+        progress=normalized_progress,
+        message=job.message,
+        result=job.result
+    )
+
+
+@router.patch("/job/{job_id}", response_model=JobResponse)
+async def update_job(job_id: str, request: JobUpdateRequest):
+    """
+    Update job metadata (e.g. title).
+    
+    Updates title in:
+    1. Active job script (if exists)
+    2. Persisted video_info.json (if exists)
+    """
+    if not validate_job_id(job_id):
+        raise HTTPException(status_code=400, detail="Invalid job ID format")
+
+    repo = FileBasedJobRepository()
+    job = repo.get(job_id)
+    
+    updated_any = False
+    
+    # Update video_info.json (most important for Gallery)
+    video_info = load_video_info(job_id)
+    if video_info and request.title:
+        video_info.title = request.title
+        save_video_info(video_info)
+        updated_any = True
+        
+    # Update script.json (if exists)
+    try:
+        script = load_script(job_id)
+        if request.title:
+            script["title"] = request.title
+            save_script(job_id, script)
+            updated_any = True
+    except HTTPException:
+        pass
+        
+    if not job and not updated_any:
+        raise HTTPException(status_code=404, detail="Job not found")
+        
+    if not job:
+        if video_info:
+            # Reconstruct completed job state from video_info
+            return JobResponse(
+                job_id=job_id,
+                status="completed",
+                progress=1.0,
+                message="Video ready",
+                result={
+                    "title": video_info.title,
+                    "duration": video_info.duration,
+                    "chapters": [c.to_dict() for c in video_info.chapters],
+                }
+            )
+        else:
+             raise HTTPException(status_code=404, detail="Job not found")
+            
+    # If job exists, return updated state
+    # We might need to refresh 'result' if it was loaded from disk before we updated script
+    if request.title and job.result:
+        # Optimistically update result in memory for response
+        if isinstance(job.result, dict):
+            job.result["title"] = request.title
+        elif isinstance(job.result, list) and job.result and isinstance(job.result[0], dict):
+             job.result[0]["title"] = request.title
+
     normalized_progress = min(job.progress / 100.0, 1.0) if job.progress else 0.0
 
     return JobResponse(
