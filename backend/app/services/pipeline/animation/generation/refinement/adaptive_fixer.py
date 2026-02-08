@@ -160,15 +160,15 @@ class AdaptiveFixerAgent:
             # We reconstruct the content object carefully
             raw_response = result.get("raw_response")
             if raw_response and hasattr(raw_response, 'candidates') and raw_response.candidates:
-                 # Use the actual response content if available to preserve tool calls/thinking etc (if any)
-                 model_content = raw_response.candidates[0].content
-                 self._chat_history.append(model_content)
+                # Use the actual response content if available to preserve tool calls/thinking etc (if any)
+                model_content = raw_response.candidates[0].content
+                self._chat_history.append(model_content)
             else:
-                 # Fallback for text-only
-                 text_resp = result.get("response", "")
-                 self._chat_history.append(
-                     Content(role="model", parts=[Part(text=text_resp)])
-                 )
+                # Fallback for text-only
+                text_resp = result.get("response", "")
+                self._chat_history.append(
+                    Content(role="model", parts=[Part(text=text_resp)])
+                )
 
             # Process Edits
             parsed_json = result.get("parsed_json") or {}
