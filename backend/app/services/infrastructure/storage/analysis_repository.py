@@ -46,7 +46,7 @@ class FileBasedAnalysisRepository(AnalysisRepository):
     def save(self, analysis: Dict[str, Any]) -> None:
         target = self._build_target(str(analysis.get("analysis_id", "")))
         if not target:
-            raise ValueError("analysis must contain analysis_id")
+            raise ValueError("analysis_id missing or invalid; expected [A-Za-z0-9_-]")
 
         with open(target, "w", encoding="utf-8") as f:
             json.dump(analysis, f, ensure_ascii=False, indent=2)

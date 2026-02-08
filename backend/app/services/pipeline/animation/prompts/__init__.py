@@ -73,6 +73,6 @@ __all__ = [
     "RETRY_FAILURE_NOTE",
     "CODE_CONTEXT_NOTE",
     "CODE_TRUNCATION_NOTE",
-    "VISION_QC_USER"
+    "VISION_QC_USER",
     "get_compact_patterns",
 ]
