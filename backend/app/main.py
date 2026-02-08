@@ -32,7 +32,7 @@ from .routes import (
     generation_router,
     jobs_router,
     sections_router,
-    translation_router,
+
 )
 from .core import (
     setup_logging,
@@ -240,7 +240,7 @@ app.include_router(analysis_router)
 app.include_router(generation_router)
 app.include_router(jobs_router)
 app.include_router(sections_router)
-app.include_router(translation_router)
+
 
 
 @app.get("/")
