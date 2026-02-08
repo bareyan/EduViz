@@ -85,6 +85,48 @@ class VideoGenerator:
             "total_sections": progress.total_sections
         }
 
+    @staticmethod
+    def _normalize_language_code(language: Optional[str]) -> Optional[str]:
+        """Normalize language values to lowercase ISO-like codes."""
+        if not language:
+            return None
+        normalized = str(language).strip().lower()
+        return normalized or None
+
+    @classmethod
+    def _resolve_output_language(
+        cls,
+        requested_language: str,
+        script_payload: Dict[str, Any],
+        script_data: Dict[str, Any],
+    ) -> str:
+        """Resolve a concrete output language, handling 'auto' requests."""
+        requested = cls._normalize_language_code(requested_language)
+        if requested and requested != "auto":
+            return requested
+
+        sections = script_data.get("sections", [])
+        first_section_language = None
+        if sections and isinstance(sections[0], dict):
+            first_section_language = sections[0].get("language")
+
+        candidates = (
+            script_payload.get("output_language"),
+            script_payload.get("language"),
+            script_payload.get("detected_language"),
+            script_data.get("output_language"),
+            script_data.get("language"),
+            script_data.get("detected_language"),
+            first_section_language,
+        )
+
+        for candidate in candidates:
+            normalized = cls._normalize_language_code(candidate)
+            if normalized and normalized != "auto":
+                return normalized
+
+        return "en"
+
     async def generate_video(
         self,
         job_id: str,
@@ -202,13 +244,20 @@ class VideoGenerator:
                 if not sections:
                     raise ValueError("Script has no sections")
 
+                effective_language = self._resolve_output_language(language, script, script_data)
+                script_data["language"] = effective_language
+                script_data["output_language"] = effective_language
+                script["output_language"] = effective_language
+
                 for section in sections:
                     section.setdefault("content_focus", content_focus)
                     section.setdefault("video_mode", video_mode)
                     section.setdefault("document_context", document_context)
+                    section["language"] = effective_language
 
                 logger.info(f"Processing {len(sections)} sections", extra={
-                    "section_count": len(sections)
+                    "section_count": len(sections),
+                    "effective_language": effective_language,
                 })
 
                 # Step 3: Process sections in parallel
@@ -224,7 +273,7 @@ class VideoGenerator:
                     sections_dir=sections_dir,
                     voice=voice,
                     style=style,
-                    language=language,
+                    language=effective_language,
                     resume=resume,
                     job_id=job_id
                 )

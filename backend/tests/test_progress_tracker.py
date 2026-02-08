@@ -321,6 +321,33 @@ def test_save_and_load_script(tracker):
     assert loaded_script == script
 
 
+def test_load_script_preserves_wrapper_language_metadata(tracker):
+    """Wrapped scripts should keep output language metadata after unwrapping."""
+    tracker.job_dir.mkdir(parents=True)
+
+    wrapped_script = {
+        "script": {
+            "title": "Test Video",
+            "sections": [{"title": "Section 1"}],
+        },
+        "mode": "overview",
+        "output_language": "fr",
+        "detected_language": "fr",
+    }
+
+    script_path = tracker.job_dir / "script.json"
+    with open(script_path, "w", encoding="utf-8") as f:
+        json.dump(wrapped_script, f)
+
+    loaded_script = tracker.load_script()
+    assert loaded_script["title"] == "Test Video"
+    assert loaded_script["output_language"] == "fr"
+    assert loaded_script["detected_language"] == "fr"
+
+    progress = tracker.check_existing_progress()
+    assert progress.script["output_language"] == "fr"
+
+
 def test_load_script_not_found(tracker):
     """Test loading non-existent script"""
     with pytest.raises(FileNotFoundError):

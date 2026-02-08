@@ -79,6 +79,17 @@ def clean_narration_for_tts(narration: str) -> str:
     return clean.strip()
 
 
+def _resolve_language_code(*candidates: Optional[str], default: str = "en") -> str:
+    """Resolve first concrete language code, skipping empty and 'auto'."""
+    for candidate in candidates:
+        if not candidate:
+            continue
+        code = str(candidate).strip().lower()
+        if code and code != "auto":
+            return code
+    return default
+
+
 def divide_into_subsections(
     narration: str,
     visual_description: str,
@@ -202,9 +213,12 @@ async def process_single_subsection(
     write_status(section_dir, "generating_manim")
 
     try:
+        section_payload = dict(section)
+        section_payload["language"] = _resolve_language_code(section.get("language"), language)
+
         # Using the NEW Animation Pipeline (Choreograph -> Implement -> Refine)
         manim_result = await manim_generator.generate_animation(
-            section=section,
+            section=section_payload,
             output_dir=str(section_dir),
             section_index=section_index,
             audio_duration=audio_duration,
@@ -997,7 +1011,7 @@ async def process_segments_audio_first(
         "key_concepts": section.get("key_concepts", []),
         "animation_type": section.get("animation_type", "mixed"),
         "style": style,
-        "language": language,
+        "language": _resolve_language_code(section.get("language"), language),
         "total_duration": total_duration,
         "is_unified_section": True,
         "num_segments": num_segments,

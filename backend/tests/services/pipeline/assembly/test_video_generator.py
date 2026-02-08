@@ -165,3 +165,65 @@ class TestVideoGenerator:
             assert sections_arg[0]["content_focus"] == "practice"
             assert sections_arg[0]["video_mode"] == "comprehensive"
             assert sections_arg[0]["document_context"] == "series"
+
+    async def test_generate_video_resolves_auto_language_from_script_metadata(self, generator):
+        """Auto language should resolve to script output language for animation prompts."""
+        with patch.object(
+            generator,
+            "_generate_script",
+            AsyncMock(
+                return_value={
+                    "script": {"sections": [{"title": "S1", "narration": "Bonjour"}]},
+                    "output_language": "fr",
+                    "detected_language": "fr",
+                }
+            ),
+        ), patch("app.services.pipeline.assembly.video_generator.SectionOrchestrator") as mock_orch_class:
+            mock_orch = mock_orch_class.return_value
+            mock_orch.process_sections_parallel = AsyncMock(return_value=[{}])
+            mock_orch.aggregate_results = MagicMock(
+                return_value=(["v1.mp4"], ["a1.mp3"], [{"duration": 5.0}])
+            )
+            generator.video_processor.combine_sections = AsyncMock()
+            generator._cleanup_intermediate_files = AsyncMock()
+
+            await generator.generate_video(
+                job_id="job-lang-auto",
+                material_path="source.pdf",
+                language="auto",
+            )
+
+            kwargs = mock_orch.process_sections_parallel.await_args.kwargs
+            assert kwargs["language"] == "fr"
+            assert kwargs["sections"][0]["language"] == "fr"
+
+    async def test_generate_video_honors_explicit_language_over_script_metadata(self, generator):
+        """Explicit language should override detected/output language metadata."""
+        with patch.object(
+            generator,
+            "_generate_script",
+            AsyncMock(
+                return_value={
+                    "script": {"sections": [{"title": "S1", "narration": "Bonjour"}]},
+                    "output_language": "fr",
+                    "detected_language": "fr",
+                }
+            ),
+        ), patch("app.services.pipeline.assembly.video_generator.SectionOrchestrator") as mock_orch_class:
+            mock_orch = mock_orch_class.return_value
+            mock_orch.process_sections_parallel = AsyncMock(return_value=[{}])
+            mock_orch.aggregate_results = MagicMock(
+                return_value=(["v1.mp4"], ["a1.mp3"], [{"duration": 5.0}])
+            )
+            generator.video_processor.combine_sections = AsyncMock()
+            generator._cleanup_intermediate_files = AsyncMock()
+
+            await generator.generate_video(
+                job_id="job-lang-explicit",
+                material_path="source.pdf",
+                language="es",
+            )
+
+            kwargs = mock_orch.process_sections_parallel.await_args.kwargs
+            assert kwargs["language"] == "es"
+            assert kwargs["sections"][0]["language"] == "es"
