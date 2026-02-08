@@ -16,7 +16,7 @@ from .video_generator import VideoGenerator
 from .processor import VideoProcessor
 from .progress import ProgressTracker, JobProgress
 from .orchestrator import SectionOrchestrator
-from .ffmpeg import concatenate_videos, combine_sections
+from .ffmpeg import concatenate_videos, combine_sections, generate_thumbnail
 
 __all__ = [
     'VideoGenerator',
@@ -26,4 +26,6 @@ __all__ = [
     'SectionOrchestrator',
     'concatenate_videos',
     'combine_sections',
+    'generate_thumbnail',
 ]
+

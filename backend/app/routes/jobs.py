@@ -301,6 +301,7 @@ async def list_all_jobs():
             job_dict["title"] = video_info.title
             job_dict["total_duration"] = video_info.duration
             job_dict["sections_count"] = len(video_info.chapters)
+            job_dict["thumbnail_url"] = video_info.thumbnail_url
         else:
             try:
                 script = load_script(job.id)
@@ -333,6 +334,7 @@ async def list_all_jobs():
             "title": video_info.title,
             "total_duration": video_info.duration,
             "sections_count": len(video_info.chapters),
+            "thumbnail_url": video_info.thumbnail_url,
         })
         seen_ids.add(video_info.video_id)
 
@@ -396,6 +398,7 @@ async def list_completed_jobs():
             job_dict["title"] = video_info.title
             job_dict["total_duration"] = video_info.duration
             job_dict["sections_count"] = len(video_info.chapters)
+            job_dict["thumbnail_url"] = video_info.thumbnail_url
         else:
             try:
                 script = load_script(job.id)
@@ -427,6 +430,7 @@ async def list_completed_jobs():
             "title": video_info.title,
             "total_duration": video_info.duration,
             "sections_count": len(video_info.chapters),
+            "thumbnail_url": video_info.thumbnail_url,
         })
 
     return {"jobs": completed}

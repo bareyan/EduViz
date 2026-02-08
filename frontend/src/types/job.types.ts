@@ -50,6 +50,7 @@ export interface GalleryJob {
   title?: string
   total_duration?: number
   sections_count?: number
+  thumbnail_url?: string
 }
 
 export interface SectionFile {
