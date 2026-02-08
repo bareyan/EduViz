@@ -50,6 +50,10 @@ Create a structured plan with:
 - ALL text labels, titles, and non-mathematical text MUST be in **{language_name}**
 - Match the language of the narration exactly
 - Mathematical notation (MathTex, formulas) should remain in standard math notation
+- Use `MathTex(...)` for standalone formulas and symbolic expressions
+- Use `Tex(...)` for mixed prose + inline math (for example: "Value is $x$")
+- Do NOT place LaTeX commands (for example `\\in`, `\\frac`) inside `Text(...)`
+- Currency amounts like `$5` or `$12.99` are text, not math
 - Example: For Russian narration, use Russian text like "Введение" instead of "Introduction"
 
 ## QUALITY GUIDANCE
@@ -401,6 +405,10 @@ FULL_IMPLEMENTATION_USER = PromptTemplate(
 - ALL text labels, titles, and non-mathematical text MUST be in **{language_name}**
 - Match the language used in the choreography plan
 - Mathematical notation (MathTex, formulas) should remain in standard math notation
+- Use `MathTex(...)` for standalone formulas; do not wrap math with `$...$` inside `MathTex`
+- Use `Tex(...)` for mixed prose + inline math segments
+- Do NOT place LaTeX commands inside `Text(...)`
+- Currency amounts like `$5` or `$12.99` must stay in `Text(...)`
 - Example: For Russian, use `Text("Введение")` instead of `Text("Introduction")`
 - Example: For Ukrainian, use `Text("Вступ")` instead of `Text("Introduction")`
 
