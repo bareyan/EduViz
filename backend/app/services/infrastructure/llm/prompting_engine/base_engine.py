@@ -63,7 +63,7 @@ class PromptingEngine:
         self.config_key = config_key
         self.pipeline_name = pipeline_name
         self.client = create_client()
-        self.types = self.client.types
+        self.types = self.client._types_module
         self.cost_tracker = cost_tracker or CostTracker()
 
     def _get_config(self):

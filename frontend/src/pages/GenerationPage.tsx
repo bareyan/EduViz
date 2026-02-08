@@ -75,7 +75,6 @@ export default function GenerationPage() {
       <SummaryCard 
         analysis={analysis} 
         selectedTopics={selectedTopics} 
-        videoMode={videoMode} 
       />
 
       {/* Settings */}

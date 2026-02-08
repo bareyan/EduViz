@@ -30,8 +30,7 @@ export const VideoModeSelector: React.FC<VideoModeSelectorProps> = ({ videoMode,
           <p className="font-semibold">Comprehensive</p>
         </div>
         <p className="text-sm text-gray-400">
-          Full detailed coverage with all proofs, examples, and explanations. 
-          Longer videos (~15-45 min).
+          Full detailed coverage with all proofs, examples, and explanations.
         </p>
       </button>
       <button
@@ -50,7 +49,6 @@ export const VideoModeSelector: React.FC<VideoModeSelectorProps> = ({ videoMode,
         </div>
         <p className="text-sm text-gray-400">
           Fast summary covering key concepts and main ideas.
-          Shorter videos (~3-7 min).
         </p>
       </button>
     </div>

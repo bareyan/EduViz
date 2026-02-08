@@ -55,11 +55,6 @@ export default function AnalysisPage() {
 
   if (!analysis) return null
 
-  const totalDuration = selectedTopics.reduce((sum, idx) => {
-    const topic = analysis.suggested_topics.find(t => t.index === idx)
-    return sum + (topic?.estimated_duration || 0)
-  }, 0)
-
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       {/* Header */}
@@ -110,7 +105,6 @@ export default function AnalysisPage() {
       <div className="flex items-center justify-between p-4 bg-gray-900/50 rounded-xl border border-gray-800">
         <div>
           <p className="text-sm text-gray-500">Selected: {selectedTopics.length} topics</p>
-          <p className="text-lg font-semibold">~{Math.round(totalDuration / 60)} minutes total</p>
         </div>
         <button
           onClick={handleContinue}
@@ -176,7 +170,6 @@ function TopicCard({
             <span className={`px-2 py-0.5 rounded-full text-xs ${complexityColors[topic.complexity] || 'bg-gray-500/20 text-gray-400'}`}>
               {topic.complexity}
             </span>
-            <span className="text-sm text-gray-500">~{Math.round(topic.estimated_duration / 60)} min</span>
           </div>
           <p className="text-sm text-gray-400 mb-2">{topic.description}</p>
           {topic.subtopics.length > 0 && (
