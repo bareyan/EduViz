@@ -159,8 +159,11 @@ async def get_available_voices(language: str = "en"):
     tts_engine = os.getenv("TTS_ENGINE", "edge").lower().strip()
     
     if tts_engine == "gemini":
+        voices = get_gemini_tts_voices_for_language(language)
+        for voice in voices:
+            voice["preview_url"] = f"/static/voice_previews/{voice['id']}.mp3"
         return {
-            "voices": get_gemini_tts_voices_for_language(language),
+            "voices": voices,
             "languages": get_gemini_tts_available_languages(),
             "current_language": language,
             "default_voice": get_gemini_tts_default_voice(language),
@@ -168,8 +171,11 @@ async def get_available_voices(language: str = "en"):
         }
     
     # Default: Edge TTS
+    voices = TTSEngine.get_voices_for_language(language)
+    for voice in voices:
+        voice["preview_url"] = f"/static/voice_previews/{voice['id']}.mp3"
     return {
-        "voices": TTSEngine.get_voices_for_language(language),
+        "voices": voices,
         "languages": TTSEngine.get_available_languages(),
         "current_language": language,
         "default_voice": TTSEngine.get_default_voice_for_language(language),

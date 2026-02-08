@@ -2,6 +2,7 @@ export interface Voice {
   id: string
   name: string
   gender: string
+  preview_url?: string
 }
 
 export interface Language {
