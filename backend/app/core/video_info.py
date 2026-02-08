@@ -74,9 +74,43 @@ class VideoInfo:
         )
 
 
+@dataclass
+class ErrorInfo:
+    """Metadata for a failed video generation job."""
+    job_id: str
+    error_message: str
+    stage: str
+    timestamp: str
+    title: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "job_id": self.job_id,
+            "error_message": self.error_message,
+            "stage": self.stage,
+            "timestamp": self.timestamp,
+            "title": self.title,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ErrorInfo":
+        return cls(
+            job_id=data.get("job_id", ""),
+            error_message=data.get("error_message", "Unknown error"),
+            stage=data.get("stage", "unknown"),
+            timestamp=data.get("timestamp", ""),
+            title=data.get("title"),
+        )
+
+
 def _video_info_path(video_id: str) -> Path:
     """Get path to video_info.json for a video."""
     return OUTPUT_DIR / video_id / "video_info.json"
+
+
+def _error_info_path(job_id: str) -> Path:
+    """Get path to error_info.json for a failed job."""
+    return OUTPUT_DIR / job_id / "error_info.json"
 
 
 def save_video_info(info: VideoInfo) -> Path:
@@ -181,3 +215,47 @@ def create_video_info_from_result(video_id: str, result: Dict[str, Any], created
         created_at=created_at,
         thumbnail_url=result.get("thumbnail_url"),
     )
+
+
+def save_error_info(info: ErrorInfo) -> Path:
+    """Save error metadata to outputs directory."""
+    path = _error_info_path(info.job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(info.to_dict(), f, indent=2, ensure_ascii=False)
+    
+    return path
+
+
+def load_error_info(job_id: str) -> Optional[ErrorInfo]:
+    """Load error metadata from outputs directory."""
+    path = _error_info_path(job_id)
+    
+    if not path.exists():
+        return None
+    
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return ErrorInfo.from_dict(data)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def list_all_failures() -> List[ErrorInfo]:
+    """List all persistent failures."""
+    failures = []
+    
+    if not OUTPUT_DIR.exists():
+        return failures
+    
+    for job_dir in OUTPUT_DIR.iterdir():
+        if not job_dir.is_dir():
+            continue
+        
+        info = load_error_info(job_dir.name)
+        if info:
+            failures.append(info)
+    
+    return failures

@@ -105,6 +105,10 @@ from .video_info import (
     video_info_exists,
     list_all_videos,
     create_video_info_from_result,
+    ErrorInfo,
+    save_error_info,
+    load_error_info,
+    list_all_failures,
 )
 
 __all__ = [
@@ -169,5 +173,9 @@ __all__ = [
     "video_info_exists",
     "list_all_videos",
     "create_video_info_from_result",
+    "ErrorInfo",
+    "save_error_info",
+    "load_error_info",
+    "list_all_failures",
 ]
 

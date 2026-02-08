@@ -29,6 +29,8 @@ from ..core import (
     assert_runtime_tools_available,
     load_video_info,
     list_all_videos,
+    load_error_info,
+    list_all_failures,
 )
 from .jobs_helpers import (
     get_stage_from_status,
@@ -255,6 +257,26 @@ async def list_all_jobs():
             "title": video_info.title,
             "total_duration": video_info.duration,
             "sections_count": len(video_info.chapters),
+        })
+        seen_ids.add(video_info.video_id)
+
+    # Add persistent failures (job data cleaned but error persisted)
+    for error_info in list_all_failures():
+        if error_info.job_id in seen_ids:
+            continue
+
+        jobs.append({
+            "id": error_info.job_id,
+            "status": "failed",
+            "progress": 0,
+            "message": error_info.error_message,
+            "created_at": error_info.timestamp,
+            "updated_at": error_info.timestamp,
+            "result": None,
+            "error": error_info.error_message,
+            "video_exists": False,
+            "video_url": None,
+            "title": error_info.title or f"Failed Job ({error_info.job_id[:8]})",
         })
 
     return {"jobs": jobs}

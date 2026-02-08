@@ -261,6 +261,19 @@ class GenerationUseCase:
                     )
                 else:
                     error_msg = result.get("error", "Video generation failed")
+                    
+                    # Persist error info
+                    from datetime import datetime
+                    from app.core import ErrorInfo, save_error_info
+                    
+                    error_info = ErrorInfo(
+                        job_id=job_id,
+                        error_message=error_msg,
+                        stage="generation",
+                        timestamp=datetime.now().isoformat(),
+                    )
+                    save_error_info(error_info)
+                    
                     self.job_manager.update_job(
                         job_id,
                         JobStatus.FAILED,
@@ -270,7 +283,21 @@ class GenerationUseCase:
 
             except Exception as e:  # noqa: BLE001
                 traceback.print_exc()
-                self.job_manager.update_job(job_id, JobStatus.FAILED, 0, f"Error: {str(e)}")
+                error_msg = f"Error: {str(e)}"
+                
+                # Persist error info for exceptions too
+                from datetime import datetime
+                from app.core import ErrorInfo, save_error_info
+                
+                error_info = ErrorInfo(
+                    job_id=job_id,
+                    error_message=error_msg,
+                    stage="exception",
+                    timestamp=datetime.now().isoformat(),
+                )
+                save_error_info(error_info)
+                
+                self.job_manager.update_job(job_id, JobStatus.FAILED, 0, error_msg)
 
         background_tasks.add_task(run_generation)
 
