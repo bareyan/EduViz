@@ -26,11 +26,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
-# Create runtime directories
-RUN mkdir -p uploads outputs job_data logs
-
-# Create non-root user
+# Create non-root user and set up directories with proper permissions
 RUN useradd -m -u 1000 appuser && \
+    mkdir -p uploads outputs job_data logs && \
     chown -R appuser:appuser /app
 
 # Switch to non-root user
@@ -39,8 +37,8 @@ USER appuser
 # Expose port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+# Health check - increased start period for texlive initialization
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
 # Run the application

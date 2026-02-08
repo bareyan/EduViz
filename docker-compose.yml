@@ -12,15 +12,24 @@ services:
       - ./backend/outputs:/app/outputs
       - ./backend/job_data:/app/job_data
       - ./backend/logs:/app/logs
+    # Run as host user to fix volume permission issues
+    user: "${UID:-1000}:${GID:-1000}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
+      start_period: 60s
     restart: unless-stopped
     networks:
       - eduviz-network
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 6G
+        reservations:
+          memory: 2G
 
   frontend:
     build:
@@ -34,6 +43,13 @@ services:
     restart: unless-stopped
     networks:
       - eduviz-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          memory: 256M
 
 networks:
   eduviz-network:
