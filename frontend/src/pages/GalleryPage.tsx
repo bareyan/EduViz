@@ -44,7 +44,7 @@ export default function GalleryPage() {
       await jobService.deleteJob(jobId)
       toast.success('Job deleted')
       loadJobs()
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete job')
     }
   }
@@ -56,7 +56,7 @@ export default function GalleryPage() {
       const result = await jobService.deleteFailedJobs()
       toast.success(`Deleted ${result.deleted_count} failed jobs`)
       loadJobs()
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete failed jobs')
     }
   }

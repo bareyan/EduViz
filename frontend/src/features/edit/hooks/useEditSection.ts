@@ -8,7 +8,7 @@ export const useEditSection = (jobId: string) => {
   const [selectedSection, setSelectedSection] = useState<SectionEdit | null>(null);
   const [loading, setLoading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  
+
   const [capturedFrames, setCapturedFrames] = useState<{ time: number; dataUrl: string }[]>([]);
   const [fixPrompt, setFixPrompt] = useState('');
   const [videoLoaded, setVideoLoaded] = useState(false);
@@ -40,7 +40,7 @@ export const useEditSection = (jobId: string) => {
       await jobService.regenerateSection(jobId, sectionId);
       await fetchSections();
       toast.success('Section regenerated successfully!');
-    } catch (error) {
+    } catch {
       toast.error('Failed to regenerate section');
     } finally {
       setIsProcessing(false);
@@ -57,7 +57,7 @@ export const useEditSection = (jobId: string) => {
       setIsProcessing(true);
       // Backend expects 'error' as the prompt field for fix
       const { fixed_code } = await jobService.fixSection(jobId, sectionId, fixPrompt, currentCode);
-      
+
       if (fixed_code) {
         await jobService.updateSectionCode(jobId, sectionId, fixed_code);
         toast.success('Code fixed! Regenerating...');
@@ -66,7 +66,7 @@ export const useEditSection = (jobId: string) => {
         setFixPrompt('');
         setCapturedFrames([]);
       }
-    } catch (error) {
+    } catch {
       toast.error('Failed to fix section');
     } finally {
       setIsProcessing(false);
@@ -79,7 +79,7 @@ export const useEditSection = (jobId: string) => {
       await jobService.updateSectionCode(jobId, sectionId, code);
       toast.success('Code saved!');
       await fetchSections();
-    } catch (error) {
+    } catch {
       toast.error('Failed to save code');
     } finally {
       setIsProcessing(false);
@@ -91,29 +91,29 @@ export const useEditSection = (jobId: string) => {
       toast.error('Video not ready yet');
       return;
     }
-    
+
     if (video.videoWidth === 0 || video.videoHeight === 0) {
       toast.error('Video dimensions not available');
       return;
     }
-    
+
     try {
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
-      
+
       ctx.drawImage(video, 0, 0);
       const dataUrl = canvas.toDataURL('image/png');
-      
+
       setCapturedFrames(prev => [...prev, {
         time: video.currentTime,
         dataUrl
       }]);
-      
+
       toast.success(`Frame captured at ${video.currentTime.toFixed(2)}s`);
-    } catch (err: any) {
+    } catch {
       toast.error('Failed to capture frame');
     }
   }, [videoLoaded]);
