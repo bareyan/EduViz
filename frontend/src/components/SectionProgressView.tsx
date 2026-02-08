@@ -15,7 +15,9 @@ import {
   Eye,
   Play
 } from 'lucide-react'
-import { SectionProgress, DetailedProgress, getSectionDetails, SectionDetails, API_BASE } from '../api'
+import { SectionProgress, DetailedProgress, SectionDetails } from '../types/job.types'
+import { API_BASE } from '../config/api.config'
+import { jobService } from '../services/job.service'
 
 interface SectionProgressViewProps {
   details: DetailedProgress
@@ -484,7 +486,7 @@ export function SectionScriptModal({ section, jobId, onClose }: SectionScriptMod
   useEffect(() => {
     if (section && jobId) {
       setLoading(true)
-      getSectionDetails(jobId, section.index)
+      jobService.getSectionDetails(jobId, section.index)
         .then(data => {
           setDetails(data)
         })

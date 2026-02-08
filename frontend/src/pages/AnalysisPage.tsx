@@ -1,53 +1,14 @@
-import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Loader2, BookOpen, Calculator, Clock, ChevronRight, Check, AlertCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { analyzeFile, AnalysisResult, TopicSuggestion } from '../api'
+import { useAnalysis } from '../hooks/useAnalysis'
+import { TopicSuggestion } from '../types/analysis.types'
 
 export default function AnalysisPage() {
   const { fileId } = useParams<{ fileId: string }>()
   const navigate = useNavigate()
-  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null)
-  const [selectedTopics, setSelectedTopics] = useState<number[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
   
-  // Prevent double-call in React StrictMode
-  const hasAnalyzed = useRef(false)
-
-  useEffect(() => {
-    if (!fileId) return
-    
-    // Prevent double-analysis in StrictMode
-    if (hasAnalyzed.current) return
-    hasAnalyzed.current = true
-
-    const runAnalysis = async () => {
-      try {
-        setIsLoading(true)
-        const result = await analyzeFile(fileId)
-        setAnalysis(result)
-        // Select all topics by default
-        setSelectedTopics(result.suggested_topics.map(t => t.index))
-      } catch (err) {
-        console.error('Analysis failed:', err)
-        setError('Failed to analyze the file. Please try again.')
-        toast.error('Analysis failed')
-      } finally {
-        setIsLoading(false)
-      }
-    }
-
-    runAnalysis()
-  }, [fileId])
-
-  const toggleTopic = (index: number) => {
-    setSelectedTopics(prev => 
-      prev.includes(index) 
-        ? prev.filter(i => i !== index)
-        : [...prev, index]
-    )
-  }
+  const { analysis, selectedTopics, isLoading, error, toggleTopic, saveToStorage } = useAnalysis(fileId)
 
   const handleContinue = () => {
     if (selectedTopics.length === 0) {
@@ -55,10 +16,7 @@ export default function AnalysisPage() {
       return
     }
     
-    // Store selection in session storage for the next page
-    sessionStorage.setItem('selectedTopics', JSON.stringify(selectedTopics))
-    sessionStorage.setItem('analysis', JSON.stringify(analysis))
-    
+    saveToStorage()
     navigate(`/generate/${analysis?.analysis_id}`)
   }
 
@@ -187,7 +145,7 @@ function TopicCard({
   isSelected: boolean
   onToggle: () => void 
 }) {
-  const complexityColors = {
+  const complexityColors: Record<string, string> = {
     beginner: 'bg-green-500/20 text-green-400',
     intermediate: 'bg-yellow-500/20 text-yellow-400',
     advanced: 'bg-red-500/20 text-red-400',
@@ -215,7 +173,7 @@ function TopicCard({
         <div className="flex-1">
           <div className="flex items-center gap-3 mb-2">
             <h3 className="font-semibold">{topic.title}</h3>
-            <span className={`px-2 py-0.5 rounded-full text-xs ${complexityColors[topic.complexity]}`}>
+            <span className={`px-2 py-0.5 rounded-full text-xs ${complexityColors[topic.complexity] || 'bg-gray-500/20 text-gray-400'}`}>
               {topic.complexity}
             </span>
             <span className="text-sm text-gray-500">~{Math.round(topic.estimated_duration / 60)} min</span>
