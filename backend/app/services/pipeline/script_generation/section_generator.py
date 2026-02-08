@@ -10,6 +10,7 @@ Also handles narration segmentation and script validation (shared by all modes).
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -19,6 +20,20 @@ from .schema_filter import filter_section
 
 class SectionGenerator:
     """Generates script sections and post-processes narration."""
+
+    _REFERENCE_TOKEN_PATTERN = (
+        r"(?:figure|fig(?:ure)?\.?|table|equation|eq\.?|appendix)\s*(?:\(|#)?\s*[A-Za-z0-9]+\s*\)?"
+    )
+    _REFERENCE_PATTERN = re.compile(
+        r"\b(?P<kind>figure|fig(?:ure)?\.?|table|equation|eq\.?|appendix)\s*(?:\(|#)?\s*(?P<id>[A-Za-z0-9]+)\s*\)?",
+        re.IGNORECASE,
+    )
+    _DEICTIC_REFERENCE_PATTERNS = [
+        re.compile(rf"\bif you look at\s+(?:the\s+)?(?P<ref>{_REFERENCE_TOKEN_PATTERN})\s*,?\s*", re.IGNORECASE),
+        re.compile(rf"\bas you can see in\s+(?:the\s+)?(?P<ref>{_REFERENCE_TOKEN_PATTERN})\s*,?\s*", re.IGNORECASE),
+        re.compile(rf"\bas shown in\s+(?:the\s+)?(?P<ref>{_REFERENCE_TOKEN_PATTERN})\s*,?\s*", re.IGNORECASE),
+        re.compile(rf"\blooking at\s+(?:the\s+)?(?P<ref>{_REFERENCE_TOKEN_PATTERN})\s*,?\s*", re.IGNORECASE),
+    ]
 
     def __init__(self, base: BaseScriptGenerator, use_pdf_page_slices: Optional[bool] = None):
         self.base = base
@@ -303,6 +318,8 @@ class SectionGenerator:
                         if not section.get("supporting_data"):
                             section["supporting_data"] = []
 
+                        section = self._ensure_reference_content(section)
+
                         # Store source PDF metadata
                         if source_pages:
                             section["source_pages"] = source_pages
@@ -394,6 +411,10 @@ CONTEXT & INSTRUCTIONS:
 - Avoid placeholder phrasing like "we fill the table" without specifying what the table contains
 - The outline is STRUCTURAL. Do not repeat it verbatim in narration.
 - Put full data and calculations ONLY in supporting_data (no truncation).
+- References to source artifacts (Figure/Table/Equation/Appendix) are allowed ONLY when narration immediately explains what viewers are seeing.
+- Never use deictic-only phrasing like "as shown in Figure X" without describing the contents in plain language.
+- Avoid document-dependent wording like "if you look at ...", "in the paper", or "from the paper".
+- The narration must sound complete and understandable on its own, even without the document.
 - Length target: ~{target_seconds} seconds (~{min_words}–{max_words} words). Stay close.
 
 LECTURE OUTLINE:
@@ -423,6 +444,8 @@ SUPPORTING DATA (CRITICAL — BE EXHAUSTIVE):
 - Do NOT narrate every table value; summarize key takeaways instead.
 - Prefer structured values (arrays/objects) so visuals can be generated accurately.
 - Each item must include: type, label, value, notes (notes can be empty).
+- If narration cites Figure/Table/Equation/Appendix, add a matching `referenced_content`
+  item with a label like "Figure 3" and value including `recreate_in_video: true`.
 
 OUTPUT: Valid JSON only, no markdown. Generate complete narration:
 {{"id": "{section_outline.get('id', f'section_{section_idx}')}",
@@ -448,6 +471,10 @@ SECTION REQUIREMENTS:
 - Avoid placeholder phrasing like "we fill the table" without specifying what the table contains.
 - The outline is STRUCTURAL. Do not repeat it verbatim in narration.
 - Put full data and calculations ONLY in supporting_data (no truncation).
+- References to source artifacts (Figure/Table/Equation/Appendix) are allowed ONLY when narration immediately explains what viewers are seeing.
+- Never use deictic-only phrasing like "as shown in Figure X" without describing the contents in plain language.
+- Avoid document-dependent wording like "if you look at ...", "in the paper", or "from the paper".
+- The narration must sound complete and understandable on its own, even without the document.
 
 DEPTH & LENGTH TARGETS:
 - Maintain university-lecture depth (full motivation, intuition, formalism, and careful explanation)
@@ -474,6 +501,8 @@ SUPPORTING DATA (CRITICAL — BE EXHAUSTIVE):
 - Do NOT narrate every table value; summarize key takeaways instead.
 - Prefer structured values (arrays/objects) so visuals can be generated accurately.
 - Each item must include: type, label, value, notes (notes can be empty).
+- If narration cites Figure/Table/Equation/Appendix, add a matching `referenced_content`
+  item with a label like "Figure 3" and value including `recreate_in_video: true`.
 
 OUTPUT: Valid JSON only.
 {{"id": "{section_outline.get('id', f'section_{section_idx}')}",
@@ -623,6 +652,7 @@ OUTPUT: Valid JSON only.
                 section["narration"] = narration
                 section["tts_narration"] = narration
 
+            section = self._ensure_reference_content(section)
             segments = self._split_narration_into_segments(narration)
             if not segments:
                 segments = [
@@ -752,9 +782,151 @@ OUTPUT: Valid JSON only.
                 section["narration"] = "Let's explore this concept..."
             if "tts_narration" not in section:
                 section["tts_narration"] = section["narration"]
+            if not section.get("supporting_data"):
+                section["supporting_data"] = []
+            script["sections"][i] = self._ensure_reference_content(section)
 
         script["total_duration_seconds"] = sum(s.get("duration_seconds", 0) for s in script.get("sections", []))
         return script
+
+    @classmethod
+    def _normalize_reference_kind(cls, raw_kind: str) -> str:
+        token = (raw_kind or "").strip().lower().rstrip(".")
+        if token.startswith("fig"):
+            return "Figure"
+        if token.startswith("eq"):
+            return "Equation"
+        if token == "table":
+            return "Table"
+        if token == "appendix":
+            return "Appendix"
+        return token.title()
+
+    @classmethod
+    def _reference_key_from_text(cls, text: Any) -> Optional[str]:
+        if text is None:
+            return None
+        raw = str(text).strip()
+        if not raw:
+            return None
+
+        normalized_key = raw.lower()
+        if ":" in normalized_key:
+            prefix, suffix = normalized_key.split(":", 1)
+            if prefix in {"figure", "table", "equation", "appendix"} and suffix:
+                return f"{prefix}:{suffix}"
+
+        match = cls._REFERENCE_PATTERN.search(raw)
+        if not match:
+            return None
+
+        kind = cls._normalize_reference_kind(match.group("kind")).lower()
+        ref_id = match.group("id").strip().lower()
+        return f"{kind}:{ref_id}"
+
+    @classmethod
+    def _extract_reference_mentions(cls, text: str) -> List[str]:
+        mentions: List[str] = []
+        seen: set[str] = set()
+        for match in cls._REFERENCE_PATTERN.finditer(text or ""):
+            kind = cls._normalize_reference_kind(match.group("kind"))
+            ref_id = match.group("id").strip()
+            label = f"{kind} {ref_id}"
+            key = cls._reference_key_from_text(label)
+            if key and key not in seen:
+                mentions.append(label)
+                seen.add(key)
+        return mentions
+
+    @classmethod
+    def _normalize_reference_label(cls, text: str) -> str:
+        match = cls._REFERENCE_PATTERN.search(text or "")
+        if not match:
+            return (text or "").strip()
+        return f"{cls._normalize_reference_kind(match.group('kind'))} {match.group('id').strip()}"
+
+    @classmethod
+    def _rewrite_deictic_reference_language(cls, text: str) -> tuple[str, int]:
+        updated = str(text or "")
+        rewrites = 0
+
+        for pattern in cls._DEICTIC_REFERENCE_PATTERNS:
+            def replace_ref(match: re.Match[str]) -> str:
+                nonlocal rewrites
+                rewrites += 1
+                normalized = cls._normalize_reference_label(match.group("ref"))
+                return f"{normalized} shows "
+
+            updated = pattern.sub(replace_ref, updated)
+
+        for pattern, replacement in (
+            (re.compile(r"\bin the paper\b", re.IGNORECASE), "in this explanation"),
+            (re.compile(r"\bfrom the paper\b", re.IGNORECASE), "from the source material"),
+        ):
+            updated, count = pattern.subn(replacement, updated)
+            rewrites += count
+
+        updated = re.sub(r"\s+", " ", updated).strip()
+        return updated, rewrites
+
+    @classmethod
+    def _ensure_reference_content(cls, section: Dict[str, Any]) -> Dict[str, Any]:
+        narration, narration_rewrites = cls._rewrite_deictic_reference_language(section.get("narration", ""))
+        tts_narration, tts_rewrites = cls._rewrite_deictic_reference_language(section.get("tts_narration", ""))
+        section["narration"] = narration
+        section["tts_narration"] = tts_narration
+        combined_text = f"{narration}\n{tts_narration}"
+        mentions = cls._extract_reference_mentions(combined_text)
+        if not mentions:
+            return section
+
+        supporting_data = section.get("supporting_data")
+        if not isinstance(supporting_data, list):
+            supporting_data = []
+
+        existing_keys: set[str] = set()
+        for item in supporting_data:
+            if not isinstance(item, dict):
+                continue
+            for candidate in (item.get("label"), item.get("type")):
+                key = cls._reference_key_from_text(candidate)
+                if key:
+                    existing_keys.add(key)
+            value = item.get("value")
+            if isinstance(value, dict):
+                for field in ("reference", "binding_key"):
+                    key = cls._reference_key_from_text(value.get(field))
+                    if key:
+                        existing_keys.add(key)
+
+        added = 0
+        for mention in mentions:
+            key = cls._reference_key_from_text(mention)
+            if not key or key in existing_keys:
+                continue
+            supporting_data.append(
+                {
+                    "type": "referenced_content",
+                    "label": mention,
+                    "value": {
+                        "reference": mention,
+                        "binding_key": key,
+                        "recreate_in_video": True,
+                    },
+                    "notes": "Referenced in narration; must be visualized explicitly.",
+                }
+            )
+            existing_keys.add(key)
+            added += 1
+
+        section["supporting_data"] = supporting_data
+        print(
+            f"[SectionGen] reference_mentions={len(mentions)} "
+            f"deictic_rewrites={narration_rewrites + tts_rewrites} "
+            f"synthetic_reference_items_added={added} "
+            f"supporting_data_count={len(supporting_data)}"
+        )
+        return section
 
     def _default_script(self) -> Dict[str, Any]:
         return {

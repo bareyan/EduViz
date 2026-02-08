@@ -62,13 +62,29 @@ Create a structured plan with:
   - Use "relative_to" + "relation" fields to position objects relative to each other
   - Examples: title "above" equation, note_box "right_of" diagram, label "below" graph
   - "spacing" controls distance (0.3-1.0 recommended, larger for separation)
+  - Minimum non-touch margins for co-visible objects:
+    text-text >= 0.4, text-shape >= 0.3, shape-shape >= 0.2
   - First/anchor objects use "relative_to": null and absolute "position"
   - This ensures implementation stage maintains proper spacing automatically
+- **SCREEN ZONING (MANDATORY)**:
+  - Assign every object a `layout_zone` from:
+    top_left, top_center, top_right, mid_left, center, mid_right,
+    bottom_left, bottom_center, bottom_right
+  - Co-visible objects should occupy distinct zones unless one replaces another
+  - Do not stack multiple text-heavy objects at `center`
+- **VISUAL INTENT METADATA**:
+  - For EVERY step, include `visual_change`: what viewers should see change on screen
+  - For EVERY step, include `narration_cue`: short phrase from narration this step aligns to
+  - Use optional `data_binding` when step/object maps to supporting_data or a referenced content item
+- If narration cites Figure/Table/Equation/Appendix, include object(s) that recreate it and bind them via `data_binding`
+- Do NOT invent external files or fake paths.
+- Use `asset_path` ONLY when a concrete usable file path is already present in Section Data; otherwise leave it empty.
 
 ## CONSTRAINTS (STRICT)
 - Max 20 objects total
 - Max 6 steps per segment
 - Notes length: 12 words or fewer
+- Never plan co-visible objects with zero gap or touching boundaries
 - Avoid line breaks inside strings
 - Position must be one of: center, left, right, up, down, upper_left, upper_right, lower_left, lower_right, or x,y
 - Use ONLY Manim direction constants: UP, DOWN, LEFT, RIGHT, UL, UR, DL, DR, IN, OUT, ORIGIN
@@ -97,10 +113,11 @@ Return a single JSON object with this schema:
       "type": "string",
       "text": "string",
       "latex": "string",
-      "asset_path": "string",
       "appears_at": 0.0,
       "removed_at": 5.0,
       "notes": "string",
+      "visual_description": "string",
+      "layout_zone": "top_left|top_center|top_right|mid_left|center|mid_right|bottom_left|bottom_center|bottom_right",
       "relative_to": "object_id|null",
       "relation": "above|below|left_of|right_of|null",
       "spacing": 0.5
@@ -119,7 +136,10 @@ Return a single JSON object with this schema:
           "source": "object_id",
           "position": "string",
           "duration": 1.5,
-          "notes": "string"
+          "notes": "string",
+          "visual_change": "string",
+          "narration_cue": "string",
+          "data_binding": "string"
         }}
       ]
     }}
@@ -165,6 +185,10 @@ CHOREOGRAPHY_COMPACT_USER = PromptTemplate(
 - Max 3 steps per segment
 - No line breaks inside strings
 - Keep output as small as possible
+- Prefer including `visual_change` and `narration_cue` when token budget allows
+- Keep `layout_zone` for each object when token budget allows
+- Do NOT invent external files or fake paths.
+- Use `asset_path` ONLY when a concrete usable file path is already present in the provided content.
 - Position must be one of: center, left, right, up, down, upper_left, upper_right, lower_left, lower_right, or x,y
 - Use ONLY Manim direction constants: UP, DOWN, LEFT, RIGHT, UL, UR, DL, DR, IN, OUT, ORIGIN
 - DO NOT use TOP or BOTTOM
@@ -188,9 +212,9 @@ Return a single JSON object with this schema:
       "type": "string",
       "text": "string",
       "latex": "string",
-      "asset_path": "string",
       "appears_at": 0.0,
       "removed_at": 5.0,
+      "layout_zone": "string",
       "relative_to": "object_id|null",
       "relation": "above|below|left_of|right_of|null",
       "spacing": 0.5
@@ -208,7 +232,10 @@ Return a single JSON object with this schema:
           "target": "object_id",
           "source": "object_id",
           "position": "string",
-          "duration": 1.5
+          "duration": 1.5,
+          "visual_change": "string",
+          "narration_cue": "string",
+          "data_binding": "string"
         }}
       ]
     }}
@@ -254,6 +281,10 @@ CHOREOGRAPHY_OBJECTS_USER = PromptTemplate(
 - No notes or narration fields
 - No line breaks inside strings
 - Keep output as small as possible
+- If possible, include `visual_description` to clarify object intent
+- Keep `layout_zone` if possible to support overlap-free placement
+- Do NOT invent external files or fake paths.
+- Use `asset_path` ONLY when a concrete usable file path is already present in the provided content.
 - 3D objects allowed ONLY when scene_type is "3D"
 
 ## OUTPUT FORMAT (STRICT JSON ONLY)
@@ -274,9 +305,10 @@ Return a single JSON object with this schema:
       "type": "string",
       "text": "string",
       "latex": "string",
-      "asset_path": "string",
       "appears_at": 0.0,
-      "removed_at": 5.0
+      "removed_at": 5.0,
+      "visual_description": "string",
+      "layout_zone": "string"
     }}
   ]
 }}
@@ -305,6 +337,8 @@ CHOREOGRAPHY_SEGMENTS_USER = PromptTemplate(
 - Max 3 steps per segment
 - No line breaks inside strings
 - Keep output as small as possible
+- Prefer including `visual_change` and `narration_cue` when token budget allows
+- Do NOT invent external files or fake paths.
 - Position must be one of: center, left, right, up, down, upper_left, upper_right, lower_left, lower_right, or x,y
 - Use ONLY Manim direction constants: UP, DOWN, LEFT, RIGHT, UL, UR, DL, DR, IN, OUT, ORIGIN
 - DO NOT use TOP or BOTTOM
@@ -326,7 +360,10 @@ Return a single JSON object with this schema:
           "target": "object_id",
           "source": "object_id",
           "position": "string",
-          "duration": 1.5
+          "duration": 1.5,
+          "visual_change": "string",
+          "narration_cue": "string",
+          "data_binding": "string"
         }}
       ]
     }}
@@ -374,6 +411,16 @@ FULL_IMPLEMENTATION_USER = PromptTemplate(
 4. Implement `def construct(self):`
 5. Do NOT override the theme background (it is enforced)
 6. **STRICTLY FOLLOW the Constraints & Patterns below to avoid crashes.**
+7. Prioritize step metadata when present:
+   - `visual_change`: exact on-screen state change to implement
+   - `narration_cue`: timing/meaning alignment for the step
+   - `data_binding`: bind visuals to matching supporting/reference data
+8. If these metadata fields are missing in a step, fall back to `action` + `notes`.
+9. Honor object-level `layout_zone` + `relative_to` + `relation` to avoid overlap.
+10. When multiple objects are visible together, spread them across zones and use
+    `next_to(..., buff=...)` rather than `move_to(ORIGIN)` for all.
+11. Maintain minimum clear margins between co-visible objects:
+    text-text >= 0.4, text-shape >= 0.3, shape-shape >= 0.2.
 
 ## MANIM PATTERNS & CRITICAL CONSTRAINTS
 {patterns}

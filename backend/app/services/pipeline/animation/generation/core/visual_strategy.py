@@ -39,13 +39,45 @@ def build_visual_strategy(
     mode = (video_mode or "comprehensive").strip().lower()
     context = (document_context or "auto").strip().lower()
     visual_type = str(section.get("visual_type", "")).strip().lower()
+    section_data = section.get("section_data") if isinstance(section.get("section_data"), dict) else {}
+    supporting_data = section_data.get("supporting_data")
+    if not isinstance(supporting_data, list):
+        supporting_data = section.get("supporting_data", [])
+    if not isinstance(supporting_data, list):
+        supporting_data = []
+
+    reference_items = [
+        item
+        for item in supporting_data
+        if isinstance(item, dict)
+        and (
+            str(item.get("type", "")).strip().lower() == "referenced_content"
+            or (
+                isinstance(item.get("value"), dict)
+                and bool(item.get("value", {}).get("recreate_in_video", False))
+            )
+        )
+    ]
 
     base = [
         f"Mode={mode}; Context={context}; Section visual_type={visual_type or 'unspecified'}.",
+        f"Supporting data items={len(supporting_data)}; referenced items={len(reference_items)}.",
         "Keep every visual tied to narration and avoid decorative-only objects.",
         "Use varied object families when relevant: Axes/NumberPlane, plotted curves, tables, arrows, braces, highlights, and geometric primitives.",
         "Prefer animated state changes (Transform/ReplacementTransform, progressive reveals, moving indicators) over static title-card sequences.",
+        "For every step, provide explicit visual_change and narration_cue text.",
+        "Bind visuals to supporting data with data_binding keys when possible.",
+        "Assign layout_zone for each object and spread co-visible objects across different zones.",
+        "Avoid placing multiple co-visible text blocks at center; use relative_to/relation/spacing to keep separation.",
     ]
+
+    if reference_items:
+        base.extend(
+            [
+                "REFERENCE RECREATION: If narration cites Figure/Table/Equation/Appendix, recreate it on-screen.",
+                "For each cited artifact, include at least one bound object with a matching data_binding key.",
+            ]
+        )
 
     if focus == "practice":
         base.extend(

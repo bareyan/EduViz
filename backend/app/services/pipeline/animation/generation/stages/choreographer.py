@@ -67,6 +67,14 @@ class Choreographer:
             or section.get("visual_data")
             or section.get("metadata")
         )
+        if not isinstance(section_data, dict):
+            section_data = {}
+        if isinstance(section.get("supporting_data"), list):
+            section_data.setdefault("supporting_data", section.get("supporting_data"))
+        if section.get("source_pages") is not None:
+            section_data.setdefault("source_pages", section.get("source_pages"))
+        if section.get("source_pdf_path"):
+            section_data.setdefault("source_pdf_path", section.get("source_pdf_path"))
         
         prompt = CHOREOGRAPHY_USER.format(
             title=section.get("title", DEFAULT_SECTION_TITLE),

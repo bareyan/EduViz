@@ -19,6 +19,7 @@ from app.services.pipeline.assembly.sections import (
     _generate_audio_whole_section,
     _generate_audio_per_segment,
     process_segments_audio_first,
+    process_single_subsection,
     clean_narration_for_tts,
 )
 
@@ -362,3 +363,104 @@ class TestChunkedFallbackBehavior:
         assert result["video_path"] is None
         assert result["audio_path"] is None
         assert manim_generator.generate_animation.await_count == 0
+
+
+@pytest.mark.asyncio
+class TestSectionDataForwarding:
+    async def test_process_segments_audio_first_forwards_section_data(self, tmp_path):
+        section = {
+            "id": "s1",
+            "title": "Section",
+            "video_mode": "comprehensive",
+            "duration_seconds": 120,
+            "language": "en",
+            "supporting_data": [
+                {
+                    "type": "referenced_content",
+                    "label": "Figure 3",
+                    "value": {"binding_key": "figure:3", "recreate_in_video": True},
+                }
+            ],
+            "source_pages": {"start": 2, "end": 4},
+            "source_pdf_path": "/tmp/source.pdf",
+        }
+        narration_segments = [
+            {"text": "Figure 3 shows the block stack.", "estimated_duration": 8.0}
+        ]
+
+        tts_engine = MagicMock(spec=[])
+        tts_engine._whole_section_tts = True
+        manim_generator = MagicMock()
+        manim_generator.generate_animation = AsyncMock(side_effect=Exception("stop after payload capture"))
+
+        segment_info = [
+            {
+                "segment_index": 0,
+                "text": narration_segments[0]["text"],
+                "duration": 8.0,
+                "start_time": 0.0,
+                "end_time": 8.0,
+                "audio_path": str(tmp_path / "section_audio.mp3"),
+                "seg_dir": str(tmp_path / "seg_0"),
+            }
+        ]
+
+        with patch(
+            "app.services.pipeline.assembly.sections._generate_audio_whole_section",
+            AsyncMock(return_value=(segment_info, 8.0)),
+        ):
+            await process_segments_audio_first(
+                manim_generator=manim_generator,
+                tts_engine=tts_engine,
+                section=section,
+                narration_segments=narration_segments,
+                section_dir=tmp_path,
+                section_index=0,
+                voice="Charon",
+                style="clean",
+                language="en",
+            )
+
+        payload = manim_generator.generate_animation.await_args.kwargs["section"]
+        assert payload["section_data"]["supporting_data"] == section["supporting_data"]
+        assert payload["section_data"]["source_pages"] == section["source_pages"]
+        assert payload["section_data"]["source_pdf_path"] == section["source_pdf_path"]
+        assert payload["section_data"]["reference_items"][0]["binding_key"] == "figure:3"
+
+    async def test_process_single_subsection_adds_section_data(self, tmp_path):
+        section = {
+            "id": "single",
+            "title": "Single Subsection",
+            "language": "en",
+            "supporting_data": [
+                {
+                    "type": "referenced_content",
+                    "label": "Table 1",
+                    "value": {"binding_key": "table:1", "recreate_in_video": True},
+                }
+            ],
+        }
+        tts_engine = MagicMock()
+        tts_engine.generate_speech = AsyncMock(return_value=None)
+        manim_generator = MagicMock()
+        manim_generator.generate_animation = AsyncMock(side_effect=Exception("stop after payload capture"))
+
+        with patch(
+            "app.services.pipeline.assembly.sections.get_audio_duration",
+            AsyncMock(return_value=4.0),
+        ):
+            await process_single_subsection(
+                manim_generator=manim_generator,
+                tts_engine=tts_engine,
+                section=section,
+                narration="Table 1 compares methods.",
+                section_dir=tmp_path,
+                section_index=0,
+                voice="Charon",
+                style="clean",
+                language="en",
+            )
+
+        payload = manim_generator.generate_animation.await_args.kwargs["section"]
+        assert payload["section_data"]["supporting_data"] == section["supporting_data"]
+        assert payload["section_data"]["reference_items"][0]["binding_key"] == "table:1"

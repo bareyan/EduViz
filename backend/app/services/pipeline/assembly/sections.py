@@ -93,6 +93,78 @@ def _resolve_language_code(*candidates: Optional[str], default: str = "en") -> s
     return default
 
 
+def _extract_reference_items_from_supporting_data(
+    supporting_data: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Derive explicit reference items from supporting data entries."""
+    items: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for item in supporting_data:
+        if not isinstance(item, dict):
+            continue
+
+        item_type = str(item.get("type", "")).strip().lower()
+        label = str(item.get("label", "")).strip()
+        notes = str(item.get("notes", "")).strip()
+
+        value = item.get("value")
+        binding_key = ""
+        reference = label
+        recreate_in_video = False
+
+        if isinstance(value, dict):
+            binding_key = str(value.get("binding_key", "")).strip()
+            reference = str(value.get("reference", reference)).strip()
+            recreate_in_video = bool(value.get("recreate_in_video", False))
+        elif value:
+            reference = str(value).strip()
+
+        if item_type != "referenced_content" and not recreate_in_video and not binding_key:
+            continue
+
+        dedupe_key = (binding_key or reference or label).lower()
+        if not dedupe_key or dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+
+        items.append(
+            {
+                "binding_key": binding_key,
+                "reference": reference or label,
+                "label": label or reference,
+                "notes": notes,
+            }
+        )
+
+    return items
+
+
+def _build_section_data(section: Dict[str, Any]) -> Dict[str, Any]:
+    """Build structured section_data payload for choreography/implementation."""
+    section_data = section.get("section_data")
+    merged: Dict[str, Any] = dict(section_data) if isinstance(section_data, dict) else {}
+
+    supporting_data = section.get("supporting_data", [])
+    if not isinstance(supporting_data, list):
+        supporting_data = []
+    merged["supporting_data"] = supporting_data
+
+    source_pages = section.get("source_pages")
+    if source_pages is not None:
+        merged["source_pages"] = source_pages
+
+    source_pdf_path = section.get("source_pdf_path")
+    if source_pdf_path:
+        merged["source_pdf_path"] = source_pdf_path
+
+    reference_items = _extract_reference_items_from_supporting_data(supporting_data)
+    if reference_items:
+        merged["reference_items"] = reference_items
+
+    return merged
+
+
 def divide_into_subsections(
     narration: str,
     visual_description: str,
@@ -218,6 +290,7 @@ async def process_single_subsection(
     try:
         section_payload = dict(section)
         section_payload["language"] = _resolve_language_code(section.get("language"), language)
+        section_payload["section_data"] = _build_section_data(section_payload)
 
         # Using the NEW Animation Pipeline (Choreograph -> Implement -> Refine)
         manim_result = await manim_generator.generate_animation(
@@ -1245,6 +1318,9 @@ async def process_segments_audio_first(
         "narration": "\n\n".join([s["text"] for s in segment_audio_info]),
         "tts_narration": "\n\n".join([s["text"] for s in segment_audio_info]),
         "visual_description": section.get("visual_description", ""),
+        "supporting_data": section.get("supporting_data", []),
+        "source_pages": section.get("source_pages"),
+        "source_pdf_path": section.get("source_pdf_path"),
         "key_concepts": section.get("key_concepts", []),
         "animation_type": section.get("animation_type", "mixed"),
         "style": style,
@@ -1265,7 +1341,8 @@ async def process_segments_audio_first(
                 "visual_description": segment_timing_data[i].get("visual_description", "") if i < len(segment_timing_data) else ""
             }
             for i, s in enumerate(segment_audio_info)
-        ]
+        ],
+        "section_data": _build_section_data(section),
     }
 
     logger.info(f"Section {section_index}: Generating unified video using NEW Pipeline ({total_duration:.1f}s total)")

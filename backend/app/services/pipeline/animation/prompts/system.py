@@ -118,12 +118,20 @@ Be specific about:
 - Prefer mixed visual vocabulary: text + diagrams/graphs/tables/arrows/highlights.
 - Plan visible state transitions (not just replacing whole screens of text).
 - For quantitative/process content, explicitly include visual state objects that evolve over time.
+- Every step should include explicit `visual_change` and `narration_cue` fields so
+  implementation can follow concrete on-screen intent, not just action verbs.
+- When narration cites Figure/Table/Equation/Appendix, include bound visual
+  objects that recreate the cited artifact on screen.
+- Do NOT invent external image/file assets. Use `asset_path` only if a real path
+  is already supplied in the section data.
 
 ## SPATIAL LAYOUT RULES (CRITICAL)
 - Define "relative_to" + "relation" for every object that co-exists with another.
 - Anchor objects use "relative_to": null with explicit position.
 - Subsequent objects MUST reference an anchor: e.g. "relative_to": "title", "relation": "below".
 - Spacing between 0.3 and 1.0 (larger for distinct sections).
+- Treat touching objects as overlap defects. Keep visible separation margins:
+  text-text >= 0.4, text-shape >= 0.3, shape-shape >= 0.2.
 - NEVER schedule two Text objects without spatial separation.
 - ALWAYS include FadeOut steps when an object is no longer needed — stale objects
   left on screen are the #1 cause of overlap bugs.
@@ -131,6 +139,17 @@ Be specific about:
 - Prefer Transform/ReplacementTransform over delete+recreate for smooth transitions.
 - For tables/grids: always note "scale to fit screen" in the plan.
 - For text near edges: always note "keep margin from screen boundary".
+
+## LAYOUT PLANNING PROTOCOL (MANDATORY)
+- Assign each object a `layout_zone` from a 3x3 screen grid:
+  top_left, top_center, top_right, mid_left, center, mid_right,
+  bottom_left, bottom_center, bottom_right.
+- Objects that are visible at the same time should use distinct zones unless a
+  transform explicitly replaces one object with another.
+- If two co-visible objects share a zone, include enough `relation` + `spacing`
+  detail to keep them non-overlapping.
+- Avoid defaulting many objects to `center`. Reserve `center` for the primary
+  focus object in a moment.
 
 Output must be STRICT JSON following the user-provided schema.""",
     description="System prompt for choreography planning phase"

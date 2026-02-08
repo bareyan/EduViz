@@ -32,11 +32,40 @@ CHOREOGRAPHY_SCHEMA = {
                     "latex": {"type": "string"},
                     "appears_at": {"type": "number"},
                     "removed_at": {"type": "number"},
-                    "relative_to": {"type": "string"},
-                    "relation": {"type": "string"},
+                    "notes": {"type": "string"},
+                    "visual_description": {"type": "string"},
+                    "layout_zone": {
+                        "type": "string",
+                        "enum": [
+                            "top_left",
+                            "top_center",
+                            "top_right",
+                            "mid_left",
+                            "center",
+                            "mid_right",
+                            "bottom_left",
+                            "bottom_center",
+                            "bottom_right",
+                        ],
+                    },
+                    "relative_to": {
+                        "anyOf": [
+                            {"type": "string"},
+                            {"type": "null"},
+                        ]
+                    },
+                    "relation": {
+                        "anyOf": [
+                            {
+                                "type": "string",
+                                "enum": ["above", "below", "left_of", "right_of"],
+                            },
+                            {"type": "null"},
+                        ]
+                    },
                     "spacing": {"type": "number"}
                 },
-                "required": ["id", "type", "appears_at", "removed_at"]
+                "required": ["id", "type", "appears_at", "removed_at", "layout_zone"]
             }
         },
         "segments": {
@@ -55,9 +84,29 @@ CHOREOGRAPHY_SCHEMA = {
                                 "time": {"type": "number"},
                                 "action": {"type": "string"},
                                 "target": {"type": "string"},
-                                "duration": {"type": "number"}
+                                "source": {"type": "string"},
+                                "position": {
+                                    "type": "string",
+                                    "enum": [
+                                        "center",
+                                        "left",
+                                        "right",
+                                        "up",
+                                        "down",
+                                        "upper_left",
+                                        "upper_right",
+                                        "lower_left",
+                                        "lower_right",
+                                        "x,y",
+                                    ],
+                                },
+                                "duration": {"type": "number"},
+                                "notes": {"type": "string"},
+                                "visual_change": {"type": "string"},
+                                "narration_cue": {"type": "string"},
+                                "data_binding": {"type": "string"}
                             },
-                            "required": ["time", "action"]
+                            "required": ["time", "action", "visual_change", "narration_cue"]
                         }
                     }
                 },
