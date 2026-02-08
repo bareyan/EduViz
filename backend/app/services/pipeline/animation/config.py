@@ -194,11 +194,35 @@ MAX_ERROR_MESSAGE_LENGTH = 2000  # Max chars for runtime error messages (prevent
 
 # Theme setup code blocks for code injection
 THEME_SETUP_CODES = {
-    "light": '        self.camera.background_color = "#FFFFFF"\n',
+    "light": (
+        '        self.camera.background_color = "#FFFFFF"\n'
+        '        VMobject.set_default(color="#111111")\n'
+        '        # Override geometry defaults that ignore VMobject default\n'
+        '        Circle.set_default(color="#111111")\n'
+        '        Square.set_default(color="#111111")\n'
+        '        Triangle.set_default(color="#111111")\n'
+        '        Dot.set_default(color="#111111")\n'
+        '        Line.set_default(color="#111111")\n'
+        '        Arrow.set_default(color="#111111")\n'
+        '        NumberPlane.set_default(axis_config={"color": "#111111"})\n'
+        '        Axes.set_default(axis_config={"color": "#111111"})\n'
+    ),
     "3b1b": '        self.camera.background_color = "#171717"  # Slate dark\n',
     "dark": '        self.camera.background_color = "#171717"  # Slate dark\n',
     # Frontend selectable styles
-    "clean": '        self.camera.background_color = "#FFFFFF"\n',
+    "clean": (
+        '        self.camera.background_color = "#FFFFFF"\n'
+        '        VMobject.set_default(color="#111111")\n'
+        '        # Override geometry defaults that ignore VMobject default\n'
+        '        Circle.set_default(color="#111111")\n'
+        '        Square.set_default(color="#111111")\n'
+        '        Triangle.set_default(color="#111111")\n'
+        '        Dot.set_default(color="#111111")\n'
+        '        Line.set_default(color="#111111")\n'
+        '        Arrow.set_default(color="#111111")\n'
+        '        NumberPlane.set_default(axis_config={"color": "#111111"})\n'
+        '        Axes.set_default(axis_config={"color": "#111111"})\n'
+    ),
     "dracula": '        self.camera.background_color = "#282A36"\n',
     "solarized": '        self.camera.background_color = "#002B36"\n',
     "nord": '        self.camera.background_color = "#2E3440"\n',
@@ -220,7 +244,7 @@ THEME_PROMPT_SPECS = {
         "primary_text": "#111111",
         "secondary_text": "#334155",
         "accents": ["#1D4ED8", "#0F766E", "#D97706", "#DC2626"],
-        "notes": "Light theme. Never use white/light text on white background.",
+        "notes": "Light theme (White Background). NEVER use WHITE or light colors for ANY element (text, geometries, arrows). All visible objects MUST be dark or colored.",
     },
     "dracula": {
         "display_name": "Dracula",
