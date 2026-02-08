@@ -22,6 +22,8 @@ import { useGenerationForm } from '../features/generation/hooks/useGenerationFor
 import { SummaryCard } from '../features/generation/components/SummaryCard'
 import { VideoModeSelector } from '../features/generation/components/VideoModeSelector'
 
+import { API_BASE } from '../config/api.config'
+
 export default function GenerationPage() {
   const navigate = useNavigate()
 
@@ -285,16 +287,43 @@ export default function GenerationPage() {
                 key={s.id}
                 onClick={() => setStyle(s.id as any)}
                 className={`
-                  p-3 rounded-lg text-left transition-all relative overflow-hidden
+                  group relative rounded-xl text-left transition-all overflow-hidden aspect-video border-2
                   ${style === s.id
-                    ? 'bg-math-green/20 border-math-green border-2'
-                    : 'bg-gray-800 border-gray-700 border hover:border-gray-600'
+                    ? 'border-math-green ring-2 ring-math-green/20'
+                    : 'border-transparent hover:border-gray-600'
                   }
                 `}
               >
-                <div className={`absolute top-2 right-2 w-3 h-3 rounded-full ${s.color} border border-gray-600`}></div>
-                <p className="font-medium">{s.name}</p>
-                <p className="text-xs text-gray-500">{s.desc}</p>
+                {/* Background Image */}
+                <div className="absolute inset-0 bg-gray-800">
+                  <img
+                    src={`${API_BASE}/static/style_previews/${s.id}.png`}
+                    alt={`${s.name} preview`}
+                    className="w-full h-full object-cover opacity-75 group-hover:opacity-100 transition-opacity"
+                    onError={(e) => {
+                      // Fallback if image fails
+                      e.currentTarget.style.display = 'none';
+                    }}
+                  />
+                  {/* Gradient Overlay */}
+                  <div className={`absolute inset-0 bg-gradient-to-t from-gray-900/90 via-gray-900/50 to-transparent ${style === s.id ? 'opacity-80' : 'opacity-100'} transition-opacity`} />
+                </div>
+
+                {/* Content */}
+                <div className="absolute inset-0 p-4 flex flex-col justify-end">
+                  <div className="flex items-center gap-2 mb-1">
+                    <div className={`w-2 h-2 rounded-full ${s.color} ring-1 ring-white/50`}></div>
+                    <p className="font-bold text-white shadow-black drop-shadow-md">{s.name}</p>
+                  </div>
+                  <p className="text-xs text-gray-300 line-clamp-2 shadow-black drop-shadow-md">{s.desc}</p>
+                </div>
+
+                {/* Active Indicator */}
+                {style === s.id && (
+                  <div className="absolute top-2 right-2 bg-math-green text-black text-xs font-bold px-2 py-1 rounded-full shadow-lg">
+                    Selected
+                  </div>
+                )}
               </button>
             ))}
           </div>
