@@ -1,4 +1,4 @@
-import { Play, Pause, Loader2 } from 'lucide-react'
+import { Volume2, VolumeX, Loader2 } from 'lucide-react'
 import { TranslationsResponse } from '../../../types/translation.types'
 import { Voice } from '../../../types/voice.types'
 import { useVoicePreview } from '../../../hooks/useVoicePreview'
@@ -49,8 +49,8 @@ export function TranslationModal({
                 key={lang.code}
                 onClick={() => setSelectedLanguage(lang.code)}
                 className={`w-full p-3 rounded-lg text-left transition-all ${selectedLanguage === lang.code
-                    ? 'bg-math-purple/20 border-math-purple border'
-                    : 'bg-gray-800 border-gray-700 border hover:border-gray-700'
+                  ? 'bg-math-purple/20 border-math-purple border'
+                  : 'bg-gray-800 border-gray-700 border hover:border-gray-700'
                   }`}
               >
                 {lang.name}
@@ -65,8 +65,8 @@ export function TranslationModal({
               <button
                 onClick={() => setSelectedVoice(voice.id)}
                 className={`w-full p-3 pr-12 rounded-lg text-left transition-all ${selectedVoice === voice.id
-                    ? 'bg-math-purple/20 border-math-purple border'
-                    : 'bg-gray-800 border-gray-700 border hover:border-gray-700'
+                  ? 'bg-math-purple/20 border-math-purple border'
+                  : 'bg-gray-800 border-gray-700 border hover:border-gray-700'
                   }`}
               >
                 <div className="flex flex-col">
@@ -80,13 +80,13 @@ export function TranslationModal({
                     e.stopPropagation();
                     handlePreview(voice.id, voice.preview_url);
                   }}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-gray-700 hover:bg-gray-600 transition-colors text-white"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-full bg-math-purple/20 hover:bg-math-purple/40 transition-colors text-math-purple border border-math-purple/30 group-hover:border-math-purple/50"
                   title="Preview voice"
                 >
                   {playingVoiceId === voice.id ? (
-                    <Pause className="w-3.5 h-3.5 fill-white" />
+                    <VolumeX className="w-3.5 h-3.5" />
                   ) : (
-                    <Play className="w-3.5 h-3.5 fill-white" />
+                    <Volume2 className="w-3.5 h-3.5" />
                   )}
                 </button>
               )}

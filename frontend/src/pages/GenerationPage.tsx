@@ -12,8 +12,8 @@ import {
   RotateCcw,
   Globe,
   Zap,
-  Play,
-  Pause
+  Volume2,
+  VolumeX
 } from 'lucide-react'
 import { useVoices } from '../hooks/useVoices'
 import { useVoicePreview } from '../hooks/useVoicePreview'
@@ -250,13 +250,13 @@ export default function GenerationPage() {
                         e.stopPropagation();
                         handlePreview(voice.id, voice.preview_url);
                       }}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-gray-700 hover:bg-gray-600 transition-colors text-white"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-2 rounded-full bg-math-purple/20 hover:bg-math-purple/40 transition-colors text-math-purple border border-math-purple/30 group-hover:border-math-purple/50"
                       title="Preview voice"
                     >
                       {playingVoiceId === voice.id ? (
-                        <Pause className="w-4 h-4 fill-white" />
+                        <VolumeX className="w-4 h-4" />
                       ) : (
-                        <Play className="w-4 h-4 fill-white" />
+                        <Volume2 className="w-4 h-4" />
                       )}
                     </button>
                   )}
