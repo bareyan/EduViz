@@ -10,4 +10,9 @@ const api = axios.create({
   },
 })
 
+// Add CORS headers for production
+if (!import.meta.env.DEV) {
+  api.defaults.headers.common['Access-Control-Allow-Origin'] = '*'
+}
+
 export default api
