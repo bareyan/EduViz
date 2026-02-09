@@ -37,18 +37,6 @@ jobs:
           cache-from: type=registry,ref=gagik894/eduviz-backend:cache
           cache-to: type=registry,ref=gagik894/eduviz-backend:cache,mode=max
 
-      - name: Build and Push Frontend
-        uses: docker/build-push-action@v5
-        with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
-          push: true
-          tags: |
-            gagik894/eduviz-frontend:latest
-            gagik894/eduviz-frontend:sha-${{ github.sha }}
-          cache-from: type=registry,ref=gagik894/eduviz-frontend:cache
-          cache-to: type=registry,ref=gagik894/eduviz-frontend:cache,mode=max
-
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -63,7 +51,7 @@ jobs:
           host: ${{ secrets.HETZNER_HOST }}
           username: ${{ secrets.HETZNER_USER }}
           key: ${{ secrets.HETZNER_SSH_KEY }}
-          source: "docker-compose.yml"
+          source: "docker-compose.prod.yml"
           target: "/opt/eduviz"
 
       - name: Create .env file on Server
@@ -91,33 +79,21 @@ jobs:
             cd /opt/eduviz
 
             echo "==> Pulling latest images..."
-            docker compose pull
+            docker compose -f docker-compose.prod.yml pull
 
             echo "==> Starting containers..."
-            docker compose up -d
+            docker compose -f docker-compose.prod.yml up -d
 
             echo "==> Cleaning up old images..."
             docker image prune -f
 
             echo "==> Waiting for health check..."
             for i in {1..30}; do
-              BACKEND_OK=false
-              FRONTEND_OK=false
-              
               if curl -fsS http://localhost:8000/health > /dev/null 2>&1; then
-                BACKEND_OK=true
-              fi
-              
-              if curl -fsS http://localhost:3000 > /dev/null 2>&1; then
-                FRONTEND_OK=true
-              fi
-              
-              if [ "$BACKEND_OK" = true ] && [ "$FRONTEND_OK" = true ]; then
-                echo "✓ Backend and Frontend are healthy!"
+                echo "✓ Backend is healthy!"
                 exit 0
               fi
-              
-              echo "Waiting... ($i/30) [Backend: $BACKEND_OK | Frontend: $FRONTEND_OK]"
+              echo "Waiting... ($i/30)"
               sleep 5
             done
 

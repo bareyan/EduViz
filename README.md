@@ -4,6 +4,24 @@ Transform your math materials (PDFs, images) into beautiful, 3Blue1Brown-style a
 
 ![MathViz Demo](https://via.placeholder.com/800x400?text=MathViz+Demo)
 
+## 🚀 Quick Start for Hackathon Testers
+
+**Want to try the app? Just run:**
+
+```bash
+git clone <your-repo-url>
+cd eduviz
+cp backend/.env.example backend/.env
+# Edit backend/.env and add your GEMINI_API_KEY
+docker-compose up
+```
+
+Then visit: **http://localhost:3000**
+
+> 📖 **Detailed instructions**: [HACKATHON_README.md](HACKATHON_README.md)
+
+---
+
 ## Features
 
 - 📄 **Smart Material Analysis**: Upload PDFs or images with math content
