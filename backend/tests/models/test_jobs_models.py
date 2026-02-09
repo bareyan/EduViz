@@ -16,6 +16,9 @@ def test_detailed_progress_creation():
     )
     assert prog.sections == []
     assert prog.script_ready is False
+    assert prog.outline_ready is False
+    assert prog.outline_sections == []
+    assert prog.current_script_section_index is None
 
 def test_job_response_structure():
     resp = JobResponse(

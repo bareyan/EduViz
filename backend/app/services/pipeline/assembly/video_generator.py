@@ -387,6 +387,7 @@ class VideoGenerator:
             raise ValueError("material_path required for new jobs")
 
         tracker.report_stage_progress("script", 0, "Generating script...")
+        tracker.remove_script_progress()
 
         logger.info("Generating script from material", extra={
             "material_path": material_path,
@@ -394,6 +395,41 @@ class VideoGenerator:
             "content_focus": content_focus,
             "document_context": document_context,
         })
+
+        def on_script_progress(event: Dict[str, Any]) -> None:
+            if not isinstance(event, dict):
+                return
+
+            event_name = str(event.get("event", "")).strip().lower()
+            if event_name == "outline_ready":
+                outline = event.get("outline") if isinstance(event.get("outline"), dict) else {}
+                sections_outline = outline.get("sections_outline", []) if isinstance(outline, dict) else []
+                outline_sections = []
+                if isinstance(sections_outline, list):
+                    for i, section in enumerate(sections_outline):
+                        if not isinstance(section, dict):
+                            continue
+                        outline_sections.append({
+                            "index": i,
+                            "id": section.get("id", f"section_{i}"),
+                            "title": section.get("title", f"Part {i + 1}"),
+                            "estimated_duration_seconds": section.get("estimated_duration_seconds"),
+                        })
+                tracker.save_script_progress({
+                    "outline_ready": True,
+                    "script_title": outline.get("title") if isinstance(outline, dict) else None,
+                    "outline_sections": outline_sections,
+                    "current_script_section_index": 0 if outline_sections else None,
+                })
+            elif event_name == "section_script_started":
+                current_idx = event.get("current_script_section_index")
+                try:
+                    current_idx = int(current_idx)
+                except (TypeError, ValueError):
+                    return
+                tracker.save_script_progress({
+                    "current_script_section_index": current_idx,
+                })
         
         # Generate script directly from material
         # The script generator handles content extraction and processing internally
@@ -405,9 +441,11 @@ class VideoGenerator:
             content_focus=content_focus,
             document_context=document_context,
             artifacts_dir=artifacts_dir,
+            progress_callback=on_script_progress,
         )
 
         tracker.report_stage_progress("script", 100, "Script generated")
+        tracker.remove_script_progress()
 
         return script
 

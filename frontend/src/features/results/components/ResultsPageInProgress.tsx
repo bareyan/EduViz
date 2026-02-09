@@ -80,7 +80,10 @@ export const ResultsPageInProgress: React.FC<ResultsPageInProgressProps> = ({
       {detailedProgress && (
         <SectionProgressView 
           details={detailedProgress}
-          onSectionClick={(section: SectionProgress) => setSelectedSection(section)}
+          onSectionClick={(section: SectionProgress) => {
+            if (!detailedProgress.script_ready) return
+            setSelectedSection(section)
+          }}
         />
       )}
 
