@@ -17,6 +17,7 @@ from .models import (
     IssueSeverity,
     ValidationIssue,
 )
+from ..latex_rendering import suggest_latex_rendering
 
 
 @dataclass(frozen=True)
@@ -102,6 +103,10 @@ class _RuntimePreflightVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
     def visit_Call(self, node: ast.Call) -> None:
+        call_name = self._call_name(node.func)
+        if call_name in {"Text", "Tex"}:
+            self._check_latex_rendering_constructor(node, call_name)
+
         if isinstance(node.func, ast.Attribute):
             attr = node.func.attr
             table_var = self._resolve_name(node.func.value)
@@ -193,6 +198,12 @@ class _RuntimePreflightVisitor(ast.NodeVisitor):
                 return left * right
             if isinstance(node.op, ast.Div) and right != 0:
                 return left / right
+        return None
+
+    @staticmethod
+    def _extract_literal_string(node: ast.AST) -> Optional[str]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return node.value
         return None
 
     def _extract_math_table_shape(self, call: ast.Call) -> Optional[_MathTableShape]:
@@ -430,6 +441,40 @@ class _RuntimePreflightVisitor(ast.NodeVisitor):
                 line=node.lineno,
                 fix_hint="Clamp waits with max(0.01, duration_expr) before calling wait().",
             )
+
+    def _check_latex_rendering_constructor(self, node: ast.Call, constructor: str) -> None:
+        if not node.args:
+            return
+        literal = self._extract_literal_string(node.args[0])
+        if literal is None:
+            return
+
+        suggestion = suggest_latex_rendering(constructor, literal)
+        if not suggestion:
+            return
+
+        self._add_issue(
+            severity=IssueSeverity.CRITICAL,
+            confidence=IssueConfidence.HIGH,
+            category=IssueCategory.VISUAL_QUALITY,
+            message=(
+                f"{constructor}(...) likely contains LaTeX math. "
+                f"Use {suggestion.target_constructor}(...) for correct rendering."
+            ),
+            line=node.lineno,
+            fix_hint=(
+                f"Convert {constructor} to {suggestion.target_constructor} "
+                "for this literal."
+            ),
+            auto_fixable=True,
+            details={
+                "reason": "latex_rendering",
+                "constructor": constructor,
+                "target_constructor": suggestion.target_constructor,
+                "text": literal,
+                "normalized_text": suggestion.normalized_text,
+            },
+        )
 
     def _add_issue(
         self,

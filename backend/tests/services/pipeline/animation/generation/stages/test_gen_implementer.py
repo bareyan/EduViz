@@ -89,3 +89,22 @@ async def test_implement_scales_tokens_for_long_overview_sections(implementer):
 
     config = implementer.engine.generate.await_args.kwargs["config"]
     assert config.max_output_tokens > OVERVIEW_IMPLEMENTATION_MAX_OUTPUT_TOKENS
+
+
+@pytest.mark.asyncio
+async def test_implement_prompt_includes_latex_constructor_guidance(implementer):
+    section = {"title": "Math Section", "narration": "Discuss $x^2$"}
+    implementer.engine.generate = AsyncMock(
+        return_value={"success": True, "response": "```python\nclass A(Scene):\n    pass\n```"}
+    )
+
+    with patch(
+        "app.services.pipeline.animation.generation.stages.implementer.clean_code",
+        return_value="class A(Scene):\n    pass",
+    ):
+        await implementer.implement(section, "Plan", 8.0)
+
+    prompt = implementer.engine.generate.await_args.kwargs["prompt"]
+    assert "Use `MathTex(...)` for standalone formulas" in prompt
+    assert "Use `Tex(...)` for mixed prose + inline math segments" in prompt
+    assert "Currency amounts like `$5` or `$12.99` must stay in `Text(...)`" in prompt

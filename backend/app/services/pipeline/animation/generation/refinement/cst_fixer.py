@@ -4,11 +4,16 @@ Uses LibCST for robust code modification, avoiding the pitfalls of regex-based
 text replacement on Python source.
 """
 
+import ast
 from typing import List, Optional, Sequence, Set, Tuple
 import libcst as cst
 import libcst.matchers as m
 from app.core import get_logger
 from app.services.pipeline.animation.generation.core.validation.models import IssueCategory, ValidationIssue
+from app.services.pipeline.animation.generation.core.latex_rendering import (
+    LatexRenderingSuggestion,
+    suggest_latex_rendering,
+)
 from app.services.pipeline.animation.config import SAFE_X_LIMIT, SAFE_Y_LIMIT
 
 logger = get_logger(__name__, component="cst_fixer")
@@ -239,6 +244,85 @@ class CoordinateClampingTransformer(cst.CSTTransformer):
         # Handle [x, y, z] or np.array([x, y, z])
         # This is more complex but doable with matchers.
         return arg, False
+
+
+class LatexRenderingTransformer(cst.CSTTransformer):
+    """Normalize Text/Tex calls that contain LaTeX-like math patterns."""
+
+    def __init__(
+        self,
+        target_constructor: Optional[str] = None,
+        target_text: Optional[str] = None,
+    ) -> None:
+        self.target_constructor = target_constructor
+        self.target_text = target_text
+        self.count = 0
+
+    def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.CSTNode:
+        func_name = self._extract_func_name(updated_node.func)
+        if func_name not in {"Text", "Tex"}:
+            return updated_node
+        if not updated_node.args:
+            return updated_node
+
+        first_arg = updated_node.args[0]
+        if first_arg.keyword is not None:
+            return updated_node
+        if not isinstance(first_arg.value, cst.SimpleString):
+            return updated_node
+
+        # Conservative safety gate: only rewrite simple one-argument constructors.
+        # This avoids carrying over kwargs that may be valid for Text but not Tex/MathTex.
+        if len(updated_node.args) != 1:
+            return updated_node
+
+        literal_text = self._parse_simple_string(first_arg.value)
+        if literal_text is None:
+            return updated_node
+
+        if self.target_constructor and func_name != self.target_constructor:
+            return updated_node
+        if self.target_text is not None and literal_text != self.target_text:
+            return updated_node
+
+        suggestion = suggest_latex_rendering(func_name, literal_text)
+        if not suggestion:
+            return updated_node
+
+        new_args = list(updated_node.args)
+        new_args[0] = first_arg.with_changes(
+            value=cst.SimpleString(value=self._to_literal(suggestion))
+        )
+        self.count += 1
+        return updated_node.with_changes(
+            func=cst.Name(suggestion.target_constructor),
+            args=new_args,
+        )
+
+    @staticmethod
+    def _extract_func_name(func: cst.BaseExpression) -> Optional[str]:
+        if isinstance(func, cst.Name):
+            return func.value
+        return None
+
+    @staticmethod
+    def _parse_simple_string(node: cst.SimpleString) -> Optional[str]:
+        try:
+            value = ast.literal_eval(node.value)
+        except Exception:
+            return None
+        if isinstance(value, str):
+            return value
+        return None
+
+    @staticmethod
+    def _to_literal(suggestion: LatexRenderingSuggestion) -> str:
+        text = suggestion.normalized_text
+        if suggestion.target_constructor == "MathTex" and "\\" in text and not text.endswith("\\"):
+            escaped = text.replace("\\", "\\\\")
+            escaped = escaped.replace('"', '\\"')
+            return f'"{escaped}"'
+        return repr(text)
 
 class ScaleInsertionTransformer(cst.CSTTransformer):
     """Inserts .scale_to_fit_width(...) after object creation Assign nodes."""
@@ -1034,8 +1118,16 @@ class CSTFixer:
                 t3 = IncludeOuterLinesDisablerTransformer(collector.table_vars)
                 module = module.visit(t3)
                 t3_count = t3.count
+
+            # LaTeX rendering normalization:
+            # Text("$x^2$") -> MathTex("x^2")
+            # Text("Value is $x$") -> Tex("Value is $x$")
+            # Tex("$x^2$") -> MathTex("x^2")
+            t4 = LatexRenderingTransformer()
+            module = module.visit(t4)
+            t4_count = t4.count
             
-            total = t1.count + t2.count + t3_count
+            total = t1.count + t2.count + t3_count + t4_count
             if total > 0:
                 return module.code, total
             return code, 0
@@ -1249,6 +1341,18 @@ class CSTFixer:
                     return None
 
                 transformer = IncludeOuterLinesDisablerTransformer(target_tables)
+                updated_module = module.visit(transformer)
+                if updated_module.code != code:
+                    return updated_module.code
+                return None
+
+            if reason == "latex_rendering":
+                target_constructor = details.get("constructor")
+                target_text = details.get("text")
+                transformer = LatexRenderingTransformer(
+                    target_constructor=target_constructor if isinstance(target_constructor, str) else None,
+                    target_text=target_text if isinstance(target_text, str) else None,
+                )
                 updated_module = module.visit(transformer)
                 if updated_module.code != code:
                     return updated_module.code

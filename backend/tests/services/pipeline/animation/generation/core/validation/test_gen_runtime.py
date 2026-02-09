@@ -245,3 +245,62 @@ class SceneA(Scene):
             for issue in result.issues
         )
         mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_validate_preflight_flags_text_with_delimited_math(validator):
+    code = """
+from manim import *
+class SceneA(Scene):
+    def construct(self):
+        label = Text("$x^2$")
+"""
+    with patch("subprocess.run") as mock_run:
+        result = await validator.validate(code)
+        assert result.valid is False
+        assert any(
+            issue.category == IssueCategory.VISUAL_QUALITY
+            and issue.details.get("reason") == "latex_rendering"
+            for issue in result.issues
+        )
+        mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_validate_preflight_flags_text_with_bare_latex_command(validator):
+    code = r"""
+from manim import *
+class SceneA(Scene):
+    def construct(self):
+        relation = Text(r"\in")
+"""
+    with patch("subprocess.run") as mock_run:
+        result = await validator.validate(code)
+        assert result.valid is False
+        assert any(
+            issue.category == IssueCategory.VISUAL_QUALITY
+            and issue.details.get("reason") == "latex_rendering"
+            for issue in result.issues
+        )
+        mock_run.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_validate_preflight_does_not_flag_currency_text(validator):
+    code = """
+from manim import *
+class SceneA(Scene):
+    def construct(self):
+        price = Text("$5")
+        note = Text("Cost is $12.99")
+"""
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        mock_run.return_value.stderr = ""
+        result = await validator.validate(code)
+        assert result.valid is True
+        assert not any(
+            issue.details.get("reason") == "latex_rendering"
+            for issue in result.issues
+        )
+        mock_run.assert_called_once()
