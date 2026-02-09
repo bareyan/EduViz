@@ -140,6 +140,23 @@ def is_cookie_secure() -> bool:
     return parse_bool_env(os.getenv("AUTH_COOKIE_SECURE"), default=False)
 
 
+def get_cookie_samesite() -> str:
+    raw = os.getenv("AUTH_COOKIE_SAMESITE", "lax").strip().lower()
+    if raw not in {"lax", "strict", "none"}:
+        return "lax"
+    return raw
+
+
+def get_cookie_domain() -> str | None:
+    raw = os.getenv("AUTH_COOKIE_DOMAIN", "").strip()
+    return raw or None
+
+
+def get_cookie_path() -> str:
+    raw = os.getenv("AUTH_COOKIE_PATH", "/").strip()
+    return raw or "/"
+
+
 def list_public_paths() -> dict[str, Iterable[str]]:
     return {
         "exact": sorted(PUBLIC_PATHS_EXACT.union(_custom_public_paths())),

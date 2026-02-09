@@ -47,6 +47,9 @@ from .auth import (
     is_request_authenticated,
     get_session_max_age_seconds,
     is_cookie_secure,
+    get_cookie_domain,
+    get_cookie_path,
+    get_cookie_samesite,
     list_public_paths,
 )
 

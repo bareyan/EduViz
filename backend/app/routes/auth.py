@@ -10,6 +10,9 @@ from ..core import (
     get_session_max_age_seconds,
     is_auth_enabled,
     is_cookie_secure,
+    get_cookie_domain,
+    get_cookie_path,
+    get_cookie_samesite,
     is_request_authenticated,
     issue_auth_token,
     verify_auth_password,
@@ -40,12 +43,15 @@ async def login(payload: LoginRequest, response: Response):
         raise HTTPException(status_code=401, detail="Invalid password")
 
     token = issue_auth_token()
+    samesite = get_cookie_samesite()
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
         value=token,
         httponly=True,
-        secure=is_cookie_secure(),
-        samesite="lax",
+        secure=is_cookie_secure() or samesite == "none",
+        samesite=samesite,
+        domain=get_cookie_domain(),
+        path=get_cookie_path(),
         max_age=get_session_max_age_seconds(),
     )
     return AuthStatusResponse(authenticated=True, auth_enabled=True, token=token)
@@ -56,7 +62,11 @@ async def logout(response: Response):
     """
     Clear auth session cookie.
     """
-    response.delete_cookie(SESSION_COOKIE_NAME)
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        domain=get_cookie_domain(),
+        path=get_cookie_path(),
+    )
     return AuthStatusResponse(authenticated=False, auth_enabled=is_auth_enabled(), token=None)
 
 
