@@ -14,13 +14,13 @@ EduViz transforms educational content into professional animated videos using AI
 
 ## Overview
 
-EduViz is a production-grade platform that automates educational video creation from source materials. The system leverages Google's Gemini AI for intelligent content analysis, script generation, and animation choreography, combined with Manim for mathematical visualizations and Gemini TTS for natural-sounding narration.
+EduViz is a production-grade platform that automates educational video creation from source materials. The system leverages Google's Gemini AI for intelligent content analysis, script generation, and animation choreography, combined with Manim for mathematical visualizations and Edge TTS for natural-sounding narration.
 
 ### Key Features
 
 -   **Multi-Format Content Analysis** (PDFs, text, images)
 -   **AI-Driven Script Generation** & **Intelligent Animation Generation**
--   **Natural Text-to-Speech** (Gemini TTS)
+-   **Natural Text-to-Speech** (Edge TTS, with experimental Gemini TTS)
 -   **Professional Video Assembly**
 -   **Multi-Language Support** (50+ languages)
 -   **Customizable Themes** (3Blue1Brown, Clean White, etc.)
@@ -63,7 +63,7 @@ For detailed local development setup, refer to the [Backend README](backend/READ
 
 ## Tech Stack
 
--   **Backend:** FastAPI, Python, Manim, Google Gemini, Gemini TTS, FFmpeg
+-   **Backend:** FastAPI, Python, Manim, Google Gemini, Edge TTS, FFmpeg
 -   **Frontend:** React, TypeScript, Vite, TailwindCSS
 -   **Infrastructure:** Docker, Nginx
 

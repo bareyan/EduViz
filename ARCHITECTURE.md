@@ -24,31 +24,32 @@ This document provides a bird's-eye view of the EduViz system architecture. For 
 │                   FastAPI + Python                          │
 │                    (Port 8000)                              │
 │                                                             │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │                    Routes Layer                       │ │
-│  │         (Thin API controllers)                        │ │
-│  └───────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │                    Routes Layer                       │  │
+│  │         (Thin API controllers)                        │  │
+│  └───────────────────────────────────────────────────────┘  │
 │                            │                                │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │                   Pipeline Layer                      │ │
-│  │  • Content Analysis  • Script Generation              │ │
-│  │  • Animation         • Audio Synthesis                │ │
-│  │  • Video Assembly                                     │ │
-│  └───────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │                   Pipeline Layer                      │  │
+│  │  • Content Analysis  • Script Generation              │  │
+│  │  • Animation         • Audio Synthesis                │  │
+│  │  • Video Assembly                                     │  │
+│  └───────────────────────────────────────────────────────┘  │
 │                            │                                │
-│  ┌───────────────────────────────────────────────────────┐ │
-│  │                Infrastructure Layer                   │ │
-│  │  • LLM Integration   • Parsing Utilities              │ │
-│  │  • Storage           • Orchestration                  │ │
-│  └───────────────────────────────────────────────────────┘ │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │                Infrastructure Layer                   │  │
+│  │  • LLM Integration   • Parsing Utilities              │  │
+│  │  • Storage           • Orchestration                  │  │
+│  └───────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
                             │
                             ▼
-                  ┌──────────────────┐
-                  │  External APIs   │
-                  │  • Gemini AI     │
-                  │  • Gemini TTS    │
-                  └──────────────────┘
+                  ┌────────────────────────────────┐
+                  │  External APIs                 │
+                  │  • Gemini AI                   │
+                  │  • Edge TTS                    │
+                  │  • Gemini TTS(experimental)    │
+                  └────────────────────────────────┘
 ```
 
 ## Technology Stack
@@ -57,7 +58,7 @@ This document provides a bird's-eye view of the EduViz system architecture. For 
 - **FastAPI** - Web framework
 - **Manim** - Animation engine
 - **Google Gemini** - AI/LLM
-- **Gemini TTS** - Text-to-speech
+- **Edge TTS** - Text-to-speech (default; Gemini TTS experimental)
 - **FFmpeg** - Video processing
 
 ### Frontend
@@ -76,10 +77,3 @@ EduViz transforms documents into videos through a 4-stage AI-driven pipeline:
 4. **Rendering** - Produces final video segments
 
 For technical details on the pipeline stages, validation layers, and adaptive fixing, see [Backend Architecture](backend/ARCHITECTURE.md).
-
-## Design Principles
-
-- **Clean Architecture** - Infrastructure → Pipeline → Routes separation
-- **Single Responsibility** - Each module has one clear purpose
-- **Fail-Fast** - Specific exceptions with actionable error messages
-- **DRY Principle** - Zero code duplication tolerance

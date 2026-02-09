@@ -80,7 +80,7 @@ backend/
   - **Fail-Fast**: Raises specific exceptions
 
 - **Audio Synthesis** (`audio/`)
-  - Gemini TTS integration
+  - Edge TTS (default), Gemini TTS (experimental — rate-limited)
   - Multiple voice support
 
 - **Video Assembly** (`assembly/`)

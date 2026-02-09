@@ -214,17 +214,6 @@ Themes control background color, text defaults, and accent palette. Defined in `
 
 ---
 
-## Render Quality Options
-
-| Setting | Resolution | Manim Flag |
-|:---|:---|:---|
-| Low | 480p @ 15fps | `-ql` |
-| Medium | 720p @ 30fps | `-qm` |
-| High | 1080p @ 60fps | `-qh` |
-| 4K | 2160p @ 60fps | `-qk` |
-
----
-
 ## AI Model Configuration
 
 Models are configurable per pipeline stage via `config/models.py` and exposed through the `/pipelines` API endpoint.
@@ -245,6 +234,6 @@ Models are configurable per pipeline stage via `config/models.py` and exposed th
 |:---|:---|
 | **Frontend** | React 18, TypeScript, Vite, TailwindCSS, React Router, Axios |
 | **Backend** | FastAPI, Python 3.12+, Uvicorn, Pydantic |
-| **AI** | Google Gemini API / Vertex AI, Gemini TTS |
+| **AI** | Google Gemini API / Vertex AI, Edge TTS (Gemini TTS experimental) |
 | **Animation** | Manim, FFmpeg, libcst |
 | **Infrastructure** | Docker, Nginx |
