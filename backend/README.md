@@ -1,70 +1,118 @@
-# EduViz Backend - Quick Start
+# EduViz Backend
 
-## AI Backend Setup
+The backend for EduViz is a robust FastAPI application responsible for content analysis, script generation, audio synthesis, and Manim animation rendering.
 
-EduViz supports two AI backends:
+## Quick Start
+
+### Prerequisites
+- Python 3.12+
+- FFmpeg (must be in system PATH)
+- Manim (must be installable via pip or in system PATH)
+- Google Cloud Project (for Vertex AI) OR API Key (for Gemini API)
+
+### Local Development Setup
+
+1.  **Navigate to the backend directory:**
+    ```bash
+    cd backend
+    ```
+
+2.  **Create a virtual environment:**
+    ```bash
+    python -m venv .venv
+    ```
+
+3.  **Activate the virtual environment:**
+    -   **Windows:**
+        ```bash
+        .venv\Scripts\activate
+        ```
+    -   **Linux/Mac:**
+        ```bash
+        source .venv/bin/activate
+        ```
+
+4.  **Install dependencies:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+
+5.  **Configure Environment:**
+    Copy the example environment file:
+    ```bash
+    cp .env.example .env
+    ```
+    
+    Edit `.env` and configure your AI backend (see [Configuration](#configuration)).
+
+6.  **Run the Server:**
+    ```bash
+    python -m uvicorn app.main:app --reload
+    ```
+    The API will be available at `http://localhost:8000`.
+
+## Configuration
+
+EduViz supports two AI backends. Choose one in your `.env` file.
 
 ### 1. Gemini API (Default - Easiest)
-
-```bash
-# Get API key from https://aistudio.google.com/app/apikey
-echo "USE_VERTEX_AI=false" >> .env
-echo "GEMINI_API_KEY=your_key_here" >> .env
-echo "AUTH_PASSWORD=change_me" >> .env
-
-pip install google-generativeai
-python -m uvicorn app.main:app --reload
+Best for local development and testing.
+```ini
+USE_VERTEX_AI=false
+GEMINI_API_KEY=your_api_key_here  # Get from https://aistudio.google.com/app/apikey
 ```
 
 ### 2. Vertex AI (Enterprise)
+Best for production and enterprise deployments.
+```ini
+USE_VERTEX_AI=true
+GCP_PROJECT_ID=your-project-id
+GCP_LOCATION=us-central1
+```
+*Note: Requires `gcloud auth application-default login`.*
+
+### Detailed Environment Variables
+For a complete list of configuration options, including rate limiting, logging, and advanced settings, please refer to [`ENVIRONMENT.md`](ENVIRONMENT.md).
+
+## Testing
+
+We use `pytest` for testing.
 
 ```bash
-# Setup GCP project and enable Vertex AI API
-echo "USE_VERTEX_AI=true" >> .env
-echo "GCP_PROJECT_ID=your-project-id" >> .env
-echo "GCP_LOCATION=us-central1" >> .env
+# Run all tests
+pytest
 
-# Authenticate
-gcloud auth application-default login
+# Run with coverage report
+pytest --cov=app --cov-report=html
 
-pip install google-cloud-aiplatform
-python -m uvicorn app.main:app --reload
+# Run specific test file
+pytest tests/test_animation_pipeline.py
+
+# Run integration tests only
+pytest -m integration
 ```
 
-## Installation
+## API Documentation
 
-```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+-   **Swagger UI:** `http://localhost:8000/docs`
+-   **ReDoc:** `http://localhost:8000/redoc`
 
-# Install dependencies
-pip install -r requirements.txt
+### Key Endpoints
 
-# Copy environment template
-cp .env.example .env
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `POST` | `/upload` | Upload content file for analysis |
+| `POST` | `/analyze` | Analyze content and extract topics |
+| `POST` | `/generate` | Generate video from selected topics |
+| `GET` | `/jobs/{job_id}` | Get job status and metadata |
+| `GET` | `/jobs/{job_id}/sections` | Get detailed section information |
+| `POST` | `/translate` | Translate video to another language |
+| `GET` | `/health` | Health check endpoint |
 
-# Optional: review advanced knobs
-# cp .env.advanced.example .env.advanced
+## Development
 
-# Edit .env with your settings (see above)
-nano .env
+-   **Linting:** `ruff check .`
+-   **Type Checking:** `pyright`
+-   **Formatting:** `black .`
 
-# Run server
-python -m uvicorn app.main:app --reload
-```
-
-## Documentation
-
-- Full setup guide: [docs/VERTEX_AI_SETUP.md](../docs/VERTEX_AI_SETUP.md)
-- Model configuration: [app/config/models.py](app/config/models.py)
-- Environment strategy: [ENVIRONMENT.md](ENVIRONMENT.md)
-- Advanced env knobs: [.env.advanced.example](.env.advanced.example)
-
-## Switching Backends
-
-Change `USE_VERTEX_AI` in `.env`:
-- `false` → Gemini API (needs `GEMINI_API_KEY`)
-- `true` → Vertex AI (needs `GCP_PROJECT_ID`)
-
-No code changes required!
+Refer to the root `ARCHITECTURE.md` for architectural details and `ENVIRONMENT.md` for advanced configuration.
