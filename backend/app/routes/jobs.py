@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
 from ..config import OUTPUT_DIR
-from ..models import JobResponse, DetailedProgress, JobUpdateRequest
+from ..models import JobResponse, DetailedProgress, JobUpdateRequest, SectionProgress
 from ..services.infrastructure.storage import FileBasedJobRepository
 from ..services.pipeline.audio import TTSEngine
 from ..core import (
@@ -75,6 +75,21 @@ def _load_visual_script(section: dict, section_dir: "Path") -> str:
             continue
 
     return ""
+
+
+def _load_script_progress(job_id: str) -> dict:
+    """Load script-phase progress metadata if available and valid."""
+    path = (OUTPUT_DIR / job_id / "script_progress.json").resolve()
+    try:
+        if not validate_path_within_directory(path, OUTPUT_DIR):
+            return {}
+        if not path.exists() or not path.is_file():
+            return {}
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
 
 
 @router.get("/job/{job_id}", response_model=JobResponse)
@@ -511,6 +526,9 @@ async def get_job_details(job_id: str):
     # Load script if available (optional - may not exist yet)
     script_ready = False
     script_title = None
+    outline_ready = False
+    outline_sections = []
+    current_script_section_index = None
     total_sections = 0
 
     try:
@@ -521,9 +539,68 @@ async def get_job_details(job_id: str):
     except HTTPException:
         # Script not found or not ready - continue with defaults
         script = None
+        script_progress = _load_script_progress(job_id)
+        if script_progress:
+            outline_ready = bool(script_progress.get("outline_ready", False))
+            if script_progress.get("script_title"):
+                script_title = str(script_progress.get("script_title"))
+
+            raw_outline_sections = script_progress.get("outline_sections", [])
+            if isinstance(raw_outline_sections, list):
+                for i, section in enumerate(raw_outline_sections):
+                    if not isinstance(section, dict):
+                        continue
+                    outline_sections.append({
+                        "index": i if not isinstance(section.get("index"), int) else section["index"],
+                        "id": str(section.get("id", f"section_{i}")),
+                        "title": str(section.get("title", f"Part {i + 1}")),
+                        "estimated_duration_seconds": section.get("estimated_duration_seconds"),
+                    })
+            total_sections = len(outline_sections)
+
+            try:
+                if script_progress.get("current_script_section_index") is not None:
+                    current_script_section_index = int(script_progress.get("current_script_section_index"))
+            except (TypeError, ValueError):
+                current_script_section_index = None
 
     # Build per-section progress information
     sections, completed_sections = build_sections_progress(job_id, current_stage)
+
+    if (
+        not script_ready
+        and current_stage == "script"
+        and not sections
+        and outline_ready
+        and outline_sections
+    ):
+        sections = [
+            SectionProgress(
+                index=section["index"],
+                id=section["id"],
+                title=section["title"],
+                status=(
+                    "generating_script"
+                    if current_script_section_index == section["index"]
+                    else "script_generated"
+                    if (
+                        current_script_section_index is not None
+                        and section["index"] < current_script_section_index
+                    )
+                    else "waiting"
+                ),
+                duration_seconds=section.get("estimated_duration_seconds"),
+                narration_preview=None,
+                has_video=False,
+                has_audio=False,
+                has_code=False,
+                error=None,
+                fix_attempts=0,
+                qc_iterations=0,
+            )
+            for section in outline_sections
+        ]
+        completed_sections = 0
 
     # Determine which section is currently being processed
     current_section_index = get_current_section_index(
@@ -542,6 +619,9 @@ async def get_job_details(job_id: str):
         current_section_index=current_section_index,
         script_ready=script_ready,
         script_title=script_title,
+        outline_ready=outline_ready,
+        outline_sections=outline_sections,
+        current_script_section_index=current_script_section_index,
         total_sections=total_sections,
         completed_sections=completed_sections,
         sections=sections
@@ -613,6 +693,4 @@ async def get_section_details(job_id: str, section_index: int):
         "has_audio": audio_path.exists(),
         "has_video": video_path is not None
     }
-
-
 

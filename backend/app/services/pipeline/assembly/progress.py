@@ -8,6 +8,7 @@ import json
 from typing import Dict, Any, List, Set, Optional, Callable
 from pathlib import Path
 from dataclasses import dataclass
+from datetime import datetime
 
 from app.core import get_logger
 
@@ -292,6 +293,42 @@ class ProgressTracker:
         except Exception:
             logger.error("Failed to save script.json", exc_info=True)
             raise
+
+    @property
+    def script_progress_path(self) -> Path:
+        return self.job_dir / "script_progress.json"
+
+    def load_script_progress(self) -> Optional[Dict[str, Any]]:
+        """Load script-phase progress metadata if available."""
+        path = self.script_progress_path
+        if not path.exists():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            logger.warning("Failed to load script_progress.json", exc_info=True)
+        return None
+
+    def save_script_progress(self, updates: Dict[str, Any]) -> None:
+        """Persist script-phase progress metadata for live UI updates."""
+        payload = self.load_script_progress() or {}
+        payload.update(updates)
+        if "created_at" not in payload:
+            payload["created_at"] = datetime.now().isoformat()
+        payload["updated_at"] = datetime.now().isoformat()
+        self.job_dir.mkdir(parents=True, exist_ok=True)
+        with open(self.script_progress_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, ensure_ascii=False)
+
+    def remove_script_progress(self) -> None:
+        """Delete script-phase progress metadata once full script is ready."""
+        try:
+            self.script_progress_path.unlink(missing_ok=True)
+        except Exception:
+            logger.warning("Failed to remove script_progress.json", exc_info=True)
 
     def load_script(self) -> Dict[str, Any]:
         """

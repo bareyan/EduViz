@@ -58,6 +58,13 @@ export function getStatusConfig(status: SectionProgress['status']) {
         textColor: 'text-yellow-500',
         label: 'Writing script...'
       }
+    case 'script_generated':
+      return {
+        icon: <CheckCircle className="w-3.5 h-3.5" />,
+        color: 'text-emerald-400',
+        textColor: 'text-emerald-400',
+        label: 'Script generated'
+      }
     case 'failed':
       return {
         icon: <AlertCircle className="w-3.5 h-3.5" />,

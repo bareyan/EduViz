@@ -20,6 +20,7 @@ export function SectionProgressView({ details, onSectionClick }: SectionProgress
   useEffect(() => {
     console.log('SectionProgressView received details:', {
       script_ready: details.script_ready,
+      outline_ready: details.outline_ready,
       script_title: details.script_title,
       total_sections: details.total_sections,
       completed_sections: details.completed_sections,
@@ -31,11 +32,42 @@ export function SectionProgressView({ details, onSectionClick }: SectionProgress
   }, [details])
 
   // Only hide if we're in very early stages (analyzing stage AND no sections info yet)
-  const shouldShow = details.script_ready || details.total_sections > 0 || details.current_stage === 'sections'
+  const shouldShow =
+    details.script_ready ||
+    Boolean(details.outline_ready) ||
+    details.total_sections > 0 ||
+    details.current_stage === 'sections'
   
   if (!shouldShow) {
     return null
   }
+
+  const hasRealSections = Array.isArray(details.sections) && details.sections.length > 0
+  const outlineSections = Array.isArray(details.outline_sections) ? details.outline_sections : []
+  const isOutlineMode = !details.script_ready && details.current_stage === 'script' && !hasRealSections && Boolean(details.outline_ready) && outlineSections.length > 0
+
+  const displaySections = hasRealSections
+    ? details.sections
+    : isOutlineMode
+      ? outlineSections.map((section) => ({
+          index: section.index,
+          id: section.id,
+          title: section.title,
+          status: details.current_script_section_index === section.index
+            ? 'generating_script' as const
+            : (details.current_script_section_index !== undefined && details.current_script_section_index !== null && section.index < details.current_script_section_index)
+              ? 'script_generated' as const
+              : 'waiting' as const,
+          duration_seconds: section.estimated_duration_seconds,
+          narration_preview: undefined,
+          has_video: false,
+          has_audio: false,
+          has_code: false,
+          error: undefined,
+          fix_attempts: 0,
+          qc_iterations: 0
+        }))
+      : []
 
   // Calculate stage description for current stage
   const getStageDescription = () => {
@@ -113,12 +145,16 @@ export function SectionProgressView({ details, onSectionClick }: SectionProgress
 
           {/* Section List */}
           <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {Array.isArray(details.sections) && details.sections.length > 0 ? (
-              details.sections.map((section) => (
+            {displaySections.length > 0 ? (
+              displaySections.map((section) => (
                 <SectionItem 
                   key={section.id} 
                   section={section}
-                  isCurrent={details.current_section_index === section.index}
+                  isCurrent={
+                    isOutlineMode
+                      ? details.current_script_section_index === section.index
+                      : details.current_section_index === section.index
+                  }
                   onClick={() => onSectionClick?.(section)}
                 />
               ))

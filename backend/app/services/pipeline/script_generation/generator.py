@@ -5,7 +5,7 @@ Refactored to use the centralized prompting engine instead of direct client call
 """
 
 import os
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Callable
 
 from app.core import get_logger
 from app.services.infrastructure.llm import PromptingEngine, PromptConfig, CostTracker
@@ -60,6 +60,7 @@ class ScriptGenerator:
         content_focus: str = "as_document",
         document_context: str = "auto",
         artifacts_dir: Optional[str] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Generate script using unified prompting engine"""
         
@@ -131,6 +132,7 @@ class ScriptGenerator:
             document_context=document_context,
             pdf_path=pdf_path,
             total_pages=total_pages,
+            progress_callback=progress_callback,
         )
 
         # Phase 2: Generate sections (returns a list of section dicts)
@@ -143,6 +145,7 @@ class ScriptGenerator:
             pdf_path=pdf_path,
             total_pages=total_pages,
             artifacts_dir=artifacts_dir,
+            progress_callback=progress_callback,
         )
 
         # Add duration estimation for each section
