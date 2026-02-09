@@ -79,7 +79,7 @@ def test_get_job_status_success():
     mock_repo = MagicMock()
     mock_repo.get.return_value = mock_job
     
-    with patch("app.routes.jobs.FileBasedJobRepository", return_value=mock_repo):
+    with patch("app.services.features.jobs.service.FileBasedJobRepository", return_value=mock_repo):
         response = client.get("/job/job_123", headers=_auth_headers())
         assert response.status_code == 200
         data = response.json()
@@ -91,7 +91,7 @@ def test_get_job_status_not_found():
     mock_repo = MagicMock()
     mock_repo.get.return_value = None
     
-    with patch("app.routes.jobs.FileBasedJobRepository", return_value=mock_repo):
+    with patch("app.services.features.jobs.service.FileBasedJobRepository", return_value=mock_repo):
         response = client.get("/job/missing_job", headers=_auth_headers())
         assert response.status_code == 404
 
@@ -101,8 +101,8 @@ def test_delete_job():
     mock_repo = MagicMock()
     mock_repo.delete.return_value = {"id": valid_job_id}
     
-    with patch("app.routes.jobs.FileBasedJobRepository", return_value=mock_repo), \
-            patch("app.routes.jobs.shutil.rmtree"):
+    with patch("app.services.features.jobs.service.FileBasedJobRepository", return_value=mock_repo), \
+            patch("app.services.features.jobs.service.shutil.rmtree"):
         
         # Need to mock exists call? 
         # app.routes.jobs.OUTPUT_DIR / job_id .exists()

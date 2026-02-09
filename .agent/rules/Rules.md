@@ -1,0 +1,260 @@
+---
+trigger: always_on
+---
+
+# GitHub Copilot Instructions for EduViz
+
+## Project Overview
+
+EduViz is a **production-grade** AI-powered educational video generation platform that transforms educational content into animated videos using Manim. The system follows **Google-quality engineering standards** with strict adherence to:
+
+- **STRONG SRP (Single Responsibility Principle)**: Each module has ONE clear purpose
+- **STRONG DRY (Don't Repeat Yourself)**: Zero tolerance for code duplication
+- **Clean Architecture**: Infrastructure → Services → Routes, with clear boundaries
+- **No Technical Debt**: No deprecated code, no backward compatibility layers, no TODOs
+
+## Core Architecture Principles
+
+### 1. Infrastructure Layer (app/services/infrastructure/)
+
+**Purpose**: Provides generic, reusable capabilities that are NOT business-specific.
+
+- **LLM Layer** (`infrastructure/llm/`):
+  - `PromptingEngine`: Single point for ALL LLM interactions
+  - `CostTracker`: Cost monitoring across all LLM calls
+  - `gemini/client.py`: Unified client for both Gemini API and Vertex AI
+  - **Rule**: NEVER call LLM APIs directly - always use `PromptingEngine`
+
+- **Parsing Layer** (`infrastructure/parsing/`):
+  - `json_parser.py`: JSON extraction with error recovery
+  - `code_parser.py`: Code block extraction, validation, indentation normalization
+  - **Rule**: All text manipulation (markdown stripping, JSON parsing) goes here
+
+### 2. Pipeline Layer (app/services/pipeline/)
+
+**Purpose**: Business logic for content transformation stages.
+
+- **Content Analysis** (`pipeline/content_analysis/`):
+  - Analyzes PDFs, text files for educational structure
+  - Uses `PromptingEngine` for LLM calls
+  - Returns structured topic suggestions
+
+- **Script Generation** (`pipeline/script_generation/`):
+  - Converts topics into narration scripts
+  - Segments narration for audio sync
+  - Uses `BaseScriptGenerator` for shared utilities
+
+- **Animation Generation** (`pipeline/animation/generation/`):
+  - **Unified Agent Architecture**: Single `Animator` class manages entire lifecycle
+  - **Segmented Generation**: Creates code piece-by-piece (not all at once)
+  - **Tool-Based Refinement**: Uses `apply_surgical_edit` for fixes (not full regeneration)
+  - **Fail-Fast**: Raises specific exceptions (`ChoreographyError`, `ImplementationError`, `RefinementError`, `RenderingError`)
+
+### 3. Routes Layer (app/routes/)
+
+**Purpose**: API endpoints - thin controllers that orchestrate services.
+
+- **Rule**: Routes should be < 50 lines, delegating work to services
+- **Error Handling**: Return structured JSON with clear error messages
+- **No Business Logic**: Routes coordinate, services execute
+
+## Code Generation Patterns
+
+### For AI-Generated Code
+
+**Extraction and Cleaning**:
+
+```python
+from app.services.infrastructure.parsing.code_parser import (
+    extract_markdown_code_blocks,
+    remove_markdown_wrappers,
+    normalize_indentation
+)
+
+# Extract code from LLM response
+blocks = extract_markdown_code_blocks(response, "python")
+code = blocks[0] if blocks else remove_markdown_wrappers(response)
+
+# Normalize indentation
+normalized = normalize_indentation(code, base_spaces=8)  # For construct() body
+```
+
+**NEVER**:
+- Write regex to strip markdown (use `code_parser`)
+- Manually normalize indentation (use `code_parser`)
+- Duplicate parsing logic
+
+## Prompt Engineering Standards
+
+### System Prompts
+
+Store in `pipeline/*/prompts/` as `PromptTemplate` objects:
+
+```python
+from app.services.infrastructure.llm.prompting_engine.prompts.base import PromptTemplate
+
+SYSTEM_PROMPT = PromptTemplate(
+    template="""You are an expert...""",
+    description="Purpose of this prompt"
+)
+```
+
+### User Prompts
+
+Use `.format()` with named placeholders:
+
+```python
+USER_PROMPT = PromptTemplate(
+    template="""Generate code for:
+Title: {title}
+Duration: {duration}s
+Narration: {narration}
+
+Return ONLY Python code in a markdown block."""
+)
+
+# Usage
+prompt_text = USER_PROMPT.format(
+    title=section["title"],
+    duration=section["duration"],
+    narration=section["narration"]
+)
+```
+
+## Error Handling Standards
+
+### Exception Hierarchy
+
+```python
+# Base exception
+class PipelineError(Exception):
+    pass
+
+# Stage-specific exceptions
+class AnalysisError(PipelineError):
+    pass
+
+class ScriptGenerationError(PipelineError):
+    pass
+
+class AnimationError(PipelineError):
+    pass
+
+# Fine-grained exceptions
+class ChoreographyError(AnimationError):
+    """Planning stage failed"""
+    pass
+
+class ImplementationError(AnimationError):
+    """Code generation failed"""
+    pass
+
+class RefinementError(AnimationError):
+    """Could not fix code after max attempts"""
+    pass
+```
+
+### Usage
+
+```python
+# CORRECT: Fail-fast with specific context
+if not validation.valid:
+    raise ImplementationError(
+        f"Generated code has {len(validation.errors)} errors: "
+        f"{validation.get_error_summary()[:100]}"
+    )
+
+# WRONG: Silent failure or generic exception
+# return None  # ❌
+# raise Exception("Something failed")  # ❌
+```
+
+## Testing Standards
+
+### No Backward Compatibility
+
+```python
+# CORRECT: Clean, modern implementation
+def normalize_indentation(code: str, base_spaces: int = 0) -> str:
+    """Normalize indentation using infrastructure."""
+    return normalize_indent_infra(code, base_spaces=base_spaces)
+
+# WRONG: Deprecated wrappers
+# def normalize_indentation_legacy(code: str) -> str:  # ❌
+#     """DEPRECATED: Use normalize_indentation instead"""
+```
+
+**Rules**:
+- Remove ALL unused imports
+- Group by source (stdlib → third-party → app → local)
+- One blank line between groups
+
+## Performance and Cost Optimization
+
+### Token Usage
+
+```python
+# CORRECT: Sample long documents
+sample = get_representative_sample(full_text, max_chars=15000)
+response = await engine.generate(prompt.format(content=sample))
+
+# WRONG: Send full document
+# response = await engine.generate(prompt.format(content=full_text))  # ❌ Expensive
+```
+
+### Caching
+
+```python
+# CORRECT: Cache types module per-instance
+class MyAgent:
+    def __init__(self, engine: PromptingEngine):
+        self.engine = engine
+        self.types = engine.types  # Cache once
+    
+    def use_types(self):
+        content = self.types.Content(...)  # Use cached
+
+# WRONG: Create client every time
+# def use_types():
+#     types = get_types_module()  # ❌ Creates temp client
+```
+
+## What NOT to Do
+
+### ❌ NEVER:
+
+1. **Create backward compatibility layers** - We're building new, not maintaining old
+2. **Add TODO comments** - Either implement it or file an issue
+3. **Write duplicate parsing logic** - Use infrastructure layer
+4. **Call LLM APIs directly** - Use `PromptingEngine`
+5. **Regenerate full code on error** - Use surgical edits
+6. **Silent failures** - Raise specific exceptions
+7. **Business logic in routes** - Keep routes thin
+8. **Ignore type hints** - All functions must be typed
+9. **Leave unused imports** - Remove immediately
+10. **Nest try-except-pass** - Handle or propagate, never silence
+
+## Summary Checklist
+
+Always verify:
+
+- [ ] No unused imports
+- [ ] All functions have type hints
+- [ ] No duplicate logic (check infrastructure layer)
+- [ ] Exceptions are specific and informative
+- [ ] LLM calls go through `PromptingEngine`
+- [ ] Parsing uses `infrastructure/parsing/`
+- [ ] Tests pass without modifications to production code
+- [ ] No TODO/FIXME/HACK comments
+- [ ] Imports are organized by source
+- [ ] Docstrings explain WHY, not WHAT
+
+## Questions?
+
+Ask yourself:
+1. "Is this the SINGLE place this logic should live?" (SRP)
+2. "Am I copying existing logic?" (DRY)
+3. "Will this scale to 10,000 concurrent users?" (Performance)
+4. "Can a new engineer understand this in 30 seconds?" (Clarity)
+
+If any answer is "no", refactor before committing.
