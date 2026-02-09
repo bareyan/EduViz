@@ -1,0 +1,125 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches: [ "main" ]
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and Push Backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            gagik894/eduviz-backend:latest
+            gagik894/eduviz-backend:sha-${{ github.sha }}
+          cache-from: type=registry,ref=gagik894/eduviz-backend:cache
+          cache-to: type=registry,ref=gagik894/eduviz-backend:cache,mode=max
+
+      - name: Build and Push Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: |
+            gagik894/eduviz-frontend:latest
+            gagik894/eduviz-frontend:sha-${{ github.sha }}
+          cache-from: type=registry,ref=gagik894/eduviz-frontend:cache
+          cache-to: type=registry,ref=gagik894/eduviz-frontend:cache,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Copy Compose File to Server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USER }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          source: "docker-compose.yml"
+          target: "/opt/eduviz"
+
+      - name: Create .env file on Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USER }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          script: |
+            mkdir -p /opt/eduviz/backend
+            cat > /opt/eduviz/backend/.env << 'EOF'
+            ${{ secrets.BACKEND_ENV_FILE }}
+            EOF
+            chmod 600 /opt/eduviz/backend/.env
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.HETZNER_HOST }}
+          username: ${{ secrets.HETZNER_USER }}
+          key: ${{ secrets.HETZNER_SSH_KEY }}
+          command_timeout: 5m
+          script: |
+            set -e
+            cd /opt/eduviz
+
+            echo "==> Pulling latest images..."
+            docker compose pull
+
+            echo "==> Starting containers..."
+            docker compose up -d
+
+            echo "==> Cleaning up old images..."
+            docker image prune -f
+
+            echo "==> Waiting for health check..."
+            for i in {1..30}; do
+              BACKEND_OK=false
+              FRONTEND_OK=false
+              
+              if curl -fsS http://localhost:8000/health > /dev/null 2>&1; then
+                BACKEND_OK=true
+              fi
+              
+              if curl -fsS http://localhost:3000 > /dev/null 2>&1; then
+                FRONTEND_OK=true
+              fi
+              
+              if [ "$BACKEND_OK" = true ] && [ "$FRONTEND_OK" = true ]; then
+                echo "✓ Backend and Frontend are healthy!"
+                exit 0
+              fi
+              
+              echo "Waiting... ($i/30) [Backend: $BACKEND_OK | Frontend: $FRONTEND_OK]"
+              sleep 5
+            done
+
+            echo "Health check failed!"
+            exit 1

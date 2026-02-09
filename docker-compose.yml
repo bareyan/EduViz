@@ -3,6 +3,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    image: gagik894/eduviz-backend:latest
     ports:
       - "8000:8000"
     env_file:
@@ -12,8 +13,6 @@ services:
       - ./backend/outputs:/app/outputs
       - ./backend/job_data:/app/job_data
       - ./backend/logs:/app/logs
-    # Run as host user to fix volume permission issues
-    user: "${UID:-1000}:${GID:-1000}"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -35,6 +34,7 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    image: gagik894/eduviz-frontend:latest
     ports:
       - "3000:80"
     depends_on:
