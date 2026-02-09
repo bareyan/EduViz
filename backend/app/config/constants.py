@@ -14,9 +14,7 @@ CORS_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:3001",
     "http://localhost:5173",
-    # Vercel deployment URLs (update with your actual Vercel domain)
-    "https://eduviz.vercel.app",
-    "https://eduviz-yourusername.vercel.app",  # Replace with your Vercel preview URLs
+    "https://gemini-3-eduviz.vercel.app",
 ]
 
 # File upload settings
