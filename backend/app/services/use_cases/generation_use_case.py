@@ -15,11 +15,11 @@ from fastapi import HTTPException, BackgroundTasks
 from app.config import OUTPUT_DIR
 from app.config.models import list_available_pipelines
 from app.models import GenerationRequest, JobResponse, ResumeInfo
-from app.services.pipeline.assembly import VideoGenerator
+from app.services.pipeline.assembly import VideoGenerator, generate_thumbnail
 from app.services.pipeline.animation.config import normalize_theme_style
 from app.services.infrastructure.orchestration import get_job_manager, JobStatus
 from app.services.infrastructure.storage import FileBasedAnalysisRepository
-from app.core import find_uploaded_file
+from app.core import find_uploaded_file, save_video_info, create_video_info_from_result
 
 
 class GenerationUseCase:
@@ -239,14 +239,30 @@ class GenerationUseCase:
 
                 if result.get("status") == "completed":
                     script = result.get("script", {})
+                    
+                    # Generate thumbnail
+                    duration = result.get("total_duration") or sum(c.get("duration", 0) for c in result.get("chapters", []))
+                    thumb_time = min(duration / 2, 5.0)  # Capture at 5s or halfway point
+    
+                    video_path = str(OUTPUT_DIR / job_id / "final_video.mp4")
+                    thumb_path = str(OUTPUT_DIR / job_id / "thumbnail.jpg")
+                    thumbnail_url = None
+                    
+                    if await generate_thumbnail(video_path, thumb_path, time=thumb_time):
+                        thumbnail_url = f"/outputs/{job_id}/thumbnail.jpg"
+
                     video_result = {
                         "video_id": job_id,
                         "title": script.get("title", "Educational Video"),
-                        "duration": result.get("total_duration") or sum(c.get("duration", 0) for c in result.get("chapters", [])),
+                        "duration": duration,
                         "chapters": result.get("chapters", []),
                         "download_url": f"/outputs/{job_id}/final_video.mp4",
-                        "thumbnail_url": None,
+                        "thumbnail_url": thumbnail_url,
                     }
+                    
+                    # Persist video metadata alongside the video file
+                    video_info = create_video_info_from_result(job_id, video_result)
+                    save_video_info(video_info)
                     
                     self.job_manager.update_job(
                         job_id,
@@ -257,6 +273,19 @@ class GenerationUseCase:
                     )
                 else:
                     error_msg = result.get("error", "Video generation failed")
+                    
+                    # Persist error info
+                    from datetime import datetime
+                    from app.core import ErrorInfo, save_error_info
+                    
+                    error_info = ErrorInfo(
+                        job_id=job_id,
+                        error_message=error_msg,
+                        stage="generation",
+                        timestamp=datetime.now().isoformat(),
+                    )
+                    save_error_info(error_info)
+                    
                     self.job_manager.update_job(
                         job_id,
                         JobStatus.FAILED,
@@ -266,7 +295,21 @@ class GenerationUseCase:
 
             except Exception as e:  # noqa: BLE001
                 traceback.print_exc()
-                self.job_manager.update_job(job_id, JobStatus.FAILED, 0, f"Error: {str(e)}")
+                error_msg = f"Error: {str(e)}"
+                
+                # Persist error info for exceptions too
+                from datetime import datetime
+                from app.core import ErrorInfo, save_error_info
+                
+                error_info = ErrorInfo(
+                    job_id=job_id,
+                    error_message=error_msg,
+                    stage="exception",
+                    timestamp=datetime.now().isoformat(),
+                )
+                save_error_info(error_info)
+                
+                self.job_manager.update_job(job_id, JobStatus.FAILED, 0, error_msg)
 
         background_tasks.add_task(run_generation)
 

@@ -32,13 +32,22 @@ SPATIAL_JSON_MARKER = "SPATIAL_ISSUES_JSON:"
 INJECTED_METHOD = '''
 def _perform_spatial_checks(self):
     """Injected spatial validator - runs at every play()/wait() boundary."""
-    import json as _json
 
-    # ── Screen limits ──
-    SCREEN_X = 7.1
-    SCREEN_Y = 4.0
-    SAFE_X = 5.5
-    SAFE_Y = 3.0
+    # ── Dynamic Screen limits ──
+    try:
+        # Use camera frame dimensions if available, fallback to defaults
+        if hasattr(self, "camera"):
+            SCREEN_X = self.camera.frame_width / 2
+            SCREEN_Y = self.camera.frame_height / 2
+        else:
+            SCREEN_X = 7.1
+            SCREEN_Y = 4.0
+    except Exception:
+        SCREEN_X = 7.1
+        SCREEN_Y = 4.0
+
+    SAFE_X = SCREEN_X * 0.77  # Roughly 5.5 / 7.1
+    SAFE_Y = SCREEN_Y * 0.75  # Roughly 3.0 / 4.0
     # Text needs extra margin — partial letters at screen edge look broken
     TEXT_EDGE_MARGIN = 0.3
     # Lower threshold for text (0.1) vs general objects (0.3)
@@ -46,8 +55,8 @@ def _perform_spatial_checks(self):
     GENERAL_OVERSHOOT_THRESHOLD = 0.3
     TEXT_CLIP_MARGIN = 0.12
     # Group/table size limits — anything larger is definitely broken
-    GROUP_MAX_WIDTH = 15.0
-    GROUP_MAX_HEIGHT = 9.0
+    GROUP_MAX_WIDTH = SCREEN_X * 2.1
+    GROUP_MAX_HEIGHT = SCREEN_Y * 2.25
     FRAME_AREA = (2 * SCREEN_X) * (2 * SCREEN_Y)
     # TEMPORARY RELAXATION: disable heuristic visual-quality blockers
     # by using non-reachable thresholds until we tighten logic.
@@ -83,6 +92,15 @@ def _perform_spatial_checks(self):
             if m is None:
                 continue
             out.append(m)
+            # Text/Tex families contain glyph submobjects (e.g. VMobjectFromSVGPath)
+            # that create noisy duplicate issues. Keep the parent text node only.
+            try:
+                _name = type(m).__name__
+                _is_text_like = ("Text" in _name) or ("Tex" in _name) or hasattr(m, "text")
+            except Exception:
+                _is_text_like = False
+            if _is_text_like:
+                continue
             if hasattr(m, "submobjects") and m.submobjects:
                 out.extend(_flat(m.submobjects))
         return out
@@ -264,6 +282,20 @@ def _perform_spatial_checks(self):
             pass
         return _trunc(repr(m))
 
+    def _subject_label(m, is_text_obj=False, text_label=None):
+        obj_type = type(m).__name__
+        if is_text_obj:
+            if isinstance(text_label, str) and text_label and text_label != obj_type:
+                return text_label
+            return obj_type
+        try:
+            name = getattr(m, "name", "")
+            if isinstance(name, str) and name and name != obj_type:
+                return _trunc(f"{obj_type}:{name}")
+        except Exception:
+            pass
+        return obj_type
+
     def _closest_edge(left, right, top, bottom):
         distances = {
             "left": SCREEN_X + left,
@@ -354,13 +386,14 @@ def _perform_spatial_checks(self):
         overshoot = max(overshoot_x, overshoot_y)
         nearest_edge, nearest_edge_dist = _closest_edge(left, right, top, bottom)
         text_label = _text_label(m) if is_text_obj else None
+        subject_label = _subject_label(m, is_text_obj=is_text_obj, text_label=text_label)
 
         # Use stricter threshold for text objects
         ignore_threshold = TEXT_OVERSHOOT_THRESHOLD if is_text_obj else GENERAL_OVERSHOOT_THRESHOLD
 
         if overshoot > 1.0:
             msg = (
-                f"{'Text' if is_text_obj else 'Object'} '{obj_type}' SEVERELY out of bounds at "
+                f"{'Text' if is_text_obj else 'Object'} '{subject_label}' SEVERELY out of bounds at "
                 f"({x:.1f}, {y:.1f}), size {w:.1f}x{h:.1f}, "
                 f"overshoot {overshoot:.1f}"
             )
@@ -371,11 +404,12 @@ def _perform_spatial_checks(self):
                 object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
                 width=round(w, 2), height=round(h, 2), overshoot=round(overshoot, 2),
                 is_text=is_text_obj, edge=nearest_edge, edge_margin=round(nearest_edge_dist, 2),
+                object_subject=subject_label,
                 text=text_label, reason=("text_edge_clipping" if is_text_obj else "object_bounds"),
             ))
         elif overshoot > ignore_threshold:
             msg = (
-                f"{'Text' if is_text_obj else 'Object'} '{obj_type}' partially clipped at "
+                f"{'Text' if is_text_obj else 'Object'} '{subject_label}' partially clipped at "
                 f"({x:.1f}, {y:.1f}), size {w:.1f}x{h:.1f}, "
                 f"overshoot {overshoot:.1f}"
             )
@@ -388,6 +422,7 @@ def _perform_spatial_checks(self):
                 object_type=obj_type, center_x=round(x, 2), center_y=round(y, 2),
                 width=round(w, 2), height=round(h, 2), overshoot=round(overshoot, 2),
                 is_text=is_text_obj, edge=nearest_edge, edge_margin=round(nearest_edge_dist, 2),
+                object_subject=subject_label,
                 text=text_label, reason=("text_edge_clipping" if is_text_obj else "object_bounds"),
             ))
 
@@ -405,7 +440,7 @@ def _perform_spatial_checks(self):
             edge, edge_dist = _closest_edge(left, right, top, bottom)
             if 0 < min_margin < TEXT_CLIP_MARGIN:
                 msg = (
-                    f"Text '{text_label}' appears clipped near {edge} edge at "
+                    f"Text '{subject_label}' appears clipped near {edge} edge at "
                     f"({x:.1f}, {y:.1f}), margin={min_margin:.2f}"
                 )
                 # Use LOW confidence — let Visual QC decide if it's actually clipped
@@ -417,11 +452,12 @@ def _perform_spatial_checks(self):
                     width=round(w, 2), height=round(h, 2),
                     overshoot=round(TEXT_CLIP_MARGIN - min_margin, 2),
                     is_text=True, edge=edge, edge_margin=round(edge_dist, 2),
+                    object_subject=subject_label,
                     reason="text_edge_clipping",
                 ))
             elif 0 < min_margin < TEXT_EDGE_MARGIN:
                 msg = (
-                    f"Text '{text_label}' dangerously close to screen edge at "
+                    f"Text '{subject_label}' dangerously close to screen edge at "
                     f"({x:.1f}, {y:.1f}), margin={min_margin:.2f}"
                 )
                 new_issues.append(_issue(
@@ -433,6 +469,7 @@ def _perform_spatial_checks(self):
                     width=round(w, 2), height=round(h, 2),
                     overshoot=round(TEXT_EDGE_MARGIN - min_margin, 2),
                     is_text=True, edge=edge, edge_margin=round(edge_dist, 2),
+                    object_subject=subject_label,
                     reason="text_edge_risk",
                 ))
 
@@ -939,26 +976,26 @@ class SpatialCheckInjector:
         """Find the Scene subclass using heuristics.
         
         Priority:
-        1. Class that explicitly inherits from a name ending in 'Scene'
-        2. Class that contains a 'construct' method (most reliable for Manim)
+        1. Class that contains a 'construct' method (most reliable for Manim)
+        2. Class that explicitly inherits from a name ending in 'Scene'
         3. First class in the module as fallback
         """
         classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
         if not classes:
             return None
 
-        # 1. Look for 'Scene' in bases
+        # 1. Look for 'construct' method (Highest priority: this is where we inject)
+        for node in classes:
+            if any(isinstance(n, ast.FunctionDef) and n.name == "construct" for n in node.body):
+                return node
+
+        # 2. Look for 'Scene' in bases
         for node in classes:
             for base in node.bases:
                 if isinstance(base, ast.Name) and "Scene" in base.id:
                     return node
                 if isinstance(base, ast.Attribute) and "Scene" in base.attr:
                     return node
-
-        # 2. Look for 'construct' method
-        for node in classes:
-            if any(isinstance(n, ast.FunctionDef) and n.name == "construct" for n in node.body):
-                return node
 
         # 3. Fallback: first class
         return classes[0]

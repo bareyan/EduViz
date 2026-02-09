@@ -1,8 +1,8 @@
-import { 
-  Loader2, 
-  Play, 
-  Trash2, 
-  Clock, 
+import {
+  Loader2,
+  Play,
+  Trash2,
+  Clock,
   CheckCircle,
   XCircle,
   Edit
@@ -18,11 +18,11 @@ interface JobCardProps {
   onEdit: () => void
 }
 
-export function JobCard({ 
-  job, 
-  onDelete, 
+export function JobCard({
+  job,
+  onDelete,
   onView,
-  onEdit 
+  onEdit
 }: JobCardProps) {
   const isCompleted = job.status === 'completed'
   const isFailed = job.status === 'failed'
@@ -43,11 +43,17 @@ export function JobCard({
       {/* Thumbnail / Status */}
       <div className="aspect-video bg-gray-800 relative flex items-center justify-center">
         {isCompleted && job.video_url ? (
-          <video 
+          <video
             src={`${API_BASE}${job.video_url}`}
+            poster={job.thumbnail_url ? `${API_BASE}${job.thumbnail_url}` : undefined}
+            preload="none"
             className="w-full h-full object-cover"
             muted
-            onMouseEnter={(e) => e.currentTarget.play()}
+            onMouseEnter={(e) => {
+              if (e.currentTarget.paused) {
+                e.currentTarget.play().catch(() => { })
+              }
+            }}
             onMouseLeave={(e) => {
               e.currentTarget.pause()
               e.currentTarget.currentTime = 0
@@ -61,11 +67,11 @@ export function JobCard({
             <span className="text-sm text-gray-400 capitalize">{job.status}</span>
           </div>
         )}
-        
+
         {/* Progress overlay for pending */}
         {isPending && (
           <div className="absolute bottom-0 left-0 right-0 h-1 bg-gray-700">
-            <div 
+            <div
               className="h-full bg-blue-500 transition-all"
               style={{ width: `${(job.progress || 0) * 100}%` }}
             />
@@ -78,7 +84,7 @@ export function JobCard({
         <h3 className="font-medium truncate mb-1">
           {job.title || job.id.substring(0, 20)}
         </h3>
-        
+
         <div className="flex items-center gap-3 text-sm text-gray-500 mb-3">
           <span className="flex items-center gap-1">
             <Clock className="w-3 h-3" />
@@ -95,7 +101,7 @@ export function JobCard({
         {isPending && (
           <p className="text-xs text-blue-400 mb-3 truncate">{job.message}</p>
         )}
-        
+
         {isFailed && (
           <p className="text-xs text-red-400 mb-3 truncate">{job.message}</p>
         )}
@@ -121,7 +127,7 @@ export function JobCard({
               </button>
             </>
           )}
-          
+
           {isPending && (
             <button
               onClick={onView}
@@ -131,7 +137,7 @@ export function JobCard({
               View Progress
             </button>
           )}
-          
+
           <button
             onClick={onDelete}
             className="flex items-center justify-center gap-2 px-3 py-2 

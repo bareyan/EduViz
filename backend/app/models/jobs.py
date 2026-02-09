@@ -18,6 +18,14 @@ class ResumeInfo(BaseModel):
     last_completed_section: Optional[str] = None
 
 
+class OutlineSectionPreview(BaseModel):
+    """Outline-only section preview available before full script generation."""
+    index: int
+    id: str
+    title: str
+    estimated_duration_seconds: Optional[float] = None
+
+
 class DetailedProgress(BaseModel):
     """Detailed progress information for a job"""
     job_id: str
@@ -28,6 +36,9 @@ class DetailedProgress(BaseModel):
     current_section_index: Optional[int] = None
     script_ready: bool = False
     script_title: Optional[str] = None
+    outline_ready: bool = False
+    outline_sections: List[OutlineSectionPreview] = []
+    current_script_section_index: Optional[int] = None
     total_sections: int = 0
     completed_sections: int = 0
     sections: List[SectionProgress] = []
@@ -41,3 +52,8 @@ class JobResponse(BaseModel):
     message: str
     result: Optional[Union[dict, list]] = None
     details: Optional[DetailedProgress] = None
+
+
+class JobUpdateRequest(BaseModel):
+    """Request to update job metadata"""
+    title: Optional[str] = None

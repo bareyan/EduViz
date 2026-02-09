@@ -225,3 +225,47 @@ async def test_triage_mixed_routes_verified_uncertain_to_both_paths(refiner):
     assert stats["unresolved"] == 3
     refiner.issue_verifier.verify.assert_called_once()
     refiner._apply_llm_fix.assert_called_once()
+
+
+def test_issue_snapshot_includes_subject_center_and_reason(refiner):
+    issue = ValidationIssue(
+        IssueSeverity.WARNING,
+        IssueConfidence.MEDIUM,
+        IssueCategory.OUT_OF_BOUNDS,
+        "Object partially clipped",
+        auto_fixable=True,
+        details={
+            "object_subject": "Revenue",
+            "center_x": -7.25,
+            "center_y": 0.5,
+            "reason": "text_edge_clipping",
+        },
+    )
+
+    snapshot = refiner._issue_snapshot(issue)
+
+    assert snapshot["subject"] == "Revenue"
+    assert snapshot["center"] == {"x": -7.25, "y": 0.5}
+    assert snapshot["reason"] == "text_edge_clipping"
+
+
+def test_format_issue_log_line_appends_subject_and_context(refiner):
+    issue = ValidationIssue(
+        IssueSeverity.CRITICAL,
+        IssueConfidence.HIGH,
+        IssueCategory.OUT_OF_BOUNDS,
+        "Text partially clipped at edge",
+        auto_fixable=True,
+        details={
+            "text": "Objective Function",
+            "center_x": 6.8,
+            "center_y": 0.0,
+            "reason": "text_edge_clipping",
+        },
+    )
+
+    formatted = refiner._format_issue_log_line(issue)
+
+    assert "subject=Objective Function" in formatted
+    assert "at=(6.80,0.00)" in formatted
+    assert "reason=text_edge_clipping" in formatted

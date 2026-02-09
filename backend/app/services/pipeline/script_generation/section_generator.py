@@ -12,7 +12,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 
 from .base import BaseScriptGenerator
 from .schema_filter import filter_section
@@ -63,6 +63,7 @@ class SectionGenerator:
         pdf_path: Optional[str] = None,
         total_pages: Optional[int] = None,
         artifacts_dir: Optional[str] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> List[Dict[str, Any]]:
         """Generate sections from an outline (comprehensive mode only).
         
@@ -81,6 +82,7 @@ class SectionGenerator:
             pdf_path=pdf_path,
             total_pages=total_pages,
             artifacts_dir=artifacts_dir,
+            progress_callback=progress_callback,
         )
 
     async def _generate_sections_sequentially(
@@ -93,6 +95,7 @@ class SectionGenerator:
         pdf_path: Optional[str],
         total_pages: Optional[int],
         artifacts_dir: Optional[str],
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]],
     ) -> List[Dict[str, Any]]:
         """
         Generate sections one by one using individual generate_content calls.
@@ -138,6 +141,14 @@ class SectionGenerator:
         slice_cache: Dict[tuple, tuple] = {}
 
         for section_idx, section_outline in enumerate(sections_outline):
+            if progress_callback:
+                progress_callback({
+                    "event": "section_script_started",
+                    "current_script_section_index": section_idx,
+                    "total_script_sections": total_sections,
+                    "section_id": section_outline.get("id", f"section_{section_idx}"),
+                    "section_title": section_outline.get("title", f"Part {section_idx + 1}"),
+                })
             # Determine section position and context
             if section_idx == 0:
                 position_note = (

@@ -2,7 +2,7 @@
 Outline builder for script generation (Phase 1)
 """
 
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Callable
 
 from app.core import get_logger
 from app.services.infrastructure.parsing.json_parser import is_likely_truncated_json
@@ -46,6 +46,7 @@ class OutlineBuilder:
         video_mode: str = "comprehensive",
         pdf_path: Optional[str] = None,
         total_pages: Optional[int] = None,
+        progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Generate a detailed outline (Phase 1)."""
 
@@ -195,6 +196,11 @@ class OutlineBuilder:
                         "sections_count": len(outline.get("sections_outline", [])),
                     },
                 )
+                if progress_callback:
+                    progress_callback({
+                        "event": "outline_ready",
+                        "outline": outline,
+                    })
                 return outline
             except Exception as exc:
                 last_error = exc

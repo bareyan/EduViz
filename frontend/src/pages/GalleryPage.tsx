@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { 
-  Loader2, 
-  Trash2, 
+import {
+  Loader2,
+  Trash2,
   RefreshCw,
   Video,
   Home
@@ -39,25 +39,39 @@ export default function GalleryPage() {
 
   const handleDeleteJob = async (jobId: string) => {
     if (!confirm('Are you sure you want to delete this job?')) return
-    
+
     try {
       await jobService.deleteJob(jobId)
       toast.success('Job deleted')
       loadJobs()
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete job')
     }
   }
 
   const handleDeleteAllFailed = async () => {
     if (!confirm('Delete all failed jobs and their files?')) return
-    
+
     try {
       const result = await jobService.deleteFailedJobs()
       toast.success(`Deleted ${result.deleted_count} failed jobs`)
       loadJobs()
-    } catch (error) {
+    } catch {
       toast.error('Failed to delete failed jobs')
+    }
+  }
+
+  const handleEditJob = async (job: GalleryJob) => {
+    const newTitle = window.prompt("Rename Video:", job.title || "")
+    if (newTitle && newTitle !== job.title) {
+      try {
+        await jobService.updateJob(job.id, { title: newTitle })
+        toast.success("Video renamed")
+        loadJobs()
+      } catch (error) {
+        console.error(error)
+        toast.error("Failed to rename video")
+      }
     }
   }
 
@@ -133,11 +147,10 @@ export default function GalleryPage() {
           <button
             key={tab.key}
             onClick={() => setFilter(tab.key as any)}
-            className={`px-4 py-2 rounded-t-lg transition-colors ${
-              filter === tab.key
-                ? 'bg-gray-800 text-white'
-                : 'text-gray-500 hover:text-gray-300'
-            }`}
+            className={`px-4 py-2 rounded-t-lg transition-colors ${filter === tab.key
+              ? 'bg-gray-800 text-white'
+              : 'text-gray-500 hover:text-gray-300'
+              }`}
           >
             {tab.label}
           </button>
@@ -153,12 +166,12 @@ export default function GalleryPage() {
       ) : (
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredJobs.map(job => (
-            <JobCard 
-              key={job.id} 
-              job={job} 
+            <JobCard
+              key={job.id}
+              job={job}
               onDelete={() => handleDeleteJob(job.id)}
               onView={() => navigate(`/results/${job.id}`)}
-              onEdit={() => navigate(`/edit/${job.id}`)}
+              onEdit={() => handleEditJob(job)}
             />
           ))}
         </div>

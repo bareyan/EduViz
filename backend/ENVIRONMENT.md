@@ -20,6 +20,8 @@ This backend uses a two-tier environment strategy:
 - `GCP_LOCATION`
 - `STARTUP_STRICT_RUNTIME_CHECKS`
 - `MAX_UPLOAD_SIZE`
+- `AUTH_ENABLED`
+- `AUTH_PASSWORD`
 
 ## Advanced Variables (Optional)
 
@@ -28,6 +30,7 @@ See `.env.advanced.example` for:
 - Logging volume/rotation
 - LLM logging options
 - Rate limiting and request-size caps
+- Auth session controls (`AUTH_SECRET`, `AUTH_SESSION_MAX_AGE_SECONDS`, `AUTH_COOKIE_SECURE`, `AUTH_OPEN_PATHS`)
 - Cache size tuning
 - Optional PDF slicing behavior (`ENABLE_SECTION_PDF_SLICES`, `SECTION_PDF_SLICE_MIN_PAGES`)
 

@@ -10,6 +10,7 @@ EduViz supports two AI backends:
 # Get API key from https://aistudio.google.com/app/apikey
 echo "USE_VERTEX_AI=false" >> .env
 echo "GEMINI_API_KEY=your_key_here" >> .env
+echo "AUTH_PASSWORD=change_me" >> .env
 
 pip install google-generativeai
 python -m uvicorn app.main:app --reload

@@ -14,6 +14,7 @@ CORS_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:3001",
     "http://localhost:5173",
+    "https://gemini-3-eduviz.vercel.app",
 ]
 
 # File upload settings

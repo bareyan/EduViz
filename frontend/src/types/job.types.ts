@@ -33,9 +33,19 @@ export interface DetailedProgress {
   current_section_index?: number
   script_ready: boolean
   script_title?: string
+  outline_ready?: boolean
+  outline_sections?: OutlineSectionPreview[]
+  current_script_section_index?: number
   total_sections: number
   completed_sections: number
   sections: SectionProgress[]
+}
+
+export interface OutlineSectionPreview {
+  index: number
+  id: string
+  title: string
+  estimated_duration_seconds?: number
 }
 
 export interface GalleryJob {
@@ -50,6 +60,7 @@ export interface GalleryJob {
   title?: string
   total_duration?: number
   sections_count?: number
+  thumbnail_url?: string
 }
 
 export interface SectionFile {

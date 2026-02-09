@@ -1,7 +1,16 @@
-import { Outlet, Link } from 'react-router-dom'
-import { Play, Github, Grid } from 'lucide-react'
+import { Outlet, Link, useNavigate } from 'react-router-dom'
+import { Play, Github, Grid, LogOut } from 'lucide-react'
+import { useAuth } from '../contexts/AuthContext'
 
 export default function Layout() {
+  const navigate = useNavigate()
+  const { logout } = useAuth()
+
+  const handleLogout = async () => {
+    await logout()
+    navigate('/login', { replace: true })
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0f0f1a] via-[#1a1a2e] to-[#0f0f1a]">
       {/* Header */}
@@ -38,6 +47,15 @@ export default function Layout() {
               >
                 <Github className="w-5 h-5" />
               </a>
+              <button
+                type="button"
+                onClick={() => void handleLogout()}
+                className="text-gray-400 hover:text-white transition-colors"
+                aria-label="Logout"
+                title="Logout"
+              >
+                <LogOut className="w-5 h-5" />
+              </button>
             </nav>
           </div>
         </div>

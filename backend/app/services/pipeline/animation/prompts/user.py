@@ -483,7 +483,7 @@ SURGICAL_FIX_USER = PromptTemplate(
 
 You MUST output a single JSON object that matches the required schema:
 - analysis: string (<=200 chars)
-- edits: 1–2 objects with exact search_text and replacement_text
+- edits: 1–10 objects with exact search_text and replacement_text
 
 RULES:
 - search_text MUST be copied EXACTLY from CURRENT CODE (including whitespace).

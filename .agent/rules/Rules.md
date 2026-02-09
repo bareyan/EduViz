@@ -1,3 +1,7 @@
+---
+trigger: always_on
+---
+
 # GitHub Copilot Instructions for EduViz
 
 ## Project Overview

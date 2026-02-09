@@ -60,9 +60,9 @@ export const jobService = {
   },
 
   fixSection: async (jobId: string, sectionId: string, error: string, code: string): Promise<{ fixed_code: string }> => {
-    const response = await api.post<{ fixed_code: string }>(`/job/${jobId}/section/${sectionId}/fix`, { 
-      error, 
-      manim_code: code 
+    const response = await api.post<{ fixed_code: string }>(`/job/${jobId}/section/${sectionId}/fix`, {
+      error,
+      manim_code: code
     })
     return response.data
   },
@@ -73,6 +73,11 @@ export const jobService = {
 
   compileHighQuality: async (jobId: string, quality: string): Promise<{ hq_job_id: string }> => {
     const response = await api.post<{ hq_job_id: string }>(`/job/${jobId}/compile-high-quality`, { quality })
+    return response.data
+  },
+
+  updateJob: async (jobId: string, updates: { title?: string }): Promise<JobResponse> => {
+    const response = await api.patch(`/job/${jobId}`, updates)
     return response.data
   }
 }

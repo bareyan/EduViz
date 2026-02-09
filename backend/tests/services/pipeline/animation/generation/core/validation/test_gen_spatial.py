@@ -49,6 +49,13 @@ def test_find_scene_class():
 def test_injected_text_oob_is_not_tolerated():
     assert "TEXT_OVERSHOOT_THRESHOLD = 0.0" in INJECTED_METHOD
     assert 'sev = "critical" if is_text_obj else "warning"' in INJECTED_METHOD
+    assert "subject_label = _subject_label(m, is_text_obj=is_text_obj, text_label=text_label)" in INJECTED_METHOD
+    assert "object_subject=subject_label" in INJECTED_METHOD
+
+
+def test_injected_flattener_skips_text_glyph_submobjects():
+    assert "_is_text_like = (\"Text\" in _name) or (\"Tex\" in _name) or hasattr(m, \"text\")" in INJECTED_METHOD
+    assert "if _is_text_like:" in INJECTED_METHOD
 
 
 def test_injected_stroke_crossing_is_active():

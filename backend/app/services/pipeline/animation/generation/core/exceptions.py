@@ -3,7 +3,9 @@ Animation Exceptions - Standardized error states for the animation pipeline.
 Prevents silent failures and allows for granular retry logic.
 """
 
-class AnimationError(Exception):
+from app.core.exceptions import PipelineError
+
+class AnimationError(PipelineError):
     """Base exception for animation pipeline."""
     pass
 

@@ -18,3 +18,5 @@ def mock_cloud_env(monkeypatch):
     """Automatically mock cloud environment variables for all tests"""
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/tmp/mock-creds.json")
     monkeypatch.setenv("GEMINI_API_KEY", "mock-key")
+    monkeypatch.setenv("AUTH_ENABLED", "true")
+    monkeypatch.setenv("AUTH_PASSWORD", "test-password")

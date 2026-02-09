@@ -443,15 +443,75 @@ class Refiner:
         for i, issue in enumerate(issues[:5], 1):
             logger.warning(
                 f"  Issue {i} [{issue.severity.value}/{issue.confidence.value}]: "
-                f"{issue.message[:120]}"
+                f"{self._format_issue_log_line(issue)}"
             )
         if len(issues) > 5:
             logger.warning(f"  ... and {len(issues) - 5} more issues")
 
     @staticmethod
+    def _truncate_for_log(value: Any, limit: int = 180) -> str:
+        """Truncate arbitrary values into safe single-line log text."""
+        try:
+            text = str(value).replace("\n", " ").strip()
+        except Exception:
+            text = "<unprintable>"
+        if len(text) <= limit:
+            return text
+        return text[: limit - 3] + "..."
+
+    @classmethod
+    def _issue_subject(cls, issue: ValidationIssue) -> Optional[str]:
+        """Extract a compact subject label from issue details."""
+        details = issue.details if isinstance(issue.details, dict) else {}
+
+        object_subject = details.get("object_subject")
+        if isinstance(object_subject, str) and object_subject.strip():
+            return cls._truncate_for_log(object_subject, 90)
+
+        text = details.get("text")
+        if isinstance(text, str) and text.strip():
+            return cls._truncate_for_log(text, 90)
+
+        text1 = details.get("text1")
+        text2 = details.get("text2")
+        if isinstance(text1, str) and text1.strip() and isinstance(text2, str) and text2.strip():
+            return cls._truncate_for_log(f"{text1} vs {text2}", 90)
+
+        object_type = details.get("object_type")
+        if isinstance(object_type, str) and object_type.strip():
+            return object_type.strip()
+
+        return None
+
+    @classmethod
+    def _format_issue_log_line(cls, issue: ValidationIssue) -> str:
+        """Format issue with useful subject/context for warning logs."""
+        details = issue.details if isinstance(issue.details, dict) else {}
+        message = cls._truncate_for_log(issue.message, 180)
+        context_parts: List[str] = []
+
+        subject = cls._issue_subject(issue)
+        if subject and subject not in message:
+            context_parts.append(f"subject={subject}")
+
+        x = details.get("center_x")
+        y = details.get("center_y")
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            context_parts.append(f"at=({x:.2f},{y:.2f})")
+
+        reason = details.get("reason")
+        if isinstance(reason, str) and reason:
+            context_parts.append(f"reason={reason}")
+
+        if not context_parts:
+            return message
+        return f"{message} | {', '.join(context_parts)}"
+
+    @staticmethod
     def _issue_snapshot(issue: ValidationIssue) -> Dict[str, Any]:
         """Create a compact, log-friendly issue snapshot."""
-        return {
+        details = issue.details if isinstance(issue.details, dict) else {}
+        snapshot = {
             "category": issue.category.value,
             "severity": issue.severity.value,
             "confidence": issue.confidence.value,
@@ -462,6 +522,17 @@ class Refiner:
             "whitelist_key": issue.whitelist_key,
             "message": issue.message[:160],
         }
+        subject = Refiner._issue_subject(issue)
+        if subject:
+            snapshot["subject"] = subject
+        x = details.get("center_x")
+        y = details.get("center_y")
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            snapshot["center"] = {"x": x, "y": y}
+        reason = details.get("reason")
+        if isinstance(reason, str) and reason:
+            snapshot["reason"] = reason
+        return snapshot
 
     def _summarize_issues(self, issues: List[ValidationIssue], limit: int = 6) -> List[Dict[str, Any]]:
         """Summarize issues for logging (truncate to keep logs readable)."""

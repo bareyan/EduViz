@@ -295,6 +295,29 @@ def build_merge_no_cut_cmd(
     ]
 
 
+async def generate_thumbnail(video_path: str, output_path: str, time: float = 0.0) -> bool:
+    """Generate a thumbnail image from a video file."""
+    try:
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(time),
+            "-i", video_path,
+            "-vframes", "1",
+            "-q:v", "2",
+            output_path
+        ]
+        await asyncio.to_thread(
+            subprocess.run,
+            cmd,
+            capture_output=True,
+            check=True
+        )
+        return Path(output_path).exists()
+    except Exception as e:
+        print(f"Thumbnail generation failed: {e}")
+        return False
+
+
 async def combine_sections(
     videos: List[str],
     audios: List[str],  # May contain None for sections without audio

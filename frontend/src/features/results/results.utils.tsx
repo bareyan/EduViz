@@ -26,7 +26,7 @@ export const stages = [
   { key: 'analyzing', label: 'Analyzing' },
   { key: 'generating_script', label: 'Script' },
   { key: 'creating_animations', label: 'Animations' },
-  { key: 'synthesizing_audio', label: 'Audio' },
+  // { key: 'synthesizing_audio', label: 'Audio' },
   { key: 'composing_video', label: 'Composing' }
 ]
 

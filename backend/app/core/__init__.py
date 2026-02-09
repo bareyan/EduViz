@@ -35,6 +35,24 @@ from .security import (
     secure_file_path,
 )
 
+# Authentication
+from .auth import (
+    SESSION_COOKIE_NAME,
+    is_auth_enabled,
+    is_public_path,
+    verify_auth_password,
+    issue_auth_token,
+    verify_auth_token,
+    extract_request_token,
+    is_request_authenticated,
+    get_session_max_age_seconds,
+    is_cookie_secure,
+    get_cookie_domain,
+    get_cookie_path,
+    get_cookie_samesite,
+    list_public_paths,
+)
+
 # File operations
 from .files import (
     find_file_by_id,
@@ -96,6 +114,21 @@ from .voice_catalog import (
     get_translation_languages,
 )
 
+# Video info persistence
+from .video_info import (
+    VideoInfo,
+    VideoChapter,
+    save_video_info,
+    load_video_info,
+    video_info_exists,
+    list_all_videos,
+    create_video_info_from_result,
+    ErrorInfo,
+    save_error_info,
+    load_error_info,
+    list_all_failures,
+)
+
 __all__ = [
     # Logging
     "setup_logging",
@@ -110,6 +143,18 @@ __all__ = [
     "validate_path_within_directory",
     "validate_section_index",
     "secure_file_path",
+    # Auth
+    "SESSION_COOKIE_NAME",
+    "is_auth_enabled",
+    "is_public_path",
+    "verify_auth_password",
+    "issue_auth_token",
+    "verify_auth_token",
+    "extract_request_token",
+    "is_request_authenticated",
+    "get_session_max_age_seconds",
+    "is_cookie_secure",
+    "list_public_paths",
     # Files
     "find_file_by_id",
     "ensure_directory",
@@ -150,5 +195,17 @@ __all__ = [
     "get_tts_voices_for_language",
     "get_translation_default_voice",
     "get_translation_languages",
+    # Video info
+    "VideoInfo",
+    "VideoChapter",
+    "save_video_info",
+    "load_video_info",
+    "video_info_exists",
+    "list_all_videos",
+    "create_video_info_from_result",
+    "ErrorInfo",
+    "save_error_info",
+    "load_error_info",
+    "list_all_failures",
 ]
 
