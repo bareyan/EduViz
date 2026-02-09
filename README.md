@@ -6,10 +6,11 @@ EduViz transforms educational content into professional animated videos using AI
 
 ## Documentation
 
--   **[Architecture Overview](ARCHITECTURE.md):** Detailed system design, layer descriptions, and the animation pipeline.
--   **[Backend Setup & API](backend/README.md):** Instructions for setting up the FastAPI backend, configuration detailed, and testing.
--   **[Frontend Setup](frontend/README.md):** Instructions for setting up the React frontend.
--   **[Environment Configuration](backend/ENVIRONMENT.md):** Detailed guide on environment variables and advanced settings.
+-   **[Architecture Overview](ARCHITECTURE.md):** System design and layer descriptions.
+-   **[Pipeline & Features](PIPELINE.md):** End-to-end pipeline, animation generation, validation, themes, and tech stack.
+-   **[Backend Setup & API](backend/README.md):** Backend setup, configuration, and testing.
+-   **[Frontend Setup](frontend/README.md):** Frontend setup and scripts.
+-   **[Environment Configuration](backend/ENVIRONMENT.md):** Environment variables and advanced settings.
 
 ## Overview
 
