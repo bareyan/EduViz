@@ -54,19 +54,6 @@ jobs:
           source: "docker-compose.prod.yml"
           target: "/opt/eduviz"
 
-      - name: Create .env file on Server
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.HETZNER_HOST }}
-          username: ${{ secrets.HETZNER_USER }}
-          key: ${{ secrets.HETZNER_SSH_KEY }}
-          script: |
-            mkdir -p /opt/eduviz/backend
-            cat > /opt/eduviz/backend/.env << 'EOF'
-            ${{ secrets.BACKEND_ENV_FILE }}
-            EOF
-            chmod 600 /opt/eduviz/backend/.env
-
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
